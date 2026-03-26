@@ -1,0 +1,17 @@
+policies:
+  - spiffe_id: spiffe://demo.local/app/orchestrator
+    description: "Main orchestrator agent"
+    rules:
+      - mcp: grafana
+        tools: ["find_error_pattern_logs", "list_oncall_users"]
+        action: allow
+      - mcp: stripe
+        tools: ["*"]
+        action: deny
+
+  - spiffe_id: spiffe://demo.local/app/mcp-gateway
+    description: "Gateway service"
+    rules:
+      - mcp: "*"
+        tools: ["*"]
+        action: allow

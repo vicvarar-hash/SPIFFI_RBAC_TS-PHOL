@@ -1,0 +1,5 @@
+{
+  "orchestrator": "spiffe://demo.local/app/orchestrator",
+  "policy_engine": "spiffe://demo.local/app/policy",
+  "mcp_gateway": "spiffe://demo.local/app/mcp-gateway"
+}

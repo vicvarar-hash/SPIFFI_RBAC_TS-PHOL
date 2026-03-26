@@ -1,0 +1,18 @@
+rules:
+  - name: high_risk_requires_high_confidence
+    condition:
+      risk_level: high
+      min_confidence: 0.95
+    decision: deny
+
+  - name: enforce_tool_limit
+    condition:
+      max_tools: 3
+    decision: enforce
+
+  - name: write_operations_require_strict_control
+    condition:
+      action_type: write
+      min_confidence: 0.9
+    decision: deny
+

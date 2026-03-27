@@ -15,6 +15,7 @@ from app.services.rbac_service import RBACService
 from app.services.tsphol_rule_service import TSPHOLRuleService
 from app.services.mcp_risk_service import MCPRiskService
 from app.services.decision_engine import DecisionEngine
+from app.services.spiffe_workload_service import SpiffeWorkloadService
 
 def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     st.title("🔮 Parallel reasoning lab")
@@ -64,14 +65,47 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             caller_map[label] = {"spiffe_id": spiffe_id, "display_name": disp_name}
             
         col_c1, col_c2 = st.columns([1, 2])
+        
+        # SPIFFE Workload Identity Hook
+        workload_svc = SpiffeWorkloadService()
+        real_id, id_source = workload_svc.fetch_real_identity()
+        
         with col_c1:
-            selected_caller_label = st.selectbox("Simulate Caller Identity", caller_options, index=0 if caller_options else None)
-            if selected_caller_label:
+            # Map for simulation
+            display_to_id = {}
+            for label, data in caller_map.items():
+                display_to_id[label] = data["spiffe_id"]
+            
+            sim_options = list(caller_map.keys())
+            
+            # Combine with Real Identity Option if available
+            final_options = sim_options.copy()
+            real_option = "🛡️ Use Real SPIFFE Identity"
+            if real_id:
+                final_options.insert(0, real_option)
+                
+            selected_caller_label = st.selectbox("Caller Identity (Authentication Source)", final_options, index=0 if final_options else None)
+            
+            if selected_caller_label == real_option:
+                caller_spiffe_id = real_id
+                # Find display name for real ID
+                caller_display_name = "Unknown Persona"
+                for label, data in caller_map.items():
+                    if data["spiffe_id"] == real_id:
+                        caller_display_name = data["display_name"]
+                        break
+                st.caption(f"Connected to SPIRE: `{real_id}`")
+                id_source = "SPIRE Workload API"
+            elif selected_caller_label:
                 caller_spiffe_id = caller_map[selected_caller_label]["spiffe_id"]
                 caller_display_name = caller_map[selected_caller_label]["display_name"]
+                id_source = "Simulated"
             else:
                 caller_spiffe_id = "spiffe://unknown"
                 caller_display_name = "Unknown"
+                id_source = "None"
+        
+            st.session_state["current_identity_source"] = id_source
             
         # MCP Filtering logic
         available_mcps = set()
@@ -185,10 +219,12 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 sel_ctx = sel_decision.model_dump()
                 sel_ctx["caller_display_name"] = caller_display_name
                 sel_ctx["benchmark_result"] = sel_comparison.status
+                sel_ctx["identity_source"] = id_source
                 
                 val_ctx = val_decision.model_dump()
                 val_ctx["caller_display_name"] = caller_display_name
                 val_ctx["benchmark_result"] = val_comparison.status
+                val_ctx["identity_source"] = id_source
                 
                 logger.log_prediction("selection", task_idx_in_filtered, task.task, selection.model_dump(), sel_comparison.model_dump())
                 logger.log_prediction("validation", task_idx_in_filtered, task.task, validation.model_dump(), val_comparison.model_dump())
@@ -278,7 +314,17 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
     
     # Block B: Identity & Transport
     st.markdown("#### B. Identity & Transport")
-    st.write(f"**Caller:** {caller_display_name}  \n`{decision.spiffe_id}`")
+    
+    # Render caller and source
+    st.write(f"**Caller:** {caller_display_name}")
+    st.code(decision.spiffe_id)
+    
+    # Attempt to pull from session state to display real identity badge
+    _id_source = st.session_state.get("current_identity_source", "Simulated")
+    if "api" in _id_source.lower() or "real" in _id_source.lower():
+        st.success(f"**Source:** {_id_source}  \n🛡️ Real SPIFFE Identity")
+    else:
+        st.info(f"**Source:** {_id_source}")
     
     id_status = decision.evaluation_states.get("identity", "NOT_EVALUATED")
     tr_status = decision.evaluation_states.get("transport", "NOT_EVALUATED")

@@ -24,6 +24,13 @@ This iteration refactors the pipeline for efficiency and complete transparency:
 - **Strict Evaluation States**: The pipeline uses explicit `ALLOW`, `DENY`, and `NOT_EVALUATED` states, clearly differentiating between a security rule explicitly denying a request versus a downstream step never executing because of a prior block.
 - **LLM Transparency & Derived Features**: The UI strictly separates the raw AI output (Predicted MCPs/Tools, Justification, Confidence) from the System-Derived Features calculated post-inference (Operation risk score, tool counts, read/write heuristics). This eliminates "black box" behavior.
 
+### Iteration 4B: Real SPIFFE/SPIRE Integration (Workload Identity)
+Replaces the simulated UI identity selectors with an authentic, cryptographically-backed Workload API query. 
+- Integrated **SPIRE Server & Agent** zero-dependency docker cluster.
+- **Python Workload Service**: Consumes `pyspiffe` to fetch the default SVID running on the host/container.
+- **Seamless Fallback**: Directly downgrades the UI back to the simulated Persona dropdown if SPIRE cannot be reached, without crashing the AI pipelines.
+- **Identity Tracing**: Logs distinctly record whether an execution used a `Real SPIFFE Identity` or a `Simulated` token.
+
 The **Unified Decision Engine** operates in a strict 5-step sequence:
 1. **Pre-LLM Gate (SPIFFE Identity & Transport Allowlist)**: Verifies the caller identity format, existence, and mTLS access restrictions.
 2. **LLM Inference**: LLM runs to perform selection or validation. Skipped if Step 1 fails.
@@ -44,7 +51,14 @@ The Parallel Reasoning Lab features a fully integrated **Execution Pipeline Pane
 
 ## Usage
 
-Run the Streamlit app:
+### 1. Start Identity Infrastructure (SPIRE)
+If you wish to test with genuine cryptographic identities instead of simulating them, you can instantly spin up the Docker-Compose network and register the agents by running:
+```bash
+python deploy_spire.py
+```
+
+### 2. Run the Application
+Start the Streamlit reasoning lab:
 ```bash
 streamlit run main.py
 ```

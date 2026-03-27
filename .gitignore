@@ -29,3 +29,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# SPIFFE/SPIRE
+*.sock
+infra/spire/data/
+infra/spire/sockets/

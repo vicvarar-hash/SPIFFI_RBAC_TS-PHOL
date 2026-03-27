@@ -36,6 +36,13 @@ class SpiffeRegistryService:
         if spiffe_id in existing_spiffe_ids:
             return False, f"SPIFFE ID '{spiffe_id}' already exists."
 
+        # Attempt to register in SPIRE as well
+        from app.services.spiffe_workload_service import SpiffeWorkloadService
+        workload_svc = SpiffeWorkloadService()
+        spire_success, spire_msg = workload_svc.register_spiffe_entry(spiffe_id)
+        if not spire_success:
+             return False, f"Identity rejected by SPIRE: {spire_msg}"
+
         self.registry[name] = {
             "display_name": display_name,
             "spiffe_id": spiffe_id,
@@ -43,8 +50,8 @@ class SpiffeRegistryService:
         }
         success = PolicyLoader.save_json(self.filepath, self.registry)
         if success:
-            self.logger.log_change("SPIFFE_REGISTRY", "create", f"Added {name}: {spiffe_id}")
-            return True, "Identity added successfully."
+            self.logger.log_change("SPIFFE_REGISTRY", "create", f"Added {name}: {spiffe_id} (SPIRE Registered)")
+            return True, "Identity added successfully and registered in SPIRE."
         return False, "Failed to save to disk."
 
     def update_identity(self, old_name: str, new_name: str, display_name: str, new_spiffe_id: str, description: str) -> Tuple[bool, str]:

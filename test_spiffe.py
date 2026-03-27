@@ -1,0 +1,2 @@
+from app.services.spiffe_workload_service import SpiffeWorkloadService
+print(SpiffeWorkloadService.fetch_real_identity())

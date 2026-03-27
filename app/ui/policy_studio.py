@@ -5,6 +5,7 @@ from app.services.spiffe_allowlist_service import SpiffeAllowlistService
 from app.services.rbac_service import RBACService
 from app.services.tsphol_rule_service import TSPHOLRuleService
 from app.services.mcp_risk_service import MCPRiskService
+from app.services.spiffe_workload_service import SpiffeWorkloadService
 
 def render_policy_studio():
     st.title("🛡️ Policy Studio")
@@ -23,9 +24,11 @@ def render_policy_studio():
     rbac_svc = RBACService()
     tsphol_svc = TSPHOLRuleService()
     risk_svc = MCPRiskService()
+    
+    workload_svc = SpiffeWorkloadService()
 
     with tab1:
-        _render_spiffe_registry(registry_svc)
+        _render_spiffe_registry(registry_svc, workload_svc)
 
     with tab2:
         _render_transport_allowlist(allowlist_svc)
@@ -40,35 +43,57 @@ def render_policy_studio():
         _render_mcp_risk_levels(risk_svc)
 
 
-def _render_spiffe_registry(svc: SpiffeRegistryService):
+def _render_spiffe_registry(svc: SpiffeRegistryService, workload_svc: SpiffeWorkloadService):
     st.header("SPIFFE Identity Registry")
     st.markdown("Define agent personas and their corresponding SPIFFE IDs.")
+    
+    # SPIRE status section
+    st.subheader("🌐 SPIRE Infrastructure Status")
+    real_id, id_source = workload_svc.fetch_real_identity()
+    if real_id:
+        st.success(f"✅ Connected to SPIRE Agent")
+        with st.expander("View Full Workload SVID Details (X.509)"):
+            status_text = workload_svc.fetch_full_svid_status()
+            st.code(status_text)
+    else:
+        st.warning(f"⚠️ SPIRE Agent Offline or No Identity Issued")
+        st.caption(f"Reason: {id_source}")
+
+    st.divider()
     
     registry = svc.get_all()
     
     if registry:
         for key, details in registry.items():
             if isinstance(details, str): continue # Skip mid-migration corrupted views
-            with st.expander(f"{details.get('display_name', key)} ({details.get('spiffe_id')})"):
-                st.write(f"**Key:** `{key}`")
-                st.write(f"**Description:** {details.get('description')}")
-                if st.button("Delete", key=f"del_reg_{key}"):
-                    success, msg = svc.delete_identity(key)
-                    if success: st.rerun()
-                    else: st.error(msg)
+            with st.expander(f"👤 {details.get('display_name', key)}"):
+                col_left, col_right = st.columns([2, 1])
+                with col_left:
+                    st.markdown("**SPIFFE Identity (SVID)**")
+                    st.code(details.get('spiffe_id'))
+                    st.markdown(f"**Description:** {details.get('description')}")
+                
+                with col_right:
+                    st.markdown("**Registry Key**")
+                    st.code(key)
+                    if st.button("🗑️ Delete Identity", key=f"del_reg_{key}", use_container_width=True):
+                        success, msg = svc.delete_identity(key)
+                        if success: st.rerun()
+                        else: st.error(msg)
     else:
         st.info("No identities defined.")
 
     st.divider()
     st.subheader("Add New Persona")
+    st.info("💡 Adding a persona here automatically registers a new cryptographic entry in the SPIRE Server with a default Docker selector (`unix:uid:0`).")
     with st.form("add_spiffe_form", clear_on_submit=True):
         new_key = st.text_input("Registry Key (e.g. ops_agent)")
         new_name = st.text_input("Display Name (e.g. Operations Agent)")
         new_spiffe = st.text_input("SPIFFE ID (starts with spiffe://)")
         new_desc = st.text_input("Description")
-        if st.form_submit_button("Add Identity"):
+        if st.form_submit_button("Add Identity & Register with SPIRE"):
             success, msg = svc.add_identity(new_key, new_name, new_spiffe, new_desc)
-            if success: st.rerun()
+            if success: st.success(msg); st.rerun()
             else: st.error(msg)
 
 

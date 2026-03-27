@@ -36,6 +36,7 @@ class LoggerService:
             "mode": mode,
             "caller_display_name": decision_result.get("caller_display_name"),
             "spiffe_id": decision_result.get("spiffe_id"),
+            "identity_source": decision_result.get("identity_source", "Simulated"),
             "benchmark_result": decision_result.get("benchmark_result"),
             "pre_llm_result": decision_result.get("pre_llm_result"),
             "llm_executed": decision_result.get("llm_executed"),

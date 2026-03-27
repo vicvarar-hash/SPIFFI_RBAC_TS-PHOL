@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 from app.services.policy_loader import PolicyLoader
 from app.services.policy_logger_service import PolicyLoggerService
 
@@ -7,42 +7,65 @@ class SpiffeRegistryService:
         self.filepath = filepath
         self.logger = PolicyLoggerService()
         self.registry = PolicyLoader.load_json(filepath)
+        self._migrate_schema()
 
-    def get_all(self) -> Dict[str, str]:
+    def _migrate_schema(self):
+        migrated = False
+        for k, v in list(self.registry.items()):
+            if isinstance(v, str):
+                self.registry[k] = {
+                    "display_name": k.replace("_", " ").title(),
+                    "spiffe_id": v,
+                    "description": "Auto-migrated identity"
+                }
+                migrated = True
+        if migrated:
+            PolicyLoader.save_json(self.filepath, self.registry)
+            self.logger.log_change("SPIFFE_REGISTRY", "migrate", "Migrated legacy strings to persona dictionary format.")
+
+    def get_all(self) -> Dict[str, Dict[str, str]]:
         return self.registry
 
-    def add_identity(self, name: str, spiffe_id: str) -> Tuple[bool, str]:
+    def add_identity(self, name: str, display_name: str, spiffe_id: str, description: str) -> Tuple[bool, str]:
         if not spiffe_id.startswith("spiffe://"):
             return False, "SPIFFE ID must start with 'spiffe://'"
         if name in self.registry:
-            return False, f"Identity name '{name}' already exists."
-        if spiffe_id in self.registry.values():
+            return False, f"Identity key '{name}' already exists."
+            
+        existing_spiffe_ids = [v.get("spiffe_id") for v in self.registry.values()]
+        if spiffe_id in existing_spiffe_ids:
             return False, f"SPIFFE ID '{spiffe_id}' already exists."
 
-        self.registry[name] = spiffe_id
+        self.registry[name] = {
+            "display_name": display_name,
+            "spiffe_id": spiffe_id,
+            "description": description
+        }
         success = PolicyLoader.save_json(self.filepath, self.registry)
         if success:
             self.logger.log_change("SPIFFE_REGISTRY", "create", f"Added {name}: {spiffe_id}")
             return True, "Identity added successfully."
         return False, "Failed to save to disk."
 
-    def update_identity(self, old_name: str, new_name: str, new_spiffe_id: str) -> Tuple[bool, str]:
+    def update_identity(self, old_name: str, new_name: str, display_name: str, new_spiffe_id: str, description: str) -> Tuple[bool, str]:
         if old_name not in self.registry:
             return False, "Identity does not exist."
         if not new_spiffe_id.startswith("spiffe://"):
             return False, "SPIFFE ID must start with 'spiffe://'"
         
-        # Check for duplicates if name or id changed
         if new_name != old_name and new_name in self.registry:
-            return False, f"Identity name '{new_name}' already exists."
+            return False, f"Identity key '{new_name}' already exists."
             
-        # Check values but ignore the current one we are modifying
-        other_values = [v for k, v in self.registry.items() if k != old_name]
-        if new_spiffe_id in other_values:
+        other_spiffe_ids = [v.get("spiffe_id") for k, v in self.registry.items() if k != old_name]
+        if new_spiffe_id in other_spiffe_ids:
             return False, f"SPIFFE ID '{new_spiffe_id}' already exists."
 
         del self.registry[old_name]
-        self.registry[new_name] = new_spiffe_id
+        self.registry[new_name] = {
+            "display_name": display_name,
+            "spiffe_id": new_spiffe_id,
+            "description": description
+        }
         
         success = PolicyLoader.save_json(self.filepath, self.registry)
         if success:
@@ -54,9 +77,9 @@ class SpiffeRegistryService:
         if name not in self.registry:
             return False, "Identity does not exist."
         
-        spiffe_id = self.registry.pop(name)
+        removed = self.registry.pop(name)
         success = PolicyLoader.save_json(self.filepath, self.registry)
         if success:
-            self.logger.log_change("SPIFFE_REGISTRY", "delete", f"Deleted {name}: {spiffe_id}")
+            self.logger.log_change("SPIFFE_REGISTRY", "delete", f"Deleted {name}: {removed.get('spiffe_id')}")
             return True, "Identity deleted successfully."
         return False, "Failed to save to disk."

@@ -9,18 +9,24 @@ Research and demonstration platform for secure, agentic tool orchestration using
 - **Validation**: Independent evaluation of ASTRA dataset candidate bundles.
 - **Parallel Reasoning Lab**: Side-by-side UI layout comparing Selection vs Validation against ASTRA Groundtruth.
 
-### Iteration 3 & 3.5: Policy Studio & Unified Decision Engine
-Introduces a configuration and visualization layer for a real-world security architecture, backed by a unified **Decision Engine** that processes pipelines to yield an active logical simulation of an `ALLOW`, `DENY`, or `FLAG` decision.
+### Iteration 3 & 4A/4A.1: Persona Identities, Realistic Policy, & Semantic Heuristics
+Introduces a configuration and visualization layer for a real-world security architecture. The architecture is explicitly decoupled from dataset groundtruth, meaning the application is evaluated dynamically as if it were running natively in production.
+
+Features include:
+- **6-Persona Model**: Differentiating **Agent Personas** (e.g. `Finance Agent` or `DevOps Agent`) from internal restrictive **Service Identities** (e.g., `Automation Gateway`), mapped safely to backing `spiffe://` IDs. Backwards compatible auto-migration handles deprecated config keys natively.
+- **Dynamic Risk Models**: `MCPRiskService` configures independent operational risk levels per MCP domain.
+- **Realistic RBAC**: Identity-based authorization modeled heavily on real-world MCP tool domain scopes.
+- **Semantic Rule Inferences**: The TS-PHOL heuristic engine consumes raw ASTRA Task strings to algorithmically infer risks (`missing_required_capability`, `irrelevant_tool_detected`, `cumulative_risk_score`) to simulate high-fidelity Contextual Access Constraints.
 
 The **Unified Decision Engine** operates in a strict 5-step sequence:
-1. **SPIFFE Identity Registry (`spiffe_registry.json`)**: Verifies the caller identity format and existence.
-2. **Transport Allowlist (`spiffe_allowlist.json`)**: Simulates mTLS access control—blocks unauthorized connections.
-3. **RBAC (`rbac.yaml`)**: Evaluates the caller's allowed/denied permissions against the requested MCP tools. Supports `*` wildcards.
-4. **TS-PHOL Rules (`tsphol_rules.yaml`)**: Executes heuristics evaluating metadata (Risk Level, Tool Count, Action Type) and LLM Confidence.
-5. **Final Synthesis**: Returns `DENY` if any hard block is hit, `FLAG` if TS-PHOL requires human-in-the-loop review, or `ALLOW` if all checks pass.
+1. **SPIFFE Identity Registry**: Verifies the caller identity format and existence.
+2. **Transport Allowlist**: Simulates mTLS access control—blocks unauthorized connections.
+3. **RBAC**: Evaluates the caller's allowed/denied permissions against the requested MCP tools.
+4. **TS-PHOL Rules**: Executes complex heuristics evaluating metadata (Domain Risk Level, Contains Write, Dominant Action Type, Task capabilities matching Tools, LLM Confidence). This is decoupled entirely from benchmark groundtruth. If RBAC denies the request earlier in the chain, it gracefully flags TS-PHOL as bypassed.
+5. **Final Synthesis**: Explicitly isolates standard Benchmark evaluations from the Runtime Security blocks to yield a clear, highly traceable pipeline output logging into `decision_logs.jsonl`.
 
 #### Prediction Lab Integration
-The Parallel Reasoning Lab features a fully integrated **Security Decision Panel**. It dynamically runs the 5-step engine on both the LLM's Selection output and the baseline Validation bundle, producing color-coded decision badges and highly detailed security traces.
+The Parallel Reasoning Lab features a fully integrated **Execution Pipeline Panel**. It dynamically runs the 5-step engine on both the LLM's Selection output and the baseline Validation bundle, producing detailed traces separating benchmark results from logic reasoning.
 
 ## Installation
 

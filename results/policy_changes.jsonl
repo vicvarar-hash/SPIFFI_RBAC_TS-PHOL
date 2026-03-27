@@ -1,0 +1,7 @@
+{"timestamp": "2026-03-26T17:42:29.697030", "type": "TRANSPORT_ALLOWLIST", "action": "migrate", "details": "Pruned 2 stale identities."}
+{"timestamp": "2026-03-26T17:43:54.179987", "type": "TRANSPORT_ALLOWLIST", "action": "add", "details": "Added spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-26T17:43:57.184711", "type": "TRANSPORT_ALLOWLIST", "action": "add", "details": "Added spiffe://demo.local/agent/incident"}
+{"timestamp": "2026-03-26T18:25:00.676820", "type": "RBAC", "action": "update", "details": "Updated policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-26T18:25:49.037062", "type": "RBAC", "action": "delete", "details": "Deleted policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-26T18:25:56.518024", "type": "RBAC", "action": "create", "details": "Updated policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-27T09:22:17.096381", "type": "RBAC", "action": "update", "details": "Updated policy for spiffe://demo.local/agent/devops"}

@@ -1,6 +1,6 @@
 {
   "allowed_callers": [
-    "spiffe://demo.local/app/orchestrator",
-    "spiffe://demo.local/app/mcp-gateway"
+    "spiffe://demo.local/agent/devops",
+    "spiffe://demo.local/agent/incident"
   ]
 }

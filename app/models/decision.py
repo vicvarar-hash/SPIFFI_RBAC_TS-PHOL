@@ -9,5 +9,6 @@ class DecisionResult(BaseModel):
     tsphol_decision: str  # "allow", "deny", "flag"
     final_decision: str  # "ALLOW", "DENY", "FLAG"
     reason: str
+    denial_source: Optional[str] = None
     trace: List[str]
     context: Optional[Dict[str, Any]] = None

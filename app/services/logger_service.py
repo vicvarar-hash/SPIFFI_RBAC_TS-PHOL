@@ -24,12 +24,25 @@ class LoggerService:
             f.write(json.dumps(log_entry) + "\n")
             
     def log_decision(self, task_idx: int, mode: str, prediction: Dict[str, Any], decision_result: Dict[str, Any]):
+        active_rules = []
+        if decision_result.get("context") and decision_result["context"].get("step_4_tsphol"):
+            active_rules = [r.get("rule_name") for r in decision_result["context"]["step_4_tsphol"].get("rule_evaluations", []) if isinstance(r, dict)]
+
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "task_idx": task_idx,
             "mode": mode,
+            "caller_display_name": decision_result.get("caller_display_name"),
+            "spiffe_id": decision_result.get("spiffe_id"),
+            "benchmark_result": decision_result.get("benchmark_result"),
+            "transport_result": "ALLOW" if decision_result.get("transport_allowed") else "DENY",
+            "rbac_result": "ALLOW" if decision_result.get("rbac_allowed") else "DENY",
+            "tsphol_result": decision_result.get("tsphol_decision"),
+            "final_decision": decision_result.get("final_decision"),
+            "denial_source": decision_result.get("denial_source"),
+            "active_tsphol_rules": active_rules,
             "prediction": prediction,
-            "decision": decision_result
+            "decision_payload": decision_result
         }
         with open(self.decision_log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(log_entry) + "\n")

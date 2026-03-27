@@ -11,6 +11,17 @@ class SpiffeAllowlistService:
         
         data = PolicyLoader.load_json(filepath)
         self.allowlist = data.get("allowed_callers", [])
+        self._migrate()
+
+    def _migrate(self):
+        valid_spiffe_ids = [v.get("spiffe_id") for v in self.registry_service.get_all().values() if "spiffe_id" in v]
+        original_len = len(self.allowlist)
+        self.allowlist = [sid for sid in self.allowlist if sid in valid_spiffe_ids]
+        
+        # If list shrinks, we removed a stale legacy ID
+        if len(self.allowlist) < original_len:
+            self._save()
+            self.logger.log_change("TRANSPORT_ALLOWLIST", "migrate", f"Pruned {original_len - len(self.allowlist)} stale identities.")
 
     def get_all(self) -> List[str]:
         return self.allowlist
@@ -19,8 +30,7 @@ class SpiffeAllowlistService:
         if not spiffe_id.startswith("spiffe://"):
             return False, "SPIFFE ID must start with 'spiffe://'"
             
-        # Validate against registry
-        registry_ids = list(self.registry_service.get_all().values())
+        registry_ids = [v.get("spiffe_id") for v in self.registry_service.get_all().values() if "spiffe_id" in v]
         if spiffe_id not in registry_ids:
             return False, "SPIFFE ID must be defined in the Registry first."
             

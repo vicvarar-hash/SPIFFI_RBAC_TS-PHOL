@@ -1,18 +1,64 @@
 rules:
   - name: high_risk_requires_high_confidence
+    description: "High-risk domains require strong certainty"
     condition:
-      risk_level: high
+      highest_risk: high
       min_confidence: 0.95
     decision: deny
 
   - name: enforce_tool_limit
+    description: "Prevent excessive tool chaining"
     condition:
       max_tools: 3
-    decision: enforce
+    decision: deny
 
-  - name: write_operations_require_strict_control
+  - name: write_operations_require_confidence
+    description: "Write operations require stronger confidence"
     condition:
-      action_type: write
+      contains_write: true
       min_confidence: 0.9
     decision: deny
 
+  - name: cross_domain_high_risk_restriction
+    description: "Do not allow high-risk cross-domain bundles"
+    condition:
+      multiple_mcp: true
+      highest_risk: high
+    decision: deny
+
+  - name: global_low_confidence_block
+    description: "Block very low-confidence decisions"
+    condition:
+      min_confidence: 0.6
+    decision: deny
+    
+  - name: write_without_read_context
+    description: "Write actions require at least one supporting read/discovery action"
+    condition:
+      contains_write: true
+      no_prior_read: true
+    decision: deny
+
+  - name: required_capability_coverage
+    description: "Task-implied required capabilities must be covered by selected tools"
+    condition:
+      missing_required_capability: true
+    decision: deny
+
+  - name: unnecessary_tool_usage
+    description: "Deny tool bundles containing tools unrelated to the inferred task intent"
+    condition:
+      irrelevant_tool_detected: true
+    decision: deny
+
+  - name: cumulative_risk_threshold
+    description: "Deny requests whose combined tool/domain risk is too high"
+    condition:
+      cumulative_risk_score: 3
+    decision: deny
+
+  - name: role_capability_mismatch
+    description: "Deny requests where the caller persona is misaligned with the requested domain"
+    condition:
+      identity_domain_mismatch: true
+    decision: deny

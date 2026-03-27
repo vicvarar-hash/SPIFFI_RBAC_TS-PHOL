@@ -1,5 +1,5 @@
 import streamlit as st
-from typing import List
+from typing import List, Any
 from app.models.astra import AstraTask
 from app.models.mcp import MCPPersona
 from app.models.decision import DecisionResult
@@ -13,6 +13,7 @@ from app.services.spiffe_registry_service import SpiffeRegistryService
 from app.services.spiffe_allowlist_service import SpiffeAllowlistService
 from app.services.rbac_service import RBACService
 from app.services.tsphol_rule_service import TSPHOLRuleService
+from app.services.mcp_risk_service import MCPRiskService
 from app.services.decision_engine import DecisionEngine
 
 def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
@@ -36,12 +37,14 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     allowlist_svc = SpiffeAllowlistService(registry_service=registry_svc)
     rbac_svc = RBACService()
     tsphol_svc = TSPHOLRuleService()
+    risk_svc = MCPRiskService()
     
     decision_engine = DecisionEngine(
         registry_svc=registry_svc,
         allowlist_svc=allowlist_svc,
         rbac_svc=rbac_svc,
         tsphol_svc=tsphol_svc,
+        risk_svc=risk_svc,
         personas=personas
     )
     
@@ -49,15 +52,26 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     with st.container(border=True):
         st.subheader("📋 Context Initialization")
         
-        # Caller simulation
+        # Caller simulation mapping
         registry = registry_svc.get_all()
-        default_caller = registry.get("orchestrator", "spiffe://demo.local/app/orchestrator")
-        caller_list = list(registry.values())
-        if default_caller not in caller_list: caller_list.append(default_caller)
-        
+        caller_options = []
+        caller_map = {}
+        for key, details in registry.items():
+            disp_name = details.get("display_name", key)
+            spiffe_id = details.get("spiffe_id", "")
+            label = f"{disp_name} ({spiffe_id})"
+            caller_options.append(label)
+            caller_map[label] = {"spiffe_id": spiffe_id, "display_name": disp_name}
+            
         col_c1, col_c2 = st.columns([1, 2])
         with col_c1:
-            caller_id = st.selectbox("Simulate Caller Identity", caller_list, index=0)
+            selected_caller_label = st.selectbox("Simulate Caller Identity", caller_options, index=0 if caller_options else None)
+            if selected_caller_label:
+                caller_spiffe_id = caller_map[selected_caller_label]["spiffe_id"]
+                caller_display_name = caller_map[selected_caller_label]["display_name"]
+            else:
+                caller_spiffe_id = "spiffe://unknown"
+                caller_display_name = "Unknown"
             
         # MCP Filtering logic
         available_mcps = set()
@@ -144,16 +158,23 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 )
                 
                 # 3. Run Decision Engine
-                sel_decision = decision_engine.evaluate(caller_id, selection.selected_mcp, selection.selected_tools, selection.confidence, sel_comparison.tool_match)
-                val_decision = decision_engine.evaluate(caller_id, task.candidate_mcp, task.candidate_tools, validation.confidence, val_comparison.tool_match)
-
+                sel_decision = decision_engine.evaluate(caller_spiffe_id, selection.selected_mcp, selection.selected_tools, selection.confidence, task.task)
+                val_decision = decision_engine.evaluate(caller_spiffe_id, task.candidate_mcp, task.candidate_tools, validation.confidence, task.task)
                 
                 # Log results
+                sel_ctx = sel_decision.model_dump()
+                sel_ctx["caller_display_name"] = caller_display_name
+                sel_ctx["benchmark_result"] = sel_comparison.status
+                
+                val_ctx = val_decision.model_dump()
+                val_ctx["caller_display_name"] = caller_display_name
+                val_ctx["benchmark_result"] = val_comparison.status
+                
                 logger.log_prediction("selection", task_idx_in_filtered, task.task, selection.model_dump(), sel_comparison.model_dump())
                 logger.log_prediction("validation", task_idx_in_filtered, task.task, validation.model_dump(), val_comparison.model_dump())
                 
-                logger.log_decision(task_idx_in_filtered, "selection", selection.model_dump(), sel_decision.model_dump())
-                logger.log_decision(task_idx_in_filtered, "validation", validation.model_dump(), val_decision.model_dump())
+                logger.log_decision(task_idx_in_filtered, "selection", selection.model_dump(), sel_ctx)
+                logger.log_decision(task_idx_in_filtered, "validation", validation.model_dump(), val_ctx)
                 
                 # Display Dual Panels
                 col_left, col_right = st.columns(2)
@@ -176,7 +197,7 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                         st.divider()
                         
                         # Decision Panel
-                        _render_decision_panel(sel_decision)
+                        _render_decision_panel(sel_decision, sel_comparison, caller_display_name)
 
                 with col_right:
                     st.header("🛡️ Validation Mode")
@@ -196,7 +217,7 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                         st.divider()
                         
                         # Decision Panel
-                        _render_decision_panel(val_decision)
+                        _render_decision_panel(val_decision, val_comparison, caller_display_name)
 
                 with st.expander("📄 Raw Model Outputs & Details"):
                     cols = st.columns(2)
@@ -215,30 +236,65 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                         if val_decision.context:
                             st.json(val_decision.context)
 
-def _render_decision_panel(decision: DecisionResult):
-    st.subheader("🚦 Security Decision Panel")
+def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_display_name: str):
+    st.subheader("🚦 Execution Pipeline")
     
-    # Badging
+    # Block A: Benchmark Evaluation
+    st.markdown("#### A. Benchmark Evaluation")
+    st_color = {"exact_match": "green", "partial_match": "orange", "mismatch": "red"}.get(comparison.status, "gray")
+    st.markdown(f"**Status:** :{st_color}[{comparison.status.upper()}]")
+    st.caption(comparison.details)
+    cols_b = st.columns(2)
+    cols_b[0].metric("MCP Match", "✅" if comparison.mcp_match else "❌")
+    cols_b[1].metric("Tool Match", "✅" if comparison.tool_match else "❌")
+    
+    st.divider()
+    
+    # Block B: Identity & Transport
+    st.markdown("#### B. Identity & Transport")
+    st.write(f"**Caller:** {caller_display_name}  \n`{decision.spiffe_id}`")
+    cols_i = st.columns(2)
+    cols_i[0].metric("Registry Verified", "✅" if decision.spiffe_verified else "❌")
+    cols_i[1].metric("mTLS Allowed", "✅" if decision.transport_allowed else "❌")
+    
+    if decision.denial_source in ["Identity", "Transport"]:
+        st.error(f"Execution halted at {decision.denial_source}.")
+        
+    st.divider()
+
+    # Block C: RBAC Decision
+    st.markdown("#### C. RBAC Authorization")
+    st.metric("RBAC Allowed", "✅ Yes" if decision.rbac_allowed else "❌ No")
+    if decision.denial_source == "RBAC":
+        st.error(f"Denial Reason: {decision.reason}")
+        
+    st.divider()
+
+    # Block D: TS-PHOL Decision
+    st.markdown("#### D. TS-PHOL Reasoning")
+    if not decision.rbac_allowed or not decision.transport_allowed or not decision.spiffe_verified:
+        st.info("TS-PHOL not evaluated due to prior pipeline enforcement.")
+    else:
+        st.metric("TS-PHOL Execution", decision.tsphol_decision.upper())
+        if decision.denial_source == "TS-PHOL":
+            st.error(f"Denial Reason: {decision.reason}")
+            
+    st.divider()
+
+    # Block E: Final Decision
+    st.markdown("#### E. Final Result")
     color_map = {"ALLOW": "green", "DENY": "red"}
     bg_color = color_map.get(decision.final_decision, "gray")
-
     
     st.markdown(f"""
-    <div style="background-color: {bg_color}; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 10px;">
-        <h3 style="color: white; margin: 0;">FINAL DECISION: {decision.final_decision}</h3>
+    <div style="background-color: {bg_color}; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px;">
+        <h2 style="color: white; margin: 0;">{decision.final_decision}</h2>
     </div>
     """, unsafe_allow_html=True)
     
-    # State flags
-    cols = st.columns(4)
-    cols[0].metric("SPIFFE", "✅" if decision.spiffe_verified else "❌")
-    cols[1].metric("Transport", "✅" if decision.transport_allowed else "❌")
-    cols[2].metric("RBAC", "✅" if decision.rbac_allowed else "❌")
-    cols[3].metric("TS-PHOL", decision.tsphol_decision.upper())
+    st.info(f"**Pipeline Conclusion:** {decision.reason}")
     
-    st.info(f"**Reason:** {decision.reason}")
-    
-    with st.expander("View Decision Trace"):
+    with st.expander("View Logic Trace"):
         for step in decision.trace:
             if "❌" in step or "DENY" in step:
                 st.error(step)

@@ -1,5 +1,32 @@
 {
-  "orchestrator": "spiffe://demo.local/app/orchestrator",
-  "policy_engine": "spiffe://demo.local/app/policy",
-  "mcp_gateway": "spiffe://demo.local/app/mcp-gateway"
+  "devops_agent": {
+    "display_name": "DevOps Agent",
+    "spiffe_id": "spiffe://demo.local/agent/devops",
+    "description": "Handles monitoring and operational diagnostics"
+  },
+  "incident_agent": {
+    "display_name": "Incident Agent",
+    "spiffe_id": "spiffe://demo.local/agent/incident",
+    "description": "Handles incident tracking and escalation"
+  },
+  "finance_agent": {
+    "display_name": "Finance Agent",
+    "spiffe_id": "spiffe://demo.local/agent/finance",
+    "description": "Handles billing and financial workflows"
+  },
+  "research_agent": {
+    "display_name": "Research Agent",
+    "spiffe_id": "spiffe://demo.local/agent/research",
+    "description": "Handles low-risk information discovery"
+  },
+  "automation_gateway": {
+    "display_name": "Automation Gateway",
+    "spiffe_id": "spiffe://demo.local/service/gateway",
+    "description": "Executes approved tool operations"
+  },
+  "security_engine": {
+    "display_name": "Security Engine",
+    "spiffe_id": "spiffe://demo.local/service/security",
+    "description": "Evaluates transport, RBAC, and TS-PHOL rules"
+  }
 }

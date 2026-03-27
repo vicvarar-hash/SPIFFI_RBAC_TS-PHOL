@@ -5,3 +5,11 @@
 {"timestamp": "2026-03-26T18:25:49.037062", "type": "RBAC", "action": "delete", "details": "Deleted policy for spiffe://demo.local/agent/devops"}
 {"timestamp": "2026-03-26T18:25:56.518024", "type": "RBAC", "action": "create", "details": "Updated policy for spiffe://demo.local/agent/devops"}
 {"timestamp": "2026-03-27T09:22:17.096381", "type": "RBAC", "action": "update", "details": "Updated policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-27T11:57:50.688975", "type": "RBAC", "action": "update", "details": "Updated policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-27T12:13:19.937866", "type": "TSPHOL", "action": "create", "details": "Updated rule High-risk domains require strong certainty"}
+{"timestamp": "2026-03-27T12:23:27.259867", "type": "RBAC", "action": "update", "details": "Updated policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-27T12:24:20.046861", "type": "RBAC", "action": "update", "details": "Updated policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-27T12:30:33.907334", "type": "TRANSPORT_ALLOWLIST", "action": "add", "details": "Added spiffe://demo.local/agent/research"}
+{"timestamp": "2026-03-27T12:48:11.502493", "type": "TRANSPORT_ALLOWLIST", "action": "remove", "details": "Removed spiffe://demo.local/agent/research"}
+{"timestamp": "2026-03-27T12:58:25.907498", "type": "RBAC", "action": "update", "details": "Updated policy for spiffe://demo.local/agent/devops"}
+{"timestamp": "2026-03-27T15:15:20.637335", "type": "TRANSPORT_ALLOWLIST", "action": "add", "details": "Added spiffe://demo.local/agent/research"}

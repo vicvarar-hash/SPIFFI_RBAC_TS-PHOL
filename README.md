@@ -18,15 +18,21 @@ Features include:
 - **Realistic RBAC**: Identity-based authorization modeled heavily on real-world MCP tool domain scopes.
 - **Semantic Rule Inferences**: The TS-PHOL heuristic engine consumes raw ASTRA Task strings to algorithmically infer risks (`missing_required_capability`, `irrelevant_tool_detected`, `cumulative_risk_score`) to simulate high-fidelity Contextual Access Constraints.
 
+### Iteration 4A.2 (Revised): Staged Execution Pipeline & Evaluation States
+This iteration refactors the pipeline for efficiency and complete transparency:
+- **Pre-LLM Gate**: A short-circuit mechanism evaluates deterministic checks (Identity and Transport) *before* invoking expensive LLM calls. If these checks fail, the LLM is entirely bypassed.
+- **Strict Evaluation States**: The pipeline uses explicit `ALLOW`, `DENY`, and `NOT_EVALUATED` states, clearly differentiating between a security rule explicitly denying a request versus a downstream step never executing because of a prior block.
+- **LLM Transparency & Derived Features**: The UI strictly separates the raw AI output (Predicted MCPs/Tools, Justification, Confidence) from the System-Derived Features calculated post-inference (Operation risk score, tool counts, read/write heuristics). This eliminates "black box" behavior.
+
 The **Unified Decision Engine** operates in a strict 5-step sequence:
-1. **SPIFFE Identity Registry**: Verifies the caller identity format and existence.
-2. **Transport Allowlist**: Simulates mTLS access control—blocks unauthorized connections.
+1. **Pre-LLM Gate (SPIFFE Identity & Transport Allowlist)**: Verifies the caller identity format, existence, and mTLS access restrictions.
+2. **LLM Inference**: LLM runs to perform selection or validation. Skipped if Step 1 fails.
 3. **RBAC**: Evaluates the caller's allowed/denied permissions against the requested MCP tools.
-4. **TS-PHOL Rules**: Executes complex heuristics evaluating metadata (Domain Risk Level, Contains Write, Dominant Action Type, Task capabilities matching Tools, LLM Confidence). This is decoupled entirely from benchmark groundtruth. If RBAC denies the request earlier in the chain, it gracefully flags TS-PHOL as bypassed.
+4. **TS-PHOL Rules**: Executes complex heuristics evaluating metadata (Domain Risk Level, Contains Write, Dominant Action Type, Task capabilities matching Tools, LLM Confidence). Marked `NOT_EVALUATED` if RBAC fails.
 5. **Final Synthesis**: Explicitly isolates standard Benchmark evaluations from the Runtime Security blocks to yield a clear, highly traceable pipeline output logging into `decision_logs.jsonl`.
 
 #### Prediction Lab Integration
-The Parallel Reasoning Lab features a fully integrated **Execution Pipeline Panel**. It dynamically runs the 5-step engine on both the LLM's Selection output and the baseline Validation bundle, producing detailed traces separating benchmark results from logic reasoning.
+The Parallel Reasoning Lab features a fully integrated **Execution Pipeline Panel**. It dynamically runs the 5-step engine, producing detailed traces separating benchmark results from logic reasoning. Raw LLM Inference vs Runtime Features are cleanly isolated in the view.
 
 ## Installation
 

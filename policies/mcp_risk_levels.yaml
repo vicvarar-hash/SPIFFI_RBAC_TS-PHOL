@@ -3,7 +3,7 @@ mcp_risk_levels:
   paper-search: low
   notion: medium
   grafana: medium
-  atlassian: medium
+  atlassian: high
   mongodb: high
   azure: high
   stripe: high

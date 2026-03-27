@@ -22,40 +22,88 @@ class DecisionEngine:
         self.risk_svc = risk_svc
         self.persona_map = {p.name: p for p in personas}
 
-    def evaluate(self, 
-                 caller_spiffe_id: str, 
-                 mcps: List[str], 
-                 tools: List[str], 
-                 confidence: float,
-                 task_text: str = "") -> DecisionResult:
-        
+    def pre_llm_check(self, caller_spiffe_id: str, mcps: List[str] = None, tools: List[str] = None) -> dict:
         trace = []
         eval_context = {}
-        trace.append(f"Engine initialized. Evaluating request from {caller_spiffe_id}")
+        trace.append(f"Engine initialized. Pre-LLM check for {caller_spiffe_id}")
+        
+        evaluation_states = {
+            "identity": "NOT_EVALUATED",
+            "transport": "NOT_EVALUATED",
+            "rbac": "NOT_EVALUATED",
+            "tsphol": "NOT_EVALUATED"
+        }
         
         # --- Step 1: SPIFFE Identity Check ---
+        evaluation_states["identity"] = "DENY"
         registry_ids = [v.get("spiffe_id") for v in self.registry_svc.get_all().values()]
         if caller_spiffe_id not in registry_ids:
             trace.append("SPIFFE Check: Identity not found in Registry. ❌")
             eval_context["step_1_identity"] = {"caller": caller_spiffe_id, "found_in_registry": False}
-            return self._finalize(caller_spiffe_id, False, False, False, "deny", "DENY", "Identity not verified", "Identity", trace, eval_context)
+            return {
+                "passed": False, "decision": "DENY", "reason": "Identity not verified", 
+                "denial_source": "Identity", "trace": trace, "context": eval_context, "evaluation_states": evaluation_states
+            }
         
         trace.append("SPIFFE Check: Identity verified. ✅")
-        spiffe_verified = True
+        evaluation_states["identity"] = "ALLOW"
         eval_context["step_1_identity"] = {"caller": caller_spiffe_id, "found_in_registry": True}
 
         # --- Step 2: Transport Allowlist ---
+        evaluation_states["transport"] = "DENY"
         allowlist = self.allowlist_svc.get_all()
         if caller_spiffe_id not in allowlist:
             trace.append("Transport Allowlist: Identity not explicitly allowed. ❌")
             eval_context["step_2_transport"] = {"allowed": False}
-            return self._finalize(caller_spiffe_id, spiffe_verified, False, False, "deny", "DENY", "Transport blocked", "Transport", trace, eval_context)
+            return {
+                "passed": False, "decision": "DENY", "reason": "Transport blocked", 
+                "denial_source": "Transport", "trace": trace, "context": eval_context, "evaluation_states": evaluation_states
+            }
             
         trace.append("Transport Allowlist: Identity allowed. ✅")
-        transport_allowed = True
+        evaluation_states["transport"] = "ALLOW"
         eval_context["step_2_transport"] = {"allowed": True}
 
+        return {
+            "passed": True, "decision": "ALLOW", "reason": "Pre-LLM checks passed", 
+            "denial_source": None, "trace": trace, "context": eval_context, "evaluation_states": evaluation_states
+        }
+
+    def evaluate(self, 
+                 pre_llm_result: dict,
+                 caller_spiffe_id: str, 
+                 mcps: List[str], 
+                 tools: List[str], 
+                 confidence: float,
+                 llm_outputs: Dict[str, Any],
+                 task_text: str = "") -> DecisionResult:
+        
+        trace = pre_llm_result.get("trace", [])
+        eval_context = pre_llm_result.get("context", {})
+        evaluation_states = pre_llm_result.get("evaluation_states", {
+            "identity": "NOT_EVALUATED", "transport": "NOT_EVALUATED", 
+            "rbac": "NOT_EVALUATED", "tsphol": "NOT_EVALUATED"
+        }).copy()
+        
+        if not pre_llm_result.get("passed", False):
+            return self._finalize(
+                spiffe_id=caller_spiffe_id,
+                states=evaluation_states,
+                final_dec=pre_llm_result.get("decision", "DENY"),
+                reason=pre_llm_result.get("reason", "Pre-LLM block"),
+                denial_source=pre_llm_result.get("denial_source", "Pre-LLM"),
+                trace=trace,
+                context=eval_context,
+                pre_llm_result=False,
+                llm_executed=False,
+                llm_output=None,
+                derived_features=None
+            )
+            
+        trace.append("Proceeding to Post-LLM evaluation.")
+
         # --- Step 3: RBAC (Identity-Based wildcard search) ---
+        evaluation_states["rbac"] = "DENY"
         policy = self.rbac_svc.get_policy_for_identity(caller_spiffe_id)
         
         eval_context["step_3_rbac"] = {
@@ -67,7 +115,7 @@ class DecisionEngine:
         if not policy:
             trace.append("RBAC Check: No identity policies found. Default Deny. ❌")
             eval_context["step_3_rbac"]["allowed"] = False
-            return self._finalize(caller_spiffe_id, spiffe_verified, transport_allowed, False, "deny", "DENY", "No RBAC rules mapped", "RBAC", trace, eval_context)
+            return self._finalize(caller_spiffe_id, evaluation_states, "DENY", "No RBAC rules mapped", "RBAC", trace, eval_context, True, True, llm_outputs, None)
             
         rules = policy.get("rules", [])
         eval_context["step_3_rbac"]["applicable_rules"] = rules
@@ -75,17 +123,18 @@ class DecisionEngine:
         eval_context["step_3_rbac"]["allowed"] = rbac_allowed
         
         if not rbac_allowed:
-            # We skip TS-PHOL explicitly
             eval_context["step_4_tsphol"] = {
                 "rule_evaluations": ["Not evaluated due to prior RBAC denial."]
             }
-            return self._finalize(caller_spiffe_id, spiffe_verified, transport_allowed, False, "deny", "DENY", "RBAC block triggered", "RBAC", trace, eval_context)
+            return self._finalize(caller_spiffe_id, evaluation_states, "DENY", "RBAC block triggered", "RBAC", trace, eval_context, True, True, llm_outputs, None)
+
+        evaluation_states["rbac"] = "ALLOW"
 
         # --- Step 4: TS-PHOL Rules (Heuristics execution) ---
+        evaluation_states["tsphol"] = "DENY"
         tsphol_rules = self.tsphol_svc.get_all()
         tsphol_decision = "allow"
         
-        # Calculate Base heuristics dynamically based off persona mappings
         risk_levels = [self.risk_svc.get_risk_for_mcp(m) for m in set(mcps)]
         highest_risk = "low"
         if "high" in risk_levels: highest_risk = "high"
@@ -110,7 +159,6 @@ class DecisionEngine:
         multiple_mcp = len(set(mcps)) > 1
         tool_count = len(tools)
         
-        # Iteration 4A.1: Enhanced TS-PHOL Behavioral Heuristics
         no_prior_read = contains_write and read_counts == 0
         
         task_lower = task_text.lower()
@@ -163,40 +211,46 @@ class DecisionEngine:
             decision, rule_log = self._evaluate_tsphol_rule(rule, computed_heuristics, trace)
             eval_context["step_4_tsphol"]["rule_evaluations"].append(rule_log)
             
-            # Treat 'flag' as 'deny' under new strict binary rules
             if decision in ["deny", "flag"]:
                 tsphol_decision = "deny"
                 break
                 
         # --- Step 5: Final Decision Synthesis ---
         if tsphol_decision == "deny":
+            evaluation_states["tsphol"] = "DENY"
             final_status = "DENY"
             reason = "TS-PHOL rule mandated a denial"
             denial_source = "TS-PHOL"
         else:
+            evaluation_states["tsphol"] = "ALLOW"
             final_status = "ALLOW"
             reason = "All security checks passed"
             denial_source = None
             
         trace.append(f"FINAL: {final_status}")
             
-        return self._finalize(caller_spiffe_id, spiffe_verified, transport_allowed, rbac_allowed, tsphol_decision, final_status, reason, denial_source, trace, eval_context)
+        return self._finalize(caller_spiffe_id, evaluation_states, final_status, reason, denial_source, trace, eval_context, True, True, llm_outputs, computed_heuristics)
         
-    def _finalize(self, spiffe_id, verified, transport, rbac, tsphol, final_dec, reason, denial_source, trace, context) -> DecisionResult:
+    def _finalize(self, spiffe_id, states, final_dec, reason, denial_source, trace, context, pre_llm_result, llm_executed, llm_output, derived_features) -> DecisionResult:
         if final_dec == "DENY" and "FINAL: DENY" not in trace:
             trace.append("FINAL: DENY")
             
         return DecisionResult(
             spiffe_id=spiffe_id,
-            spiffe_verified=verified,
-            transport_allowed=transport,
-            rbac_allowed=rbac,
-            tsphol_decision=tsphol,
+            evaluation_states=states,
+            spiffe_verified=states.get("identity") == "ALLOW",
+            transport_allowed=states.get("transport") == "ALLOW",
+            rbac_allowed=states.get("rbac") == "ALLOW",
+            tsphol_decision=states.get("tsphol", "NOT_EVALUATED").lower(),
             final_decision=final_dec,
             reason=reason,
             denial_source=denial_source,
             trace=trace,
-            context=context
+            context=context,
+            pre_llm_result=pre_llm_result,
+            llm_executed=llm_executed,
+            llm_output=llm_output,
+            derived_features=derived_features
         )
 
     def _check_rbac(self, mcps: List[str], tools: List[str], rules: List[Dict[str, Any]], trace: List[str]) -> bool:

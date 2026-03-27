@@ -139,27 +139,47 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             st.error("OpenAI API Key is missing. Please check the sidebar settings.")
         else:
             with st.spinner("Executing LLM Reasoning & Policy Engine..."):
-                # 1. Run LLM-ResM Selection
-                selection = predictor.run_selection(task)
-                sel_comparison = comparer.compare(
-                    task.groundtruth_mcp, 
-                    task.groundtruth_tools, 
-                    selection.selected_mcp, 
-                    selection.selected_tools
-                )
+                from app.models.selection import SelectionResult
+                from app.models.validation import ValidationResult
+                import json
                 
-                # 2. Run LLM Validation
-                validation = validator.run_validation(task)
-                val_comparison = comparer.compare(
-                    task.groundtruth_mcp, 
-                    task.groundtruth_tools, 
-                    task.candidate_mcp, 
-                    task.candidate_tools
-                )
-                
-                # 3. Run Decision Engine
-                sel_decision = decision_engine.evaluate(caller_spiffe_id, selection.selected_mcp, selection.selected_tools, selection.confidence, task.task)
-                val_decision = decision_engine.evaluate(caller_spiffe_id, task.candidate_mcp, task.candidate_tools, validation.confidence, task.task)
+                # 0. Pre-LLM Checks
+                sel_pre_llm = decision_engine.pre_llm_check(caller_spiffe_id, None, None)
+                val_pre_llm = decision_engine.pre_llm_check(caller_spiffe_id, task.candidate_mcp, task.candidate_tools)
+
+                # 1. Selection Pipeline
+                if sel_pre_llm["passed"]:
+                    selection = predictor.run_selection(task)
+                    sel_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, selection.selected_mcp, selection.selected_tools)
+                    sel_raw = {}
+                    try:
+                        if selection.raw_output: sel_raw = json.loads(selection.raw_output)
+                    except: pass
+                    sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, selection.selected_mcp, selection.selected_tools, selection.confidence, sel_raw, task.task)
+                    sel_decision.llm_executed = True
+                    sel_decision.llm_output = {"selected_mcp": selection.selected_mcp, "selected_tools": selection.selected_tools, "confidence": selection.confidence, "justification": selection.justification}
+                else:
+                    selection = SelectionResult(selected_mcp=[], selected_tools=[], justification="Skipped due to Pre-LLM block", confidence=0.0, raw_output=None)
+                    sel_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, [], [])
+                    sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, [], [], 0.0, {}, task.task)
+                    sel_decision.llm_executed = False
+
+                # 2. Validation Pipeline
+                if val_pre_llm["passed"]:
+                    validation = validator.run_validation(task)
+                    val_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, task.candidate_mcp, task.candidate_tools)
+                    val_raw = {}
+                    try:
+                        if validation.raw_output: val_raw = json.loads(validation.raw_output)
+                    except: pass
+                    val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, validation.confidence, val_raw, task.task)
+                    val_decision.llm_executed = True
+                    val_decision.llm_output = {"is_valid": validation.is_valid, "confidence": validation.confidence, "reason": validation.reason, "issues": validation.issues}
+                else:
+                    validation = ValidationResult(is_valid=False, confidence=0.0, reason="Skipped due to Pre-LLM block", issues=["SKIPPED"], raw_output=None)
+                    val_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, task.candidate_mcp, task.candidate_tools)
+                    val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, 0.0, {}, task.task)
+                    val_decision.llm_executed = False
                 
                 # Log results
                 sel_ctx = sel_decision.model_dump()
@@ -182,18 +202,21 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 with col_left:
                     st.header("🧠 Selection (LLM-ResM)")
                     with st.container(border=True):
-                        st.subheader("Predicted Selections (Exactly 3)")
-                        st.write("**Predicted MCPs:**")
-                        st.json(selection.selected_mcp)
-                        st.write("**Predicted Tools:**")
-                        st.json(selection.selected_tools)
-                        st.markdown(f"**Confidence:** `{selection.confidence}`")
-                        
-                        if selection.validation_errors:
-                            st.error("❌ Validation Issues:")
-                            for err in selection.validation_errors:
-                                st.write(f"- {err}")
-                        
+                        if sel_decision.llm_executed:
+                            st.subheader("🧠 LLM Inference Summary")
+                            st.write("**Predicted MCPs:**")
+                            st.json(selection.selected_mcp)
+                            st.write("**Predicted Tools:**")
+                            st.json(selection.selected_tools)
+                            st.markdown(f"**Confidence:** `{selection.confidence}`")
+                            st.markdown(f"**Justification:** {selection.justification}")
+                            
+                            if selection.validation_errors:
+                                st.error("❌ Validation Issues:")
+                                for err in selection.validation_errors:
+                                    st.write(f"- {err}")
+                        else:
+                            st.warning("⚠️ LLM INFERENCE SKIPPED: Pre-LLM checks failed.")
                         st.divider()
                         
                         # Decision Panel
@@ -202,18 +225,21 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 with col_right:
                     st.header("🛡️ Validation Mode")
                     with st.container(border=True):
-                        st.subheader("Evaluated ASTRA Bundle")
-                        st.write("**Validated MCPs:**")
-                        st.json(task.candidate_mcp)
-                        st.write("**Validated Tools:**")
-                        st.json(task.candidate_tools)
-                        st.markdown(f"**Confidence:** `{validation.confidence}`")
-                        
-                        if validation.issues:
-                            st.warning("🔎 Identified Issues:")
-                            for issue in validation.issues:
-                                st.write(f"- {issue}")
-                                
+                        if val_decision.llm_executed:
+                            st.subheader("🧠 LLM Inference Summary")
+                            st.write("**Validated MCPs:**")
+                            st.json(task.candidate_mcp)
+                            st.write("**Validated Tools:**")
+                            st.json(task.candidate_tools)
+                            st.markdown(f"**Confidence:** `{validation.confidence}`")
+                            st.markdown(f"**Reason:** {validation.reason}")
+                            
+                            if validation.issues:
+                                st.warning("🔎 Identified Issues:")
+                                for issue in validation.issues:
+                                    st.write(f"- {issue}")
+                        else:
+                            st.warning("⚠️ LLM INFERENCE SKIPPED: Pre-LLM checks failed.")
                         st.divider()
                         
                         # Decision Panel
@@ -253,18 +279,23 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
     # Block B: Identity & Transport
     st.markdown("#### B. Identity & Transport")
     st.write(f"**Caller:** {caller_display_name}  \n`{decision.spiffe_id}`")
+    
+    id_status = decision.evaluation_states.get("identity", "NOT_EVALUATED")
+    tr_status = decision.evaluation_states.get("transport", "NOT_EVALUATED")
+    
     cols_i = st.columns(2)
-    cols_i[0].metric("Registry Verified", "✅" if decision.spiffe_verified else "❌")
-    cols_i[1].metric("mTLS Allowed", "✅" if decision.transport_allowed else "❌")
+    cols_i[0].metric("Registry Verified", "✅" if id_status == "ALLOW" else "❌")
+    cols_i[1].metric("mTLS Allowed", "✅" if tr_status == "ALLOW" else ("❌" if tr_status == "DENY" else "NOT EVALUATED"))
     
     if decision.denial_source in ["Identity", "Transport"]:
         st.error(f"Execution halted at {decision.denial_source}.")
         
     st.divider()
 
-    # Block C: RBAC Decision
+    # Block C: RBAC Authorization
     st.markdown("#### C. RBAC Authorization")
-    st.metric("RBAC Allowed", "✅ Yes" if decision.rbac_allowed else "❌ No")
+    rbac_status = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
+    st.metric("RBAC Allowed", "✅ Yes" if rbac_status == "ALLOW" else ("❌ No" if rbac_status == "DENY" else "NOT EVALUATED"))
     if decision.denial_source == "RBAC":
         st.error(f"Denial Reason: {decision.reason}")
         
@@ -272,10 +303,13 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
 
     # Block D: TS-PHOL Decision
     st.markdown("#### D. TS-PHOL Reasoning")
-    if not decision.rbac_allowed or not decision.transport_allowed or not decision.spiffe_verified:
-        st.info("TS-PHOL not evaluated due to prior pipeline enforcement.")
+    tsphol_status = decision.evaluation_states.get("tsphol", "NOT_EVALUATED")
+    if tsphol_status == "NOT_EVALUATED":
+        st.info("Status: NOT EVALUATED")
     else:
-        st.metric("TS-PHOL Execution", decision.tsphol_decision.upper())
+        st.markdown("**⚙️ Derived Runtime Features**")
+        st.json(decision.derived_features or {})
+        st.metric("TS-PHOL Execution", tsphol_status.upper())
         if decision.denial_source == "TS-PHOL":
             st.error(f"Denial Reason: {decision.reason}")
             

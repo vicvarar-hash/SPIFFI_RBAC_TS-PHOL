@@ -71,7 +71,7 @@ policies:
   description: Security Engine evaluates policy and does not execute business tools
   rules: []
 - spiffe_id: spiffe://demo.local/agent/devops
-  description: ''
+  description: v2
   rules:
   - mcp: grafana
     tools:
@@ -90,6 +90,7 @@ policies:
     action: allow
   - mcp: atlassian
     tools:
+    - jira_batch_get_changelogs
     - jira_get_issue
     - jira_get_project_issues
     - jira_get_board_issues

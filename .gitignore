@@ -32,5 +32,7 @@ venv.bak/
 
 # SPIFFE/SPIRE
 *.sock
-infra/spire/data/
-infra/spire/sockets/
+**/data/
+**/sockets/
+!infra/spire/agent/data/.gitkeep
+!infra/spire/server/data/.gitkeep

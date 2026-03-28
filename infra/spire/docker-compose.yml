@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   spire-server:
@@ -7,6 +6,7 @@ services:
       - "8081:8081"
     volumes:
       - ./server:/opt/spire/conf/server
+      - ./server/data:/opt/spire/data
     command: ["-config", "/opt/spire/conf/server/server.conf"]
     healthcheck:
       test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck"]
@@ -23,6 +23,7 @@ services:
     volumes:
       - ./agent:/opt/spire/conf/agent
       - ./sockets:/opt/spire/sockets
+      - ./agent/data:/opt/spire/data
     command: ["-config", "/opt/spire/conf/agent/agent.conf", "-joinToken", "${SPIRE_TOKEN:-}"]
 
   spire-socat:

@@ -1,61 +1,41 @@
 rules:
-- name: high_risk_requires_high_confidence
-  description: High-risk domains require strong certainty
-  condition:
-    highest_risk: high
-    min_confidence: 0.95
-  decision: deny
-- name: enforce_tool_limit
-  description: Prevent excessive tool chaining
-  condition:
-    max_tools: 3
-  decision: deny
-- name: write_operations_require_confidence
-  description: Write operations require stronger confidence
-  condition:
-    contains_write: true
-    min_confidence: 0.9
-  decision: deny
-- name: cross_domain_high_risk_restriction
-  description: Do not allow high-risk cross-domain bundles
-  condition:
-    multiple_mcp: true
-    highest_risk: high
-  decision: deny
-- name: global_low_confidence_block
-  description: Block very low-confidence decisions
-  condition:
-    min_confidence: 0.6
-  decision: deny
-- name: write_without_read_context
-  description: Write actions require at least one supporting read/discovery action
-  condition:
-    contains_write: true
-    no_prior_read: true
-  decision: deny
-- name: required_capability_coverage
-  description: Task-implied required capabilities must be covered by selected tools
-  condition:
-    missing_required_capability: true
-  decision: deny
-- name: unnecessary_tool_usage
-  description: Deny tool bundles containing tools unrelated to the inferred task intent
-  condition:
-    irrelevant_tool_detected: true
-  decision: deny
-- name: cumulative_risk_threshold
-  description: Deny requests whose combined tool/domain risk is too high
-  condition:
-    cumulative_risk_score: 3
-  decision: deny
-- name: role_capability_mismatch
-  description: Deny requests where the caller persona is misaligned with the requested
-    domain
-  condition:
-    identity_domain_mismatch: true
-  decision: deny
-- name: High-risk domains require strong certainty
-  condition:
-    highest_risk: high
-    min_confidence: 0.9
-  decision: deny
+- rule_name: unsafe_write_prevention
+  description: Deny write operations without prior read/verification
+  if:
+    - predicate: ContainsWrite
+      equals: true
+    - predicate: ContainsRead
+      equals: false
+  then: DENY
+  derive: UnsafeWrite
+  priority: 100
+
+- rule_name: capability_coverage
+  description: Deny if agent lacks required capabilities for the mission
+  if:
+    - predicate: RequiredCapabilities
+      not_subset_of: HasCapabilities
+  then: DENY
+  derive: IncompleteIntent
+  priority: 90
+
+- rule_name: elevated_risk_detection
+  description: Identify high-risk multi-domain scenarios
+  if:
+    - predicate: HighestRiskLevel
+      equals: high
+    - predicate: MultiDomain
+      equals: true
+  then: ALLOW
+  derive: ElevatedRisk
+  priority: 80
+
+- rule_name: elevated_risk_confidence
+  description: Deny elevated risk missions if confidence is below 0.95
+  if:
+    - predicate: ElevatedRisk
+      equals: true
+    - predicate: ConfidenceValue
+      lt: 0.95
+  then: DENY
+  priority: 70

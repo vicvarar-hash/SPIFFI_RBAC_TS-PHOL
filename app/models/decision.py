@@ -9,6 +9,7 @@ class DecisionResult(BaseModel):
         "identity": "NOT_EVALUATED",
         "transport": "NOT_EVALUATED",
         "rbac": "NOT_EVALUATED",
+        "abac": "NOT_EVALUATED",
         "tsphol": "NOT_EVALUATED"
     }
     

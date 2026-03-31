@@ -21,14 +21,22 @@ class LoggerService:
             "comparison": comparison
         }
         with open(self.log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry) + "\n")
+            # Iteration 4C fix: handle 'set' objects
+            f.write(json.dumps(log_entry, default=lambda x: list(x) if isinstance(x, set) else str(x)) + "\n")
             
     def log_decision(self, task_idx: int, mode: str, prediction: Dict[str, Any], decision_result: Dict[str, Any]):
         active_rules = []
         if decision_result.get("context") and decision_result["context"].get("step_4_tsphol"):
-            active_rules = [r.get("rule_name") for r in decision_result["context"]["step_4_tsphol"].get("rule_evaluations", []) if isinstance(r, dict)]
+            # Update for Iteration 4C: use .get("name") instead of .get("rule_name")
+            active_rules = [r.get("name") for r in decision_result["context"]["step_4_tsphol"].get("rule_evaluations", []) if isinstance(r, dict) and r.get("triggered")]
 
         eval_states = decision_result.get("evaluation_states", {})
+        
+        # Iteration 4C metadata
+        context = decision_result.get("context", {})
+        intent = context.get("intent_decomposition")
+        abac = context.get("abac_baseline")
+        predicates = context.get("tsphol_predicate_set")
 
         log_entry = {
             "timestamp": datetime.now().isoformat(),
@@ -44,11 +52,16 @@ class LoggerService:
             "final_decision": decision_result.get("final_decision"),
             "denial_source": decision_result.get("denial_source"),
             "active_tsphol_rules": active_rules,
+            "intent_decomposition": intent,
+            "abac_baseline": abac,
+            "tsphol_predicates": predicates,
             "llm_output": decision_result.get("llm_output"),
             "derived_features": decision_result.get("derived_features"),
+            "experiment_context": decision_result.get("experiment_context"),
             "prediction": prediction,
             "decision_payload": decision_result
         }
         with open(self.decision_log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry) + "\n")
+            # Iteration 4C fix: handle 'set' objects (e.g. from PredicateEngine)
+            f.write(json.dumps(log_entry, default=lambda x: list(x) if isinstance(x, set) else str(x)) + "\n")
 

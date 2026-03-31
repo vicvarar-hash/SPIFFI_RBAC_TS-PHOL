@@ -1,0 +1,17 @@
+rules:
+- id: abac_write_confidence
+  condition: confidence < 0.9
+  action: deny
+  description: DENY Write operations if LLM confidence is below 0.9
+- id: abac_high_risk_confidence
+  condition: risk < confidence
+  action: deny
+  description: DENY if Confidence is lower than the threshold for the resource risk level
+- id: abac_multi_domain_high_risk
+  multi_domain_limit: true
+  action: deny
+  description: DENY High-risk multi-domain requests effectively limiting blast radius
+- id: abac_guest_deny
+  role: guest
+  action: deny
+  description: Explicit deny for guest role regardless of other attributes

@@ -6,41 +6,55 @@ from app.services.rbac_service import RBACService
 from app.services.tsphol_rule_service import TSPHOLRuleService
 from app.services.mcp_risk_service import MCPRiskService
 from app.services.spiffe_workload_service import SpiffeWorkloadService
+from app.services.abac_rule_service import ABACRuleService
+from app.services.capability_inference_service import CapabilityInferenceService
+from app.services.policy_loader import PolicyLoader
 
 def render_policy_studio():
     st.title("🛡️ Policy Studio")
     st.markdown("Configure identity, access control, and reasoning policies for the agentic system.")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "1. SPIFFE Registry", 
-        "2. Transport Allowlist", 
-        "3. RBAC (Identity-Based)", 
-        "4. TS-PHOL Rules",
-        "5. MCP Risk Levels"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "1. MCP Risk Levels",
+        "2. SPIFFE Registry", 
+        "3. Transport Allowlist", 
+        "4. RBAC (Identity-Based)", 
+        "5. ABAC (Attribute-Based)",
+        "6. TS-PHOL Rules",
+        "7. Capability Inference"
     ])
 
     registry_svc = SpiffeRegistryService()
     allowlist_svc = SpiffeAllowlistService(registry_service=registry_svc)
     rbac_svc = RBACService()
+    abac_svc = ABACRuleService()
     tsphol_svc = TSPHOLRuleService()
     risk_svc = MCPRiskService()
+    
+    cap_inf_svc = CapabilityInferenceService()
     
     workload_svc = SpiffeWorkloadService()
 
     with tab1:
-        _render_spiffe_registry(registry_svc, workload_svc)
+        _render_mcp_risk_levels(risk_svc)
 
     with tab2:
-        _render_transport_allowlist(allowlist_svc)
+        _render_spiffe_registry(registry_svc, workload_svc)
 
     with tab3:
+        _render_transport_allowlist(allowlist_svc)
+
+    with tab4:
         _render_rbac(rbac_svc, registry_svc)
         
-    with tab4:
+    with tab5:
+        _render_abac_baseline(abac_svc)
+        
+    with tab6:
         _render_tsphol(tsphol_svc)
         
-    with tab5:
-        _render_mcp_risk_levels(risk_svc)
+    with tab7:
+        _render_capability_inference(cap_inf_svc)
 
 
 def _render_spiffe_registry(svc: SpiffeRegistryService, workload_svc: SpiffeWorkloadService):
@@ -217,41 +231,56 @@ def _render_rbac(svc: RBACService, reg_svc: SpiffeRegistryService):
 
 
 def _render_tsphol(svc: TSPHOLRuleService):
-    st.header("TS-PHOL Rules")
-    st.markdown("Define reasoning rules decoupled from benchmark groundtruth.")
+    st.header("TS-PHOL Declarative Policies")
+    st.markdown("Define reasoning policies as declarative rules (JSON-driven interpretation).")
     
     rules = svc.get_all()
+    # Sort rules by priority for display
+    rules = sorted(rules, key=lambda r: r.get("priority", 0), reverse=True)
     
     for r in rules:
-        with st.expander(f"{r.get('name')} -> {r.get('decision').upper()}"):
+        with st.expander(f"[{r.get('priority', 0)}] {r.get('rule_name')} -> {r.get('then').upper()}"):
             st.write(f"*{r.get('description', '')}*")
-            st.json(r.get("condition", {}))
-            if st.button("Delete Rule", key=f"del_tsp_{r.get('name')}"):
-                success, msg = svc.delete_rule(r.get('name'))
+            st.markdown("**If (Conditions):**")
+            st.json(r.get("if", []))
+            if r.get("derive"):
+                st.info(f"🧬 Derives: `{r.get('derive')}`")
+            
+            if st.button("Delete Rule", key=f"del_tsp_{r.get('rule_name')}"):
+                success, msg = svc.delete_rule(r.get('rule_name'))
                 if success: st.rerun()
                 else: st.error(msg)
 
     st.divider()
-    st.subheader("Add/Update Rule")
+    st.subheader("Add/Update Declarative Policy")
     with st.form("add_tsp_form", clear_on_submit=False):
-        name = st.text_input("Rule Name (e.g. strict_write_policy)")
-        decision = st.selectbox("Decision", ["allow", "deny"])
+        rule_name = st.text_input("Rule Name (e.g. unsafe_write_prevention)")
+        desc = st.text_input("Description")
         
-        st.markdown("**Condition JSON (Key-Value pairs)**")
-        st.caption('Example: `{"contains_write": true, "min_confidence": 0.9}`')
-        condition_text = st.text_area("Condition", value="{}")
+        col1, col2 = st.columns(2)
+        with col1:
+            action = st.selectbox("Action (Then)", ["ALLOW", "DENY"])
+        with col2:
+            priority = st.number_input("Priority", min_value=0, max_value=1000, value=100)
+            
+        derivation = st.text_input("Derived Predicate (Optional)", help="e.g. UnsafeWrite")
         
-        if st.form_submit_button("Save Rule"):
+        st.markdown("**Conditions JSON (List of logic dicts)**")
+        st.caption('Example: `[{"predicate": "ContainsWrite", "equals": true}, {"predicate": "ContainsRead", "equals": false}]`')
+        st.caption('Operators: `equals`, `lt`, `gt`, `includes`, `contains`, `missing`, `not_subset_of`')
+        condition_text = st.text_area("Conditions (if)", value="[]")
+        
+        if st.form_submit_button("Save Policy"):
             try:
                 cond_obj = json.loads(condition_text)
-                if not isinstance(cond_obj, dict):
-                    st.error("Condition must be a JSON object.")
+                if not isinstance(cond_obj, list):
+                    st.error("Conditions must be a JSON array (list).")
                 else:
-                    success, msg = svc.save_rule(name, cond_obj, decision)
-                    if success: st.success(msg)
+                    success, msg = svc.save_rule(rule_name, desc, cond_obj, action, derivation, priority)
+                    if success: st.success(msg); st.rerun()
                     else: st.error(msg)
             except json.JSONDecodeError:
-                st.error("Invalid JSON format for condition.")
+                st.error("Invalid JSON format for conditions.")
 
 
 def _render_mcp_risk_levels(svc: MCPRiskService):
@@ -278,3 +307,166 @@ def _render_mcp_risk_levels(svc: MCPRiskService):
             success = svc.set_risk(mcp_name, risk_level)
             if success: st.rerun()
             else: st.error("Failed to update risk level.")
+
+
+def _render_abac_baseline(svc: ABACRuleService):
+    st.header("ABAC Baseline Rules")
+    st.markdown("Attribute-Based Access Control baseline rules (Parallel informational layer).")
+    
+    rules = svc.get_all()
+    
+    for r in rules:
+        with st.expander(f"Rule: {r.get('id')} -> {r.get('action').upper()}"):
+            st.write(f"*{r.get('description', '')}*")
+            st.json(r)
+            if st.button("Delete Rule", key=f"del_abac_{r.get('id')}"):
+                success, msg = svc.delete_rule(r.get('id'))
+                if success: st.rerun()
+                else: st.error(msg)
+
+    st.divider()
+    st.subheader("Add/Update ABAC Rule")
+    with st.form("add_abac_form", clear_on_submit=False):
+        rule_id = st.text_input("Rule ID (e.g. abac_6)")
+        
+        st.markdown("**Rule JSON (Attributes & Action)**")
+        st.caption('Example: `{"condition": "confidence < 0.9", "action": "deny"}` or `{"multi_domain_limit": true, "action": "deny"}`')
+        rule_text = st.text_area("Rule Body", value='{"condition": "risk < confidence", "action": "deny"}')
+        
+        if st.form_submit_button("Save ABAC Rule"):
+            try:
+                rule_obj = json.loads(rule_text)
+                if not isinstance(rule_obj, dict):
+                    st.error("Rule must be a JSON object.")
+                else:
+                    success, msg = svc.save_rule(rule_id, rule_obj)
+                    if success: st.success(msg)
+                    else: st.error(msg)
+            except json.JSONDecodeError:
+                st.error("Invalid JSON format.")
+
+def _render_capability_inference(svc: CapabilityInferenceService):
+    st.header("🧬 Capability Inference Policy")
+    st.markdown("Configure how required capabilities are derived from task text and domain context.")
+    
+    # Reload for freshest UI data
+    svc.catalog = PolicyLoader.load_json(svc.catalog_path)
+    svc.rules = PolicyLoader.load_json(svc.rules_path)
+    svc.config = PolicyLoader.load_json(svc.config_path)
+
+    # 1. Inference Configuration
+    st.subheader("Global Inference Configuration")
+    with st.form("inference_config_form"):
+        threshold = st.slider("Confidence Threshold (Intent -> Required)", 0.0, 1.0, svc.config.get("confidence_threshold", 0.75), 0.05)
+        st.caption("Low-confidence intent signals will be filtered out. Tool-derived capabilities are always confidence 1.0.")
+        if st.form_submit_button("Save Configuration"):
+            svc.config["confidence_threshold"] = threshold
+            if svc.save_config(svc.config):
+                st.success("Configuration saved.")
+                st.rerun()
+            else: st.error("Failed to save.")
+
+    st.divider()
+
+    # 2. Domain Capability Catalog
+    st.subheader("Domain Capability Catalog")
+    st.markdown("Define which capabilities are allowed per domain. Inference will filter out non-catalog items.")
+    
+    for domain, caps in list(svc.catalog.items()):
+        with st.expander(f"📚 Domain: {domain}"):
+            st.write(f"**Allowed Capabilities:** {', '.join(caps)}")
+            new_caps_text = st.text_area(f"Edit Catalog for {domain} (JSON list)", value=json.dumps(caps), key=f"cat_edit_{domain}")
+            
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                if st.button(f"Update {domain} Catalog"):
+                    try:
+                        new_caps = json.loads(new_caps_text)
+                        if isinstance(new_caps, list):
+                            svc.catalog[domain] = new_caps
+                            if svc.save_catalog(svc.catalog): st.rerun()
+                        else: st.error("Must be a list.")
+                    except: st.error("Invalid JSON.")
+            with c2:
+                if st.button(f"🗑️ Delete {domain} Domain"):
+                    del svc.catalog[domain]
+                    if svc.save_catalog(svc.catalog): st.rerun()
+
+    st.subheader("➕ Add New Domain to Catalog")
+    with st.form("add_domain_form", clear_on_submit=True):
+        new_domain_name = st.text_input("New Domain Name (e.g. MongoDB)")
+        new_domain_caps = st.text_area("Initial Capabilities (JSON list)", value='["ResourceRead", "ResourceWrite"]')
+        if st.form_submit_button("Add Domain"):
+            if not new_domain_name:
+                st.error("Domain name is required.")
+            else:
+                try:
+                    caps_list = json.loads(new_domain_caps)
+                    if isinstance(caps_list, list):
+                        svc.catalog[new_domain_name] = caps_list
+                        if svc.save_catalog(svc.catalog): st.rerun()
+                    else: st.error("Capabilities must be a JSON list.")
+                except: st.error("Invalid JSON for capabilities.")
+
+    st.divider()
+
+    # 3. Required Capability Rules
+    st.subheader("Strong Intent Capability Rules")
+    st.markdown("Define keyword-to-capability mappings with confidence levels.")
+    
+    rules = svc.rules
+    for i, rule in enumerate(rules):
+        with st.expander(f"Rule: {rule.get('name')} ({rule.get('domain')})"):
+            # CRUD: Update Form inside expander
+            with st.form(f"edit_rule_{i}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    u_name = st.text_input("Rule Name", value=rule.get("name"))
+                    u_domain = st.selectbox("Domain", list(svc.catalog.keys()) + ["General"], index=0 if rule.get("domain") not in svc.catalog else list(svc.catalog.keys()).index(rule.get("domain")))
+                with col2:
+                    current_kws = ", ".join(rule.get("keywords_any", []))
+                    u_kws = st.text_input("Keywords (comma separated)", value=current_kws)
+                    current_caps = ", ".join(rule.get("adds_capabilities", []))
+                    u_caps = st.text_input("Added Capabilities (comma separated)", value=current_caps)
+                
+                u_conf = st.slider("Confidence", 0.0, 1.0, rule.get("confidence", 0.9), 0.05)
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.form_submit_button("Update Rule"):
+                        rules[i] = {
+                            "name": u_name,
+                            "domain": u_domain,
+                            "keywords_any": [k.strip() for k in u_kws.split(",") if k.strip()],
+                            "adds_capabilities": [c.strip() for c in u_caps.split(",") if c.strip()],
+                            "confidence": u_conf
+                        }
+                        if svc.save_rules(rules): st.success("Rule updated."); st.rerun()
+                with c2:
+                    pass # We use a separate button outside the form for Delete due to Streamlit form limitations
+
+            if st.button("Delete Rule", key=f"del_inf_{i}"):
+                rules.pop(i)
+                if svc.save_rules(rules): st.rerun()
+    
+    st.subheader("➕ Add New Inference Rule")
+    with st.form("add_inf_rule", clear_on_submit=True):
+        r_name = st.text_input("Rule Name")
+        r_domain = st.selectbox("Domain", list(svc.catalog.keys()) + ["General"])
+        r_kws = st.text_input("Keywords (comma separated)")
+        r_caps = st.text_input("Added Capabilities (comma separated)")
+        r_conf = st.number_input("Confidence", 0.0, 1.0, 0.9, 0.05)
+        
+        if st.form_submit_button("Add Rule"):
+            new_rule = {
+                "name": r_name,
+                "domain": r_domain,
+                "keywords_any": [k.strip() for k in r_kws.split(",") if k.strip()],
+                "adds_capabilities": [c.strip() for c in r_caps.split(",") if c.strip()],
+                "confidence": r_conf
+            }
+            rules.append(new_rule)
+            if svc.save_rules(rules):
+                st.success("Rule added.")
+                st.rerun()
+            else: st.error("Failed to save.")

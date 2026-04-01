@@ -33,6 +33,11 @@ class ValidationService:
                 confidence=float(data.get("confidence", 0.0)),
                 reason=data.get("reason", "No reason provided."),
                 issues=data.get("issues", []),
+                issue_codes=data.get("issue_codes", []),
+                expected_domain=data.get("expected_domain", "Unknown"),
+                actual_domain=data.get("actual_domain", "Unknown"),
+                task_alignment_score=float(data.get("task_alignment_score", 0.0)),
+                task_alignment_details=data.get("task_alignment_details"),
                 raw_output=raw_output
             )
         except Exception as e:
@@ -65,7 +70,16 @@ class ValidationService:
           "is_valid": true/false,
           "confidence": 0.9,
           "reason": "Detailed explanation of your judgment.",
-          "issues": ["List of specific issues found, or empty if valid"]
+          "issues": ["List of specific human-readable issues"],
+          "issue_codes": ["WRONG_DOMAIN", "IRRELEVANT_TOOLS", "MISSING_CAPABILITY", etc.],
+          "expected_domain": "e.g. Grafana",
+          "actual_domain": "e.g. Hummingbot",
+          "task_alignment_score": 0.0 to 1.0,
+          "task_alignment_details": {
+            "domain_match": 1.0,
+            "capability_match": 1.0,
+            "tool_semantic_similarity": 0.7
+          }
         }
         
         DO NOT compare against any 'groundtruth' knowledge you might have. Judge only the provided bundle against the task and catalog context.

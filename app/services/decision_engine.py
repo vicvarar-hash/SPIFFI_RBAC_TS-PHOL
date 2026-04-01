@@ -95,7 +95,9 @@ class DecisionEngine:
                  tools: List[str], 
                  confidence: float,
                  llm_outputs: Dict[str, Any],
-                 task_text: str = "") -> DecisionResult:
+                 task_text: str = "",
+                 mode: str = "selection",
+                 mcp_filter: str = "All") -> DecisionResult:
         
         trace = pre_llm_result.get("trace", [])
         eval_context = pre_llm_result.get("context", {})
@@ -116,7 +118,7 @@ class DecisionEngine:
                 derived_features=None
             )
             
-        trace.append("Proceeding to Post-LLM evaluation.")
+        trace.append(f"Proceeding to Post-LLM evaluation (Mode: {mode}).")
 
         # --- Step 3: Tool Classification, Intent Decomposition & Capability Mapping ---
         justification = llm_outputs.get("justification", "") or llm_outputs.get("reason", "")
@@ -187,20 +189,94 @@ class DecisionEngine:
         # --- Step 6: TS-PHOL Policy-Driven Reasoning (Iteration 4E) ---
         evaluation_states["tsphol"] = "DENY"
         
+        # 4R: Hierarchical Domain Inference
+        if mcp_filter and mcp_filter != "All":
+            expected_domain = mcp_filter
+        elif intent_info.get("domain") and intent_info.get("domain") != "Unknown":
+            expected_domain = intent_info.get("domain")
+        else:
+            expected_domain = llm_outputs.get("expected_domain", "Uncertain")
+            
+        if expected_domain == "Unknown": expected_domain = "Uncertain"
+        
+        # 4R: Bundle Domain Inference (Patch)
+        if mode == "selection":
+            if mcps:
+                unique_mcps = set(mcps)
+                if len(unique_mcps) == 1:
+                    actual_domain = list(unique_mcps)[0]
+                else:
+                    actual_domain = "multi-domain"
+            else:
+                actual_domain = "Uncertain"
+        else:
+            actual_domain = llm_outputs.get("actual_domain", "Uncertain")
+        
+        if actual_domain == "Unknown": actual_domain = "Uncertain"
+        
+        # 4T: Deterministic Alignment Score Computation (Weighted Formula)
+        domain_match = (expected_domain.lower() == actual_domain.lower()) if expected_domain != "Uncertain" else True
+        domain_score = 1.0 if domain_match else 0.0
+        
+        req_caps = set(intent_info.get("task_required_capabilities", []))
+        has_caps = set(capabilities)
+        if req_caps:
+            cap_score = len(req_caps.intersection(has_caps)) / len(req_caps)
+        else:
+            cap_score = 1.0 # Vacuously aligned if no caps required
+            
+        # 4T: New Heuristic Semantic Score
+        semantic_score = self._compute_semantic_score(task_text, tool_audit)
+        
+        # 40% Domain, 40% Cap, 20% Semantic
+        final_alignment_score = (0.4 * domain_score) + (0.4 * cap_score) + (0.2 * semantic_score)
+        
+        # 4T: Filter for SSOT (Concrete only for UI/Audit)
+        from app.services.domain_capability_ontology import DomainCapabilityOntology
+        concrete_required = [c for c in req_caps if DomainCapabilityOntology.is_concrete(c)]
+        concrete_has = [c for c in has_caps if DomainCapabilityOntology.is_concrete(c)]
+        missing_concrete = [c for c in concrete_required if c not in concrete_has]
+        
         pred_context = {
             "spiffe_id": caller_spiffe_id,
             "role": persona_key,
             "mcps": mcps,
             "tools": tools,
-            "capabilities": list(capabilities),
+            "has_capabilities": list(has_caps), # Internal full set
+            "task_required_capabilities": list(req_caps), # Internal full set
+            "concrete_has": concrete_has, # SSOT Display set
+            "concrete_required": concrete_required, # SSOT Display set
+            "missing_concrete": missing_concrete, # SSOT Display set
             "intent_info": intent_info,
             "tool_aggregates": tool_aggregates, # 4I: Direct aggregate sync
             "confidence": confidence,
-            "highest_risk": highest_risk
+            "highest_risk": highest_risk,
+            # 4M: Validation-Aware Context
+            "expected_domain": expected_domain,
+            "actual_domain": actual_domain,
+            "task_alignment_score": final_alignment_score,
+            "alignment_components": {
+                "domain_score": domain_score,
+                "capability_score": cap_score,
+                "semantic_score": semantic_score
+            },
+            "issue_codes": llm_outputs.get("issue_codes", []),
+            "mode": mode # 4R
         }
         
         predicate_engine = PredicateEngine(pred_context)
         all_predicates = predicate_engine.get_all_predicates()
+
+        # 4T Audit Patch: Sync UI with engine's filtered capabilities (Single Source of Truth)
+        # Use CONCRETE caps for the primary UI display keys
+        eval_context["task_required_capabilities"] = concrete_required
+        eval_context["has_capabilities"] = concrete_has
+        eval_context["missing_capabilities"] = missing_concrete
+        eval_context["alignment_components"] = pred_context["alignment_components"]
+        
+        # Internal diagnostics
+        eval_context["all_required_capabilities"] = list(req_caps)
+        eval_context["all_has_capabilities"] = list(has_caps)
         
         tsphol_rules = self.tsphol_svc.get_all()
         
@@ -215,23 +291,54 @@ class DecisionEngine:
         eval_context["tsphol_summary"] = {
             "evaluated_rules": len(logic_trace),
             "triggered_rules": len([r for r in logic_trace if r["triggered"]]),
-            "final_decision": final_status,
+            "final_status": final_status,
+            "final_decision": final_status,  # Compatibility
             "reason": "No rule violations detected" if final_status == "ALLOW" else "Security policy violation"
         }
 
-        # Synthesis
-        if final_status == "DENY":
-            evaluation_states["tsphol"] = "DENY"
-            reason = "TS-PHOL formal logical denial"
-            denial_source = "TS-PHOL"
-        else:
-            evaluation_states["tsphol"] = "ALLOW"
-            reason = "All security policies satisfied"
-            denial_source = None
+        # 4T: Positive Explainability for ALLOW cases (from Concrete sets)
+        if final_status == "ALLOW":
+            findings = []
             
-        trace.append(f"TS-PHOL evaluated {len(tsphol_rules)} declarative rules. FINAL: {final_status}")
-        trace.append(f"FINAL: {final_status}")
-        return self._finalize(caller_spiffe_id, evaluation_states, final_status, reason, denial_source, trace, eval_context, True, True, llm_outputs, all_predicates)
+            # Check for concrete coverage
+            if not missing_concrete:
+                findings.append("Capability coverage satisfied")
+                derived_set.add("CapabilityCoverageSatisfied")
+            
+            if all_predicates.get("ContainsWrite") and all_predicates.get("ContainsRead"):
+                findings.append("Safe read-write sequence")
+                derived_set.add("SafeWriteContext")
+                
+            if not all_predicates.get("MultiDomain"):
+                findings.append("Single-domain request")
+                derived_set.add("SingleDomainRequest")
+                
+            if all_predicates.get("PrimaryIntent") != "UnknownIntent":
+                findings.append("Intent satisfied")
+                derived_set.add("IntentSatisfied")
+                
+            eval_context["tsphol_summary"]["positive_findings"] = findings
+            eval_context["tsphol_derived_predicates"] = list(derived_set)
+
+        # 4S: Synthesis - TS-PHOL IS THE FINAL AUTHORITY
+        evaluation_states["tsphol"] = final_status
+        reason = "TS-PHOL approved access" if final_status == "ALLOW" else "TS-PHOL formal logical denial"
+        # Label ABAC as advisory
+        eval_context["abac_baseline"]["advisory"] = True
+        
+        trace.append(f"TS-PHOL evaluated {len(tsphol_rules)} declarative rules. FINAL STATUS: {final_status}")
+        trace.append(f"Authority Check: TS-PHOL overrides context. Decision: {final_status}")
+        
+        return self._finalize(
+            caller_spiffe_id, 
+            evaluation_states, 
+            final_status, # Authoritative decision
+            reason, 
+            "TS-PHOL" if final_status == "DENY" else None, 
+            trace, 
+            eval_context, 
+            True, True, llm_outputs, all_predicates
+        )
 
     def _finalize(self, spiffe_id, states, final_dec, reason, denial_source, trace, context, pre_llm_result, llm_executed, llm_output, derived_features) -> DecisionResult:
         if final_dec == "DENY" and "FINAL: DENY" not in trace:
@@ -270,3 +377,56 @@ class DecisionEngine:
                 return False
             trace.append(f"RBAC Check: {mcp}.{tool} ALLOWED. ✅")
         return True
+
+    def _compute_semantic_score(self, task_text: str, tool_audit: List[Dict[str, Any]]) -> float:
+        """
+        4T: Deterministic lightweight semantic relevance score.
+        Computes overlap between task keywords and tool metadata.
+        """
+        if not task_text or not tool_audit:
+            return 0.0
+            
+        import re
+        # Small set of stop words to ignore
+        STOP_WORDS = {"the", "and", "for", "with", "this", "that", "from", "you", "your", "has", "was"}
+        
+        def tokenize(text):
+            # Split by non-alphanumeric and keep meaningful words
+            words = re.findall(r'\b\w{3,}\b', text.lower())
+            return {w for w in words if w not in STOP_WORDS}
+            
+        task_tokens = tokenize(task_text)
+        if not task_tokens:
+            return 0.0
+            
+        # Collect all tool-related tokens
+        tool_tokens = set()
+        for d in tool_audit:
+            # Tool name tokens
+            tool_tokens.update(tokenize(d["tool"].replace("_", " ")))
+            # Action tokens
+            for action in d.get("actions", []):
+                tool_tokens.update(tokenize(action))
+            # Capability tokens
+            for cap in d.get("capabilities", []):
+                # CamelCase split
+                cap_split = re.sub('([a-z0-9])([A-Z])', r'\1 \2', cap)
+                tool_tokens.update(tokenize(cap_split))
+                
+        intersection = task_tokens.intersection(tool_tokens)
+        
+        # Scoring: Score based on how many task keywords are covered by tool metadata.
+        # We divide by the number of task tokens (up to a limit)
+        # 1-2 matches in a complex task is good semantic proof.
+        match_count = len(intersection)
+        if match_count == 0: return 0.0
+        
+        # Exact match of a specific tool name in the task text should give high priority
+        for d in tool_audit:
+            if d["tool"].lower() in task_text.lower():
+                return 1.0
+        
+        # Heuristic ratio
+        base_score = match_count / min(len(task_tokens), 5) 
+        
+        return min(1.0, round(base_score, 2))

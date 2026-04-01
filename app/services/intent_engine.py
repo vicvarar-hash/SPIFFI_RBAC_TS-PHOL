@@ -54,26 +54,35 @@ class IntentEngine:
                 if any(kw in combined_context for kw in keywords):
                     detected_intents.append(intent)
         
-        # Refine Primary Intent
+        # Refine Primary Intent and Filter Secondary (Iteration 4L)
         if not detected_intents:
             primary_intent = "InformationDiscovery" if is_read else "UnknownIntent"
             secondary_intents = []
         else:
             primary_intent = detected_intents[0]
-            secondary_intents = detected_intents[1:]
+            # 4L: Filter secondary intents by tool support
+            raw_secondary = detected_intents[1:]
+            secondary_intents = []
             
-        # 3. Precise Capability Extraction (REFINED 4H)
-        # Logic: RequiredCapabilities = ToolCapabilities ∪ (IntentCapabilities | Confidence >= Threshold)
+            tool_caps_lower = {c.lower() for d in tool_metadata for c in d.get("capabilities", [])}
+            tool_actions_lower = {a.lower() for d in tool_metadata for a in d.get("actions", [])}
+            combined_tool_signals = tool_caps_lower.union(tool_actions_lower)
+            
+            for intent in raw_secondary:
+                # Rule: Intent keywords must overlap with tool capabilities/actions 
+                # OR be strongly supported by primary intent domain
+                intent_keywords = domain_tax.get(intent, [])
+                if any(kw.lower() in combined_tool_signals for kw in intent_keywords):
+                    secondary_intents.append(intent)
+                elif intent in ["InformationDiscovery", "SystemUpdate"]: # Generic exceptions
+                    secondary_intents.append(intent)
+            
+        # 3. Precise Task-Derived Capability Extraction (Iteration 4O Reform)
+        # Logic: RequiredCapabilities come ONLY from Task/Intent signals.
         
-        # A. Collect tool-derived capabilities
-        tool_capabilities = set()
-        for d in tool_metadata:
-            for cap in d["capabilities"]:
-                tool_capabilities.add(cap)
-        
-        # B. Use Inference Service for intent-derived and domain-aware requirements
-        required_capabilities, cap_audit = self.inference_svc.get_required_capabilities(
-            primary_domain.value, task_text, tool_capabilities
+        # Call the refactored task-driven inference service
+        task_required_capabilities, cap_audit = self.inference_svc.get_task_required_capabilities(
+            primary_domain.value, task_text, intent=primary_intent
         )
         
         # 4. Computed Intent Properties (STRICTLY FROM TOOLS)
@@ -84,7 +93,7 @@ class IntentEngine:
         return {
             "primary_intent": primary_intent,
             "secondary_intents": list(secondary_intents),
-            "required_capabilities": list(required_capabilities),
+            "task_required_capabilities": list(task_required_capabilities),
             "required_capability_metadata": cap_audit,  # New 4H Audit Metadata
             "domain": primary_domain.value,
             "intent_properties": {

@@ -18,6 +18,12 @@ class TSPHOLInterpreter:
         derived = set()
         trace = []
         final_decision = "ALLOW"
+        
+        # 4R: Selection vs Validation Consistency Safeguard
+        mode = predicates.get("mode", "validation")
+        # In this iteration, we treat selection as 'ValidationEquivalent' if it has all caps
+        # to ensure it doesn't get blocked by alignment alone.
+        skip_alignment_denials = (mode == "selection")
 
         # Sort rules by priority (highest first)
         sorted_rules = sorted(rules, key=lambda r: r.get("priority", 0), reverse=True)
@@ -28,9 +34,41 @@ class TSPHOLInterpreter:
             action = rule.get("then", "ALLOW")
             derivation = rule.get("derive")
 
+            # 4R: Handle Alignment Evaluation Predicate specifically for transparency
+            is_alignment_rule = rule_name == "low_task_alignment"
+            alignment_eval = predicates.get("AlignmentEvaluated", True)
+            
             # 4K: Evaluate and get structured reason
             matched, reason = self.evaluate_conditions(conditions, predicates, derived)
             
+            # 4R: Transparency - Check if rule was skipped due to missing alignment data
+            if is_alignment_rule and not alignment_eval:
+                rule_res = {
+                    "rule": rule_name,
+                    "evaluated": False,
+                    "triggered": False,
+                    "passed": True,
+                    "reason": "Alignment not evaluated (insufficient data)",
+                    "action": action,
+                    "status": "SKIPPED"
+                }
+                trace.append(rule_res)
+                continue
+                
+            # 4R: Apply Selection Safeguard
+            if is_alignment_rule and skip_alignment_denials and matched and action == "DENY":
+                rule_res = {
+                    "rule": rule_name,
+                    "evaluated": True,
+                    "triggered": True,
+                    "passed": True, # Overridden by safeguard
+                    "reason": f"{reason} | [SAFEGUARD] Deny skipped in selection mode",
+                    "action": action,
+                    "status": "SAFEGUARDED"
+                }
+                trace.append(rule_res)
+                continue
+
             # Rule Result Schema (4K Standard)
             rule_res = {
                 "rule": rule_name,
@@ -125,10 +163,29 @@ class TSPHOLInterpreter:
                 return False, f"Unsupported operator in rule for predicate: {p_name}"
             
             if not matched:
-                # Return failure reason immediately
-                # 4K Human-readable tweak
+                # 4L: Human-friendly Reasoning
+                if p_name == "RequiredCapabilities" and "not_subset_of" in cond:
+                    return False, "Rule not triggered: all required capabilities are satisfied"
+                if p_name == "ContainsRead" and cond.get("equals") is False:
+                    return False, "Rule not triggered: ContainsRead = true → safe write context"
+                if p_name == "MultiDomain" and cond.get("equals") is True:
+                    return False, "Rule not triggered: request is not multi-domain"
+                if p_name == "ConfidenceValue" and "lt" in cond:
+                    return False, f"Rule not triggered: confidence {actual_val} is sufficient"
+                
                 negation = "is not" if "==" in op else "does not satisfy"
                 return False, f"{p_name} {negation} condition ({op})"
+            
+            # Matched Case (Reason Part)
+            if p_name == "RequiredCapabilities" and "not_subset_of" in cond:
+                diff = actual_val - predicates.get(cond["not_subset_of"], set())
+                reason_part = f"Missing required capabilities: {diff}"
+            elif p_name == "ContainsWrite" and cond.get("equals") is True:
+                reason_part = "Request contains write operations"
+            elif p_name == "MultiDomain" and cond.get("equals") is True:
+                reason_part = "Request spans multiple domains (Elevated Risk)"
+            else:
+                reason_part = f"{p_name} matches condition ({op})"
             
             match_details.append(reason_part)
 

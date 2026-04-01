@@ -39,3 +39,41 @@ rules:
       lt: 0.95
   then: DENY
   priority: 70
+
+- rule_name: task_bundle_domain_mismatch
+  description: Deny when the proposed bundle belongs to a different domain than the task
+  if:
+    - predicate: TaskBundleDomainMismatch
+      equals: true
+  then: DENY
+  derive: IrrelevantBundle
+  priority: 120
+
+- rule_name: validation_failure_denial
+  description: Deny when validation explicitly determines the bundle is invalid for the task
+  if:
+    - predicate: ValidationFailed
+      equals: true
+  then: DENY
+  derive: TaskMismatch
+  priority: 110
+
+- rule_name: capability_coverage_violation
+  description: Deny when the bundle lacks a critical capability implied by the task
+  if:
+    - predicate: CapabilityCoverageViolation
+      equals: true
+  then: DENY
+  derive: CapabilityCoverageViolation
+  priority: 110
+
+- rule_name: low_task_alignment
+  description: Deny when the bundle is semantically irrelevant to the task
+  if:
+    - predicate: AlignmentEvaluated
+      equals: true
+    - predicate: TaskAlignmentScore
+      lt: 0.5
+  then: DENY
+  derive: LowAlignment
+  priority: 60

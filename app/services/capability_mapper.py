@@ -11,19 +11,17 @@ class CapabilityMapper:
     Refined in Iteration 4I with hierarchy and enrichment.
     """
     
-    # 4I: Capability Hierarchy (Abstract level reasoning)
-    CAPABILITY_HIERARCHY = {
-        "AlertRuleReview": "ObservabilityRead",
-        "DatasourceReview": "ObservabilityRead",
-        "OncallScheduleReview": "ObservabilityRead",
-        "OncallUserInspection": "ObservabilityRead",
-        "MetricsQuery": "ObservabilityRead",
-        "LogAnalysis": "ObservabilityRead",
+    # 4T: Hierarchical logic moved to ontology/classifier where possible. 
+    # Mapper focuses on expanding tools to capabilities.
+    MAPPER_HIERARCHY = {
         "IssueRead": "AtlassianRead",
         "HistoryReview": "AtlassianRead",
         "IssueSearch": "AtlassianRead",
         "IssueUpdate": "AtlassianWrite",
-        "IssueCreation": "AtlassianWrite"
+        "IssueCreation": "AtlassianWrite",
+        "AlertRuleReview": "ObservabilityRead",
+        "DatasourceReview": "ObservabilityRead",
+        "MetricsQuery": "ObservabilityRead"
     }
 
     def __init__(self):
@@ -48,7 +46,7 @@ class CapabilityMapper:
                 final_capabilities.add(cap)
                 
                 # Hierarchy Enrichment (4I Criterion)
-                abstract_cap = self.CAPABILITY_HIERARCHY.get(cap)
+                abstract_cap = self.MAPPER_HIERARCHY.get(cap)
                 if abstract_cap:
                     final_capabilities.add(abstract_cap)
                     

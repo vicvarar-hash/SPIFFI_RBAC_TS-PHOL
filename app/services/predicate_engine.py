@@ -31,14 +31,14 @@ class PredicateEngine:
         p["UsesMCPs"] = set(context.get("mcps", []))
         p["UsesTools"] = set(context.get("tools", []))
         
-        # Capabilities (Directly from CapabilityMapper)
-        p["HasCapabilities"] = set(context.get("capabilities", []))
-        
-        # Intent Metadata
+        # 4T: Keep full set for internal rule logic (SSOT filtering handled in UI/Context)
+        p["HasCapabilities"] = set(context.get("has_capabilities", []))
+        p["RequiredCapabilities"] = set(context.get("task_required_capabilities", []))
+
+        # Intent Metadata (for tracing)
         intent_info = context.get("intent_info", {})
         p["PrimaryIntent"] = intent_info.get("primary_intent", "Unknown")
         p["SecondaryIntents"] = set(intent_info.get("secondary_intents", []))
-        p["RequiredCapabilities"] = set(intent_info.get("required_capabilities", []))
         
         # 4I: Use Direct Tool Aggregates for strict consistency
         aggregates = context.get("tool_aggregates", {})
@@ -66,6 +66,30 @@ class PredicateEngine:
         # Metadata
         p["ConfidenceValue"] = context.get("confidence", 0.0)
         p["HighestRiskLevel"] = context.get("highest_risk", "low")
+        
+        # 4M: Task/Bundle Alignment Predicates
+        p["TaskDomainExpected"] = context.get("expected_domain", "Uncertain")
+        p["BundleDomainActual"] = context.get("actual_domain", "Uncertain")
+        p["TaskAlignmentScore"] = context.get("task_alignment_score", 0.0)
+        
+        # 4R: Alignment Reliability
+        p["AlignmentEvaluated"] = (p["TaskDomainExpected"] != "Uncertain")
+        
+        # Logic Flags
+        p["TaskBundleDomainMismatch"] = (p["TaskDomainExpected"] != p["BundleDomainActual"]) and (p["TaskDomainExpected"] != "Uncertain")
+        
+        issue_codes = context.get("issue_codes", [])
+        p["ValidationFailed"] = len(issue_codes) > 0
+        # 4O/4T: Strict Capability Alignment Logic
+        from app.services.domain_capability_ontology import DomainCapabilityOntology
+        full_missing = p["RequiredCapabilities"] - p["HasCapabilities"]
+        
+        # summary list: only concrete for user-facing transparency
+        p["MissingCapabilities"] = [c for c in full_missing if DomainCapabilityOntology.is_concrete(c)]
+        
+        p["CapabilityCoverageSatisfied"] = len(full_missing) == 0
+        p["CapabilityCoverageViolation"] = len(full_missing) > 0
+        p["BundleIrrelevantToTask"] = "IRRELEVANT_TOOLS" in issue_codes or "WRONG_DOMAIN" in issue_codes
         
         return p
 

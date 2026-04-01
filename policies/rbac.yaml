@@ -1,9 +1,10 @@
 policies:
 - spiffe_id: spiffe://demo.local/agent/incident
-  description: Incident lifecycle and escalation
+  description: v2 Incident Management
   rules:
   - mcp: grafana
     tools:
+    - grafana.list_datasources
     - query_prometheus
     - find_error_pattern_logs
     - list_alert_rules

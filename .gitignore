@@ -36,3 +36,6 @@ venv.bak/
 **/sockets/
 !infra/spire/agent/data/.gitkeep
 !infra/spire/server/data/.gitkeep
+
+# Temporary files
+tmp/

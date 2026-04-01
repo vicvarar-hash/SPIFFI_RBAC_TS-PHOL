@@ -204,7 +204,7 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                         try:
                             if selection.raw_output: sel_raw = json.loads(selection.raw_output)
                         except: pass
-                        sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, selection.selected_mcp, selection.selected_tools, selection.confidence, sel_raw, task.task)
+                        sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, selection.selected_mcp, selection.selected_tools, selection.confidence, sel_raw, task.task, mode="selection", mcp_filter=selected_mcp_filter)
                         sel_decision.llm_executed = True
                         sel_decision.llm_output = {"selected_mcp": selection.selected_mcp, "selected_tools": selection.selected_tools, "confidence": selection.confidence, "justification": selection.justification}
                     else:
@@ -248,9 +248,19 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                         try:
                             if validation.raw_output: val_raw = json.loads(validation.raw_output)
                         except: pass
-                        val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, validation.confidence, val_raw, task.task)
+                        val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, validation.confidence, val_raw, task.task, mode="validation", mcp_filter=selected_mcp_filter)
                         val_decision.llm_executed = True
-                        val_decision.llm_output = {"is_valid": validation.is_valid, "confidence": validation.confidence, "reason": validation.reason, "issues": validation.issues}
+                        val_decision.llm_output = {
+                            "is_valid": validation.is_valid, 
+                            "confidence": validation.confidence, 
+                            "reason": validation.reason, 
+                            "issues": validation.issues,
+                            "issue_codes": validation.issue_codes,
+                            "expected_domain": validation.expected_domain,
+                            "actual_domain": validation.actual_domain,
+                            "task_alignment_score": validation.task_alignment_score,
+                            "task_alignment_details": validation.task_alignment_details # 4O: Transparency
+                        }
                     else:
                         validation = ValidationResult(is_valid=False, confidence=0.0, reason="Skipped due to Pre-LLM block", issues=["SKIPPED"], raw_output=None)
                         val_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, task.candidate_mcp, task.candidate_tools)
@@ -280,6 +290,45 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                             st.warning("⚠️ LLM INFERENCE SKIPPED: Pre-LLM checks failed.")
                         st.divider()
                         _render_decision_panel(val_decision, val_comparison, caller_display_name, "val")
+                        
+                        # 4M: Task/Bundle Alignment Audit
+                        st.divider()
+                        st.subheader("🚦 Task/Bundle Alignment Audit")
+                        
+                        v_out = val_decision.llm_output or {}
+                        col_a1, col_a2, col_a3 = st.columns(3)
+                        
+                        # 4R: Transparency
+                        alignment_eval = val_decision.context.get("tsphol_predicate_set", {}).get("AlignmentEvaluated", False)
+                        eval_icon = "✅" if alignment_eval else "❌"
+                        
+                        col_a1.metric("Expected Domain", v_out.get("expected_domain", "Uncertain"))
+                        col_a2.metric("Actual Domain", v_out.get("actual_domain", "Uncertain"))
+                        
+                        score_label = f"Alignment Score ({eval_icon} Evaluated)"
+                        col_a3.metric(score_label, f"{v_out.get('task_alignment_score', 0.0):.2f}")
+                        
+                        # 4S: Alignment Breakdown (Components)
+                        components = val_decision.context.get("alignment_components", {})
+                        if components:
+                            with st.expander("📊 Alignment Breakdown (Weighted Audit)", expanded=True):
+                                c1, c2, c3 = st.columns(3)
+                                c1.metric("Domain (40%)", f"{components.get('domain_score', 0.0):.2f}")
+                                c2.metric("Capability (40%)", f"{components.get('capability_score', 0.0):.2f}")
+                                c3.metric("Semantic (20%)", f"{components.get('semantic_score', 0.0):.2f}")
+                                
+                                st.caption("Formula: `0.4*Domain + 0.4*Cap + 0.2*Semantic`")
+
+                        if v_out.get("issue_codes"):
+                            st.write("**Validation Issue Codes:**")
+                            st.info(", ".join(v_out.get("issue_codes", [])))
+                        
+                        if v_out.get("actual_domain") != v_out.get("expected_domain") and v_out.get("expected_domain") != "Uncertain":
+                            st.warning("⚠️ Domain Mismatch Detected")
+                        elif v_out.get("task_alignment_score", 1.0) < 0.4:
+                            st.error("❌ Critical Low Alignment")
+                        else:
+                            st.success("✅ Mission Alignment Verified")
                 
                 with st.expander("📄 Raw Model Outputs & Details", expanded=False):
                     st.subheader("📋 Context Initialization Audit")
@@ -363,7 +412,10 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
         if audit_data:
             import pandas as pd
             df = pd.DataFrame(audit_data)
-            # Rename columns for display
+            # 4T Hide abstract capabilities from audit table
+            from app.services.domain_capability_ontology import DomainCapabilityOntology
+            df["capabilities"] = df["capabilities"].apply(lambda caps: [c for c in caps if DomainCapabilityOntology.is_concrete(c)])
+            
             df_disp = df[["tool", "source", "actions", "capabilities", "notes"]].copy()
             df_disp.columns = ["Tool Name", "Source", "Action Classes", "Capabilities", "Notes"]
             st.table(df_disp)
@@ -387,12 +439,15 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
                 st.markdown(f"**Domain Context:** `{intent.get('domain', 'GENERAL')}`")
                 st.markdown(f"**Primary Intent:** `{intent.get('primary_intent')}`")
                 st.markdown(f"**Secondary Intents:** {', '.join(intent.get('secondary_intents', [])) or 'None'}")
-                st.caption(f"**Precise Capabilities Required:** {', '.join(intent.get('required_capabilities', [])) or 'None'}")
+                
+                # 4Q: Single Source of Truth
+                task_reqs = decision.context.get("task_required_capabilities", [])
+                st.info(f"**Required Mission Capabilities:** {', '.join(task_reqs) or 'None'}")
             else:
                 st.info("Intent not decomposed.")
                 
     with col_ib2:
-        with st.expander("⚖️ ABAC Baseline", expanded=True):
+        with st.expander("⚖️ ABAC Baseline (Advisory)", expanded=True):
             abac = decision.context.get("abac_baseline", {})
             if abac:
                 abac_decision = abac.get("decision", "NOT_EVALUATED")
@@ -418,43 +473,90 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
     st.markdown("##### 🧪 Required Capability Audit (4H)")
     metadata = intent.get("required_capability_metadata", [])
     if metadata:
-        with st.expander("View Requirement Provenance & Filtering"):
-            for m in metadata:
-                icon = "✅" if m["status"] == "ACCEPTED" else ("⚠️" if m["status"] == "FILTERED" else "❌")
-                status = m["status"]
-                source = m["source"]
-                cap = m["capability"]
-                conf = m.get("confidence", 1.0)
-                reason = m.get("reason", "")
-                
-                st.markdown(f"{icon} **{cap}**")
-                st.caption(f"↳ Source: {source} | Status: {status} | Conf: {conf} | {reason}")
+        from app.services.domain_capability_ontology import DomainCapabilityOntology
+        # Filter out abstract capabilities from provenance view for cleanliness
+        visible_metadata = [m for m in metadata if DomainCapabilityOntology.is_concrete(m["capability"])]
+        
+        if visible_metadata:
+            with st.expander("View Requirement Provenance"):
+                for m in visible_metadata:
+                    icon = "✅" if m["status"] == "ACCEPTED" else ("⚠️" if m["status"] == "FILTERED" else "❌")
+                    status = m["status"]
+                    source = m["source"]
+                    cap = m["capability"]
+                    conf = m.get("confidence", 1.0)
+                    reason = m.get("reason", "")
+                    
+                    st.markdown(f"{icon} **{cap}**")
+                    st.caption(f"↳ Source: {source} | Status: {status} | Conf: {conf} | {reason}")
+        else:
+            st.caption("No concrete capability requirements derived.")
+    # 4. 🧠 Task Capability Requirements (Iteration 4Q: Mission vs. Mechanism)
+    st.divider()
+    st.markdown("#### 🧠 Task Capability Requirements (4Q Audit)")
+    
+    req_caps = set(decision.context.get("task_required_capabilities", []))
+    has_caps = set(decision.context.get("has_capabilities", []))
+    all_mentioned = req_caps.union(has_caps)
+    
+    if all_mentioned:
+        comp_data = []
+        for cap in sorted(list(all_mentioned)):
+            is_req = cap in req_caps
+            is_has = cap in has_caps
+            status = "✅ Satisfied" if (is_req and is_has) else ("❌ MISSING" if is_req else "➕ Extra")
+            comp_data.append({
+                "Capability": cap,
+                "Required (Task)": "Yes" if is_req else "No",
+                "Provided (Tools)": "Yes" if is_has else "No",
+                "Status": status
+            })
+        st.table(comp_data)
+        
+        missing = req_caps - has_caps
+        if missing:
+            st.error(f"⚠️ **Mission Critical Failure:** The following capabilities required by the task are missing from the tool bundle: `{', '.join(missing)}`")
+        elif req_caps:
+            st.success("✨ **Capability Alignment Verified:** All mission-required capabilities are present in the mechanism bundle.")
+    else:
+        st.info("No capability requirements or provisions detected.")
 
     st.divider()
 
-    # Block E: TS-PHOL Intent-Centric Reasoning
-    st.markdown("#### E. TS-PHOL Intent-Centric Reasoning")
+    # Block E: TS-PHOL Final Authority
+    st.markdown("#### E. TS-PHOL Final Authority")
     tsphol_status = decision.evaluation_states.get("tsphol", "NOT_EVALUATED")
     if tsphol_status == "NOT_EVALUATED":
         st.info("Status: NOT EVALUATED (Prior RBAC Block)")
     else:
         with st.expander("🔍 Logical Predicate Trace", expanded=True):
             st.markdown("**1. Base & Derived Predicates**")
+            # 4T: Filter abstract predicates for visible trace
+            from app.services.domain_capability_ontology import DomainCapabilityOntology
             base_p = decision.context.get("tsphol_predicate_set", {})
             clean_p = {}
             for k, v in base_p.items():
                 if k.startswith("_"): continue
-                if isinstance(v, (set, list)): clean_p[k] = sorted(list(v))
-                else: clean_p[k] = v
+                
+                # Filter capability sets
+                if k in ["RequiredCapabilities", "HasCapabilities"] and isinstance(v, (set, list)):
+                    v = sorted([c for c in v if DomainCapabilityOntology.is_concrete(c)])
+                elif isinstance(v, (set, list)): 
+                    v = sorted(list(v))
+                
+                clean_p[k] = v
             st.json(clean_p)
             
             st.markdown("**2. TS-PHOL Rule Evaluation Audit (4K)**")
             summary = decision.context.get("tsphol_summary", {})
             if summary:
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Rules Evaluated", summary["evaluated_rules"])
-                c2.metric("Rules Triggered", summary["triggered_rules"])
-                c3.metric("Final Status", summary["final_decision"])
+                c1.metric("Rules Evaluated", summary.get("evaluated_rules", 0))
+                c2.metric("Rules Triggered", summary.get("triggered_rules", 0))
+                
+                # Check for both possible keys (fix for KeyError)
+                f_status = summary.get("final_status") or summary.get("final_decision", "UNKNOWN")
+                c3.metric("Final Status", f_status)
             
             l_trace = decision.context.get("tsphol_logic_trace", [])
             if l_trace:
@@ -465,8 +567,8 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
                         with r1:
                             st.markdown(f"**Rule:** `{entry['rule']}`")
                         with r2:
-                            if entry["passed"]: st.success("PASS")
-                            else: st.error("FAIL")
+                            if entry["passed"]: st.success("✔ Passed")
+                            else: st.error("✖ Triggered")
                             
                         st.caption(f"↳ Reasoning: {entry['reason']}")
                         if entry.get("derived"):
@@ -478,6 +580,14 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
                             st.caption(f"{icon} Action triggered: {entry['action']}")
             else:
                 st.info("No rules evaluated.")
+                
+            # 4L: Positive Findings Display
+            findings = summary.get("positive_findings", [])
+            if findings:
+                st.divider()
+                st.markdown("**✅ Positive Findings**")
+                for f in findings:
+                    st.success(f"↳ {f}")
 
         st.metric("Final TS-PHOL Decision", tsphol_status, delta="Authority Layer", delta_color="off")
         if decision.denial_source == "TS-PHOL":

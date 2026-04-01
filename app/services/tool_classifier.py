@@ -44,7 +44,9 @@ class ToolClassifier:
         "cancel_order": ["write", "delete"],
         # Grafana New (4I)
         "get_alert_rule_by_uid": ["read", "alerting"],
-        "get_current_oncall_users": ["read", "oncall"]
+        "get_current_oncall_users": ["read", "oncall"],
+        "query_loki_logs": ["read", "logging"],
+        "list_oncall_users": ["read", "oncall"]
     }
     
     # Curated mappings for tool capabilities
@@ -75,7 +77,9 @@ class ToolClassifier:
         "cancel_order": ["EquityWrite"],
         # Grafana New (4I)
         "get_alert_rule_by_uid": ["AlertRuleReview"],
-        "get_current_oncall_users": ["OncallUserInspection"]
+        "get_current_oncall_users": ["OncallUserInspection"],
+        "query_loki_logs": ["LogQuery"],
+        "list_oncall_users": ["OncallUserInspection"]
     }
 
     def classify_tools(self, tools: List[str]) -> List[Dict[str, Any]]:

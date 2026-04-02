@@ -38,3 +38,36 @@ def load_mcp_personas(directory_path: str) -> Tuple[List[MCPPersona], List[str]]
                 errors.append(f"Error loading {filename}: {str(e)}")
     
     return personas, errors
+
+def save_mcp_persona(persona: MCPPersona, directory_path: str) -> bool:
+    """
+    6B: Persists an updated MCPPersona back to its source JSON file.
+    """
+    if not persona.source_file:
+        return False
+        
+    file_path = os.path.join(directory_path, persona.source_file)
+    
+    # Map back to dict
+    tools_data = []
+    for tool in persona.tools:
+        tools_data.append({
+            "name": tool.name,
+            "description": tool.description,
+            "inputSchema": tool.input_schema # Populated with alias in model config
+        })
+        
+    data = {
+        "name": persona.name,
+        "description": persona.description,
+        "risk_level": persona.risk_level,
+        "tools": tools_data
+    }
+    
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving {persona.source_file}: {str(e)}")
+        return False

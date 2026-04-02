@@ -407,7 +407,8 @@ def _render_heuristic_logic(svc: Any):
     action_rules = policy.get("action_rules", [])
     
     for i, rule in enumerate(action_rules):
-        with st.expander(f"Rule: {rule.get('id')}"):
+        rule_label = f"Rule: {rule.get('id')}"
+        with st.expander(rule_label):
             with st.form(f"edit_action_rule_{i}"):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -424,6 +425,31 @@ def _render_heuristic_logic(svc: Any):
                     }
                     policy["action_rules"] = action_rules
                     if svc.save_policy(policy): st.success("Saved."); st.rerun()
+
+            if st.button("🗑️ Delete Action Rule", key=f"del_action_{i}"):
+                action_rules.pop(i)
+                policy["action_rules"] = action_rules
+                if svc.save_policy(policy): st.success("Rule Deleted."); st.rerun()
+
+    st.markdown("#### ➕ Add New Action Rule")
+    with st.form("add_action_rule_form", clear_on_submit=True):
+        a_id = st.text_input("New Rule ID (e.g. prefix:audit_)")
+        a_prefix = st.text_input("Prefix (e.g. audit_)")
+        a_actions = st.text_input("Actions (comma separated, e.g. read, audit)")
+        if st.form_submit_button("Add Action Rule"):
+            if not a_id or not a_prefix:
+                st.error("Rule ID and Prefix are required.")
+            else:
+                new_rule = {
+                    "id": a_id,
+                    "prefix": a_prefix,
+                    "actions": [a.strip() for a in a_actions.split(",") if a.strip()]
+                }
+                action_rules.append(new_rule)
+                policy["action_rules"] = action_rules
+                if svc.save_policy(policy): st.success("Rule Added."); st.rerun()
+
+    st.divider()
 
     # 2. Capability Rules
     st.subheader("2. Capability Inference Rules (Keyword-based)")
@@ -447,6 +473,31 @@ def _render_heuristic_logic(svc: Any):
                     }
                     policy["capability_rules"] = cap_rules
                     if svc.save_policy(policy): st.success("Saved."); st.rerun()
+
+            if st.button("🗑️ Delete Cap Rule", key=f"del_cap_{i}"):
+                cap_rules.pop(i)
+                policy["capability_rules"] = cap_rules
+                if svc.save_policy(policy): st.success("Rule Deleted."); st.rerun()
+
+    st.markdown("#### ➕ Add New Capability Rule")
+    with st.form("add_cap_rule_form", clear_on_submit=True):
+        c_id = st.text_input("New Rule ID (e.g. domain:stripe)")
+        c_kw = st.text_input("Keyword (e.g. stripe)")
+        c_caps = st.text_input("Capabilities (comma separated, e.g. PaymentRead)")
+        if st.form_submit_button("Add Capability Rule"):
+            if not c_id or not c_kw:
+                st.error("Rule ID and Keyword are required.")
+            else:
+                new_rule = {
+                    "id": c_id,
+                    "keyword": c_kw,
+                    "capabilities": [c.strip() for c in c_caps.split(",") if c.strip()]
+                }
+                cap_rules.append(new_rule)
+                policy["capability_rules"] = cap_rules
+                if svc.save_policy(policy): st.success("Rule Added."); st.rerun()
+
+    st.divider()
 
     # 3. Fallbacks
     st.subheader("3. Fallback Registry")

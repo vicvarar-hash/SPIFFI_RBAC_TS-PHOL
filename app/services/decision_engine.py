@@ -147,16 +147,21 @@ class DecisionEngine:
         eval_context["capability_mapping"] = list(capabilities)
         trace.append(f"Fact Extraction: Domain -> {intent_info['domain']}, Intent -> {intent_info['primary_intent']}. ✅")
 
-        # --- Step 4: RBAC ---
+        # --- Step 4: RBAC (Generalized Refinement) ---
         evaluation_states["rbac"] = "DENY"
         policy = self.rbac_svc.get_policy_for_identity(caller_spiffe_id)
         if not policy:
             trace.append("RBAC Check: No identity policies found. ❌")
+            rbac_audit = {"decision": "DENY", "reason": "No RBAC policies mapped", "matched_rule": "none", "rbac_trace": []}
+            eval_context["rbac_evaluation"] = rbac_audit
             return self._finalize(caller_spiffe_id, evaluation_states, "DENY", "No RBAC rules mapped", "RBAC", trace, eval_context, True, True, llm_outputs, None)
             
-        rbac_allowed = self._check_rbac(mcps, tools, policy.get("rules", []), trace)
-        if not rbac_allowed:
-            return self._finalize(caller_spiffe_id, evaluation_states, "DENY", "RBAC block triggered", "RBAC", trace, eval_context, True, True, llm_outputs, None)
+        rbac_audit = self._evaluate_rbac(mcps, tools, policy.get("rules", []), trace)
+        eval_context["rbac_evaluation"] = rbac_audit
+        
+        if rbac_audit["decision"] == "DENY":
+            trace.append(f"RBAC Check: DENY triggered by {rbac_audit['matched_rule']}. ❌")
+            return self._finalize(caller_spiffe_id, evaluation_states, "DENY", rbac_audit["reason"], "RBAC", trace, eval_context, True, True, llm_outputs, None)
 
         evaluation_states["rbac"] = "ALLOW"
 
@@ -214,22 +219,34 @@ class DecisionEngine:
         
         if actual_domain == "Unknown": actual_domain = "Uncertain"
         
-        # 4T: Deterministic Alignment Score Computation (Weighted Formula)
+        # 4T/4V: Deterministic Alignment Score Computation (Weighted Formula)
         domain_match = (expected_domain.lower() == actual_domain.lower()) if expected_domain != "Uncertain" else True
-        domain_score = 1.0 if domain_match else 0.0
+        domain_match_score = 1.0 if domain_match else 0.0
         
         req_caps = set(intent_info.get("task_required_capabilities", []))
+        optional_caps = set(intent_info.get("task_optional_capabilities", []))
         has_caps = set(capabilities)
-        if req_caps:
-            cap_score = len(req_caps.intersection(has_caps)) / len(req_caps)
+        
+        # 4V: Capability Score Guard (Generalized Refinement)
+        from app.services.domain_capability_ontology import DomainCapabilityOntology
+        concrete_required = [c for c in req_caps if DomainCapabilityOntology.is_concrete(c)]
+        concrete_has = [c for c in has_caps if DomainCapabilityOntology.is_concrete(c)]
+        missing_concrete = [c for c in concrete_required if c not in concrete_has]
+
+        if concrete_required:
+            cap_score = len([c for c in concrete_required if c in concrete_has]) / len(concrete_required)
+        elif req_caps:
+            # Fallback requirements only (GenericRead, etc.) -> Cap proportionally
+            cap_score = 0.5 if all(c in has_caps for c in req_caps) else 0.0
+            trace.append("Alignment Alert: Capped capability score due to fallback-only requirements. ⚠️")
         else:
-            cap_score = 1.0 # Vacuously aligned if no caps required
+            cap_score = 0.0 # No requirements found -> Low mission signal
             
-        # 4T: New Heuristic Semantic Score
-        semantic_score = self._compute_semantic_score(task_text, tool_audit)
+        # 4T/4V: New Heuristic Semantic Score
+        semantic_score = self._compute_semantic_score(task_text, tool_audit, intent_info)
         
         # 40% Domain, 40% Cap, 20% Semantic
-        final_alignment_score = (0.4 * domain_score) + (0.4 * cap_score) + (0.2 * semantic_score)
+        final_alignment_score = (0.4 * domain_match_score) + (0.4 * cap_score) + (0.2 * semantic_score)
         
         # 4T: Filter for SSOT (Concrete only for UI/Audit)
         from app.services.domain_capability_ontology import DomainCapabilityOntology
@@ -242,11 +259,13 @@ class DecisionEngine:
             "role": persona_key,
             "mcps": mcps,
             "tools": tools,
-            "has_capabilities": list(has_caps), # Internal full set
-            "task_required_capabilities": list(req_caps), # Internal full set
+            "has_capabilities": list(has_caps),
+            "task_required_capabilities": list(req_caps), # Minimal Required (from Ontology)
+            "task_optional_capabilities": list(optional_caps),
             "concrete_has": concrete_has, # SSOT Display set
-            "concrete_required": concrete_required, # SSOT Display set
-            "missing_concrete": missing_concrete, # SSOT Display set
+            "concrete_required": concrete_required, # SSOT Display set (Minimal)
+            "missing_concrete": missing_concrete, # Strictly Required Missing
+            "missing_optional": [c for c in optional_caps if c not in has_caps],
             "intent_info": intent_info,
             "tool_aggregates": tool_aggregates, # 4I: Direct aggregate sync
             "confidence": confidence,
@@ -256,7 +275,7 @@ class DecisionEngine:
             "actual_domain": actual_domain,
             "task_alignment_score": final_alignment_score,
             "alignment_components": {
-                "domain_score": domain_score,
+                "domain_score": domain_match_score,
                 "capability_score": cap_score,
                 "semantic_score": semantic_score
             },
@@ -267,11 +286,13 @@ class DecisionEngine:
         predicate_engine = PredicateEngine(pred_context)
         all_predicates = predicate_engine.get_all_predicates()
 
-        # 4T Audit Patch: Sync UI with engine's filtered capabilities (Single Source of Truth)
-        # Use CONCRETE caps for the primary UI display keys
+        # 4W Audit Patch: Sync UI with engine's minimal required capabilities
+        # Use CONCRETE minimal required caps for primary UI display keys
         eval_context["task_required_capabilities"] = concrete_required
+        eval_context["task_optional_capabilities"] = list(optional_caps)
         eval_context["has_capabilities"] = concrete_has
         eval_context["missing_capabilities"] = missing_concrete
+        eval_context["missing_optional_capabilities"] = [c for c in optional_caps if c not in has_caps]
         eval_context["alignment_components"] = pred_context["alignment_components"]
         
         # Internal diagnostics
@@ -296,25 +317,34 @@ class DecisionEngine:
             "reason": "No rule violations detected" if final_status == "ALLOW" else "Security policy violation"
         }
 
-        # 4T: Positive Explainability for ALLOW cases (from Concrete sets)
+        # 6: Mandatory Reasoning - Always satisfy at least 3 logical predicates for ALLOW
         if final_status == "ALLOW":
             findings = []
             
-            # Check for concrete coverage
+            # Mission alignment
             if not missing_concrete:
-                findings.append("Capability coverage satisfied")
+                findings.append("Mission capability coverage fully satisfied")
                 derived_set.add("CapabilityCoverageSatisfied")
             
-            if all_predicates.get("ContainsWrite") and all_predicates.get("ContainsRead"):
-                findings.append("Safe read-write sequence")
-                derived_set.add("SafeWriteContext")
-                
+            # Domain consistency
             if not all_predicates.get("MultiDomain"):
-                findings.append("Single-domain request")
+                findings.append("Contextually safe single-domain request")
                 derived_set.add("SingleDomainRequest")
+            else:
+                findings.append("Multi-domain request verified for consistency")
+                derived_set.add("MultiDomainVerified")
                 
+            # Sequence safety
+            if all_predicates.get("ContainsWrite") and all_predicates.get("ContainsRead"):
+                findings.append("Safe Read-Before-Write sequence")
+                derived_set.add("SafeWriteContext")
+            elif not all_predicates.get("ContainsWrite"):
+                findings.append("Low-risk read-only operation sequence")
+                derived_set.add("ReadOnlySafety")
+                
+            # Intent satisfaction
             if all_predicates.get("PrimaryIntent") != "UnknownIntent":
-                findings.append("Intent satisfied")
+                findings.append(f"Task intent '{all_predicates.get('PrimaryIntent')}' satisfied")
                 derived_set.add("IntentSatisfied")
                 
             eval_context["tsphol_summary"]["positive_findings"] = findings
@@ -362,36 +392,81 @@ class DecisionEngine:
             derived_features=derived_features
         )
 
-    def _check_rbac(self, mcps: List[str], tools: List[str], rules: List[Dict[str, Any]], trace: List[str]) -> bool:
+    def _evaluate_rbac(self, mcps: List[str], tools: List[str], rules: List[Dict[str, Any]], trace: List[str]) -> Dict[str, Any]:
+        """
+        5: Granular per-tool RBAC evaluation with full explainability.
+        Evaluates every requested tool and collects a detailed trace.
+        """
         if not mcps or not tools:
             trace.append("RBAC Check: Empty lists. ✅")
-            return True
-        for mcp, tool in zip(mcps, tools):
-            matched = "deny"
-            for rule in rules:
-                if (rule.get("mcp") == "*" or rule.get("mcp") == mcp) and ("*" in rule.get("tools", []) or tool in rule.get("tools", [])):
-                    matched = rule.get("action", "deny")
-                    if matched == "deny": break
-            if matched == "deny":
-                trace.append(f"RBAC Check: {mcp}.{tool} DENIED. ❌")
-                return False
-            trace.append(f"RBAC Check: {mcp}.{tool} ALLOWED. ✅")
-        return True
+            return {
+                "decision": "ALLOW", 
+                "reason": "No tools requested", 
+                "matched_rule": "default_empty", 
+                "rbac_trace": []
+            }
 
-    def _compute_semantic_score(self, task_text: str, tool_audit: List[Dict[str, Any]]) -> float:
+        rbac_trace = []
+        overall_decision = "ALLOW"
+        denied_tools = []
+
+        for mcp, tool in zip(mcps, tools):
+            tool_decision = "DENY"
+            matched_policy = "default_deny"
+            # 6: Explicit Denial Reason Logic
+            for i, rule in enumerate(rules):
+                rule_name = rule.get("rule_name", f"rule_{i}")
+                mcp_match = (rule.get("mcp") == "*" or rule.get("mcp") == mcp)
+                
+                if mcp_match:
+                    tool_match = ("*" in rule.get("tools", []) or tool in rule.get("tools", []))
+                    if tool_match:
+                        tool_decision = rule.get("action", "deny").upper()
+                        matched_policy = rule_name
+                        reason = f"Authorized by rule '{rule_name}'" if tool_decision == "ALLOW" else f"Explicitly denied by rule '{rule_name}'"
+                        break
+                    else:
+                        tool_decision = "DENY"
+                        matched_policy = "default_deny"
+                        reason = f"Role does not have permission for tool '{tool}' in MCP '{mcp}'"
+                else:
+                    tool_decision = "DENY"
+                    matched_policy = "default_deny"
+                    reason = f"Identity not authorized for MCP server '{mcp}'"
+            
+            trace.append(f"RBAC Check: {mcp}.{tool} -> {tool_decision} ({matched_policy})")
+            
+            rbac_trace.append({
+                "tool": tool,
+                "mcp": mcp,
+                "decision": tool_decision,
+                "policy": matched_policy,
+                "reason": reason
+            })
+            
+            if tool_decision == "DENY":
+                overall_decision = "DENY"
+                denied_tools.append(f"{mcp}.{tool}")
+
+        return {
+            "decision": overall_decision,
+            "reason": f"RBAC Denied: Access to ({', '.join(denied_tools)}) is not permitted for this identity" if denied_tools else "All requested tools permitted by role policy",
+            "matched_rule": "multi_tool_audit",
+            "rbac_trace": rbac_trace
+        }
+
+    def _compute_semantic_score(self, task_text: str, tool_audit: List[Dict[str, Any]], intent_info: Dict[str, Any] = None) -> float:
         """
-        4T: Deterministic lightweight semantic relevance score.
-        Computes overlap between task keywords and tool metadata.
+        4T/4V: Generalized semantic relevance score.
+        Uses weighted keyword overlap + Intent-Capability Prior boosting.
         """
         if not task_text or not tool_audit:
             return 0.0
             
         import re
-        # Small set of stop words to ignore
-        STOP_WORDS = {"the", "and", "for", "with", "this", "that", "from", "you", "your", "has", "was"}
+        STOP_WORDS = {"the", "and", "for", "with", "this", "that", "from", "you", "your", "has", "was", "set", "use"}
         
         def tokenize(text):
-            # Split by non-alphanumeric and keep meaningful words
             words = re.findall(r'\b\w{3,}\b', text.lower())
             return {w for w in words if w not in STOP_WORDS}
             
@@ -399,34 +474,40 @@ class DecisionEngine:
         if not task_tokens:
             return 0.0
             
-        # Collect all tool-related tokens
         tool_tokens = set()
+        all_caps = []
         for d in tool_audit:
-            # Tool name tokens
             tool_tokens.update(tokenize(d["tool"].replace("_", " ")))
-            # Action tokens
             for action in d.get("actions", []):
                 tool_tokens.update(tokenize(action))
-            # Capability tokens
             for cap in d.get("capabilities", []):
-                # CamelCase split
+                all_caps.append(cap)
                 cap_split = re.sub('([a-z0-9])([A-Z])', r'\1 \2', cap)
                 tool_tokens.update(tokenize(cap_split))
                 
         intersection = task_tokens.intersection(tool_tokens)
         
-        # Scoring: Score based on how many task keywords are covered by tool metadata.
-        # We divide by the number of task tokens (up to a limit)
-        # 1-2 matches in a complex task is good semantic proof.
+        # Base Match Score
         match_count = len(intersection)
         if match_count == 0: return 0.0
         
-        # Exact match of a specific tool name in the task text should give high priority
-        for d in tool_audit:
-            if d["tool"].lower() in task_text.lower():
-                return 1.0
+        # 4V: Intent-Capability Boost (General reasoning)
+        boost = 0.0
+        if intent_info:
+            primary_intent = intent_info.get("primary_intent", "").lower()
+            intent_keywords = tokenize(primary_intent)
+            # Boost if any intent keyword matches a tool token
+            if intent_keywords.intersection(tool_tokens):
+                boost += 0.25
+            
+            # Boost if domain keywords match tool tokens OR task keywords
+            domain = intent_info.get("domain", "").lower()
+            if domain in tool_tokens or domain in task_tokens:
+                boost += 0.2
         
         # Heuristic ratio
+        # Denominator capped at 5 to avoid penalizing long descriptive tasks
         base_score = match_count / min(len(task_tokens), 5) 
+        final_score = (base_score * 0.75) + boost
         
-        return min(1.0, round(base_score, 2))
+        return min(1.0, round(final_score, 2))

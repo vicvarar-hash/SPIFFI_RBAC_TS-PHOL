@@ -5,86 +5,96 @@ from typing import List, Dict, Set
 
 DOMAIN_CAPABILITIES = {
     "Hummingbot": {
-        "MarketAnalysis": [
-            "MarketDataRetrieval",
-            "PriceAnalysis",
-            "TrendAnalysis",
-            "ExchangeInteraction"
-        ],
-        "StrategyExecution": [
-            "OrderCreation",
-            "BalanceCheck",
-            "ExchangeInteraction"
-        ]
+        "MarketAnalysis": {
+            "required": ["MarketDataRetrieval", "ExchangeInteraction"],
+            "optional": ["PriceAnalysis", "TrendAnalysis", "MarketDepthAnalysis"]
+        },
+        "StrategyExecution": {
+            "required": ["OrderCreation", "BalanceCheck", "ExchangeInteraction"],
+            "optional": ["PositionMonitoring"]
+        }
     },
     "Wikipedia": {
-        "InformationDiscovery": [
-            "KnowledgeSearch",
-            "TopicSummarization",
-            "ContentSynthesis"
-        ],
-        "ReferenceExploration": [
-            "SourceVerification",
-            "KnowledgeSearch"
-        ]
+        "InformationDiscovery": {
+            "required": ["KnowledgeSearch"],
+            "optional": ["TopicSummarization", "ContentSynthesis", "ContextualSynthesis"]
+        },
+        "ReferenceExploration": {
+            "required": ["KnowledgeSearch", "SourceVerification"],
+            "optional": ["ReferenceReview"]
+        }
     },
     "Atlassian": {
-        "IssueReview": [
-            "IssueRead",
-            "HistoryReview",
-            "IssueCreation"
-        ],
-        "TaskManagement": [
-            "IssueUpdate",
-            "IssueRead",
-            "WorkflowTransition"
-        ],
-        "IssueCreation": [
-            "IssueCreation",
-            "AtlassianWrite"
-        ]
+        "IssueReview": {
+            "required": ["IssueRead", "IssueCreation", "HistoryReview"],
+            "optional": ["CommentInspection"]
+        },
+        "TaskManagement": {
+            "required": ["IssueUpdate", "IssueRead", "WorkflowTransition"],
+            "optional": ["BacklogPrioritization"]
+        },
+        "IssueCreation": {
+            "required": ["IssueCreation", "AtlassianWrite"],
+            "optional": []
+        }
     },
     "Grafana": {
-        "AlertAudit": [
-            "AlertRuleReview",
-            "DatasourceReview",
-            "OncallUserInspection"
-        ],
-        "IncidentCorrelation": [
-            "LogAnalysis",
-            "MetricsQuery",
-            "IncidentCorrelation"
-        ]
+        "AlertAudit": {
+            "required": ["AlertRuleReview", "DatasourceReview"],
+            "optional": ["OncallUserInspection", "VariableReview"]
+        },
+        "IncidentCorrelation": {
+            "required": ["LogAnalysis", "MetricsQuery", "IncidentCorrelation"],
+            "optional": ["DashboardInspection"]
+        }
+    },
+    "MongoDB": {
+        "DataHealth": {
+            "required": ["CollectionScan", "IndexReview"],
+            "optional": ["PerformanceAudit"]
+        },
+        "SecurityAudit": {
+            "required": ["UserInspection", "AccessReview"],
+            "optional": ["QueryAnalysis"]
+        }
     }
 }
 
 class DomainCapabilityOntology:
     @staticmethod
-    def get_capabilities_for_intent(domain: str, intent: str) -> List[str]:
+    def get_capabilities_for_intent(domain: str, intent: str) -> Dict[str, List[str]]:
         """
         Retrieves the standard capability set for a given domain and intent.
+        Returns: {"required": [...], "optional": [...]}
         """
         domain_intents = DOMAIN_CAPABILITIES.get(domain, {})
-        return domain_intents.get(intent, [])
+        data = domain_intents.get(intent)
+        if isinstance(data, dict):
+            return data
+        return {"required": [], "optional": []}
 
     @staticmethod
-    def infer_minimum_capabilities(domain: str) -> List[str]:
+    def infer_minimum_capabilities(domain: str) -> Dict[str, List[str]]:
         """
         Fallback mechanism for unknown intents within a known domain.
-        Returns a baseline capability set to ensure RequiredCapabilities is non-empty.
+        Returns: {"required": [...], "optional": [...]}
         """
+        req = []
         if domain == "Hummingbot":
-            return ["StrategyReview", "MarketDataAnalysis"]
-        if domain == "Atlassian":
-            return ["IssueRead"]
-        if domain == "Wikipedia":
-            return ["KnowledgeSearch"]
-        if domain == "Grafana":
-            return ["MetricsQuery", "AlertRuleReview"]
-        
-        return ["GenericRead"] # Universal fallback
+            req = ["StrategyReview", "MarketDataAnalysis"]
+        elif domain == "Atlassian":
+            req = ["IssueRead"]
+        elif domain == "Wikipedia":
+            req = ["KnowledgeSearch"]
+        elif domain == "Grafana":
+            req = ["MetricsQuery", "AlertRuleReview"]
+        else:
+            req = ["GenericRead"] # Universal fallback
+            
+        return {"required": req, "optional": []}
 
     # 4T: Canonical set of abstract/grouping capabilities to hide from UI
+    # 6C Refinement: Ensure tool-level capabilities like MarketDataAnalysis stay visible
     ABSTRACT_CAPABILITIES = {
         "AtlassianRead", "AtlassianWrite", 
         "ObservabilityRead", "ObservabilityWrite",
@@ -92,9 +102,11 @@ class DomainCapabilityOntology:
         "FinanceRead", "FinanceWrite", 
         "DevOpsRead", "DevOpsWrite",
         "EquityRead", "EquityWrite",
-        "MarketAnalysis", "StrategyExecution",
+        "HummingbotRead", "HummingbotWrite",
         "InformationDiscovery", "ReferenceExploration",
-        "AlertAudit", "IncidentCorrelation"
+        "AlertAudit", "IncidentCorrelation",
+        "DataHealth", "SecurityAudit",
+        "IssueReview", "TaskManagement"
     }
 
     @staticmethod

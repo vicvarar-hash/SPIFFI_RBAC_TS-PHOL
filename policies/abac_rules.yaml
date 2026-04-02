@@ -1,17 +1,24 @@
 rules:
 - id: abac_write_confidence
-  condition: confidence < 0.9
-  action: deny
-  description: DENY Write operations if LLM confidence is below 0.9
+  condition: "confidence < 0.9"
+  target_action: "write"
+  action: "deny"
+  description: "High-confidence required for write operations (LLM confidence >= 0.9)"
+  failure_reason: "Write access denied: LLM confidence is too low for a mutation"
 - id: abac_high_risk_confidence
-  condition: risk < confidence
-  action: deny
-  description: DENY if Confidence is lower than the threshold for the resource risk level
+  condition: "risk < confidence"
+  target_risk: "high"
+  action: "deny"
+  description: "Confidence must exceed the resource risk threshold (high=0.9, med=0.7, low=0.5)"
+  failure_reason: "Access denied: Request confidence does not meet high-risk safety threshold"
 - id: abac_multi_domain_high_risk
   multi_domain_limit: true
-  action: deny
-  description: DENY High-risk multi-domain requests effectively limiting blast radius
+  target_risk: "high"
+  action: "deny"
+  description: "Multi-domain high-risk operations are restricted to contain blast radius"
+  failure_reason: "Access denied: Multi-domain high-risk operation exceeds current safety policy"
 - id: abac_guest_deny
-  role: guest
-  action: deny
-  description: Explicit deny for guest role regardless of other attributes
+  role: "guest"
+  action: "deny"
+  description: "Explicit safety deny for the guest persona"
+  failure_reason: "Access denied: Persona 'guest' is unauthorized for executable actions"

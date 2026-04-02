@@ -46,7 +46,16 @@ class ToolClassifier:
         "get_alert_rule_by_uid": ["read", "alerting"],
         "get_current_oncall_users": ["read", "oncall"],
         "query_loki_logs": ["read", "logging"],
-        "list_oncall_users": ["read", "oncall"]
+        "list_oncall_users": ["read", "oncall"],
+        # Hummingbot (6C Curated)
+        "get_prices": ["read", "market_data"],
+        "get_candles": ["read", "market_data"],
+        "get_funding_rate": ["read", "market_data"],
+        "get_market_data": ["read", "market_data"],
+        "get_orders": ["read", "strategy"],
+        "get_balances": ["read", "strategy"],
+        "place_order": ["write", "execution"],
+        "cancel_order": ["write", "execution"]
     }
     
     # Curated mappings for tool capabilities
@@ -79,30 +88,93 @@ class ToolClassifier:
         "get_alert_rule_by_uid": ["AlertRuleReview"],
         "get_current_oncall_users": ["OncallUserInspection"],
         "query_loki_logs": ["LogQuery"],
-        "list_oncall_users": ["OncallUserInspection"]
+        "list_oncall_users": ["OncallUserInspection"],
+        # Hummingbot (6C Curated)
+        "get_prices": ["MarketDataAnalysis"],
+        "get_candles": ["MarketDataAnalysis"],
+        "get_funding_rate": ["MarketDataAnalysis"],
+        "get_market_data": ["MarketDataAnalysis"],
+        "get_orders": ["StrategyReview"],
+        "get_balances": ["StrategyReview"],
+        "place_order": ["StrategyExecution"],
+        "cancel_order": ["StrategyExecution"]
     }
+
+    def __init__(self, heuristic_svc: Any = None, cap_svc: Any = None):
+        from app.services.heuristic_service import HeuristicService
+        from app.services.capability_inference_service import CapabilityInferenceService
+        self.heuristic_svc = heuristic_svc or HeuristicService()
+        self.cap_svc = cap_svc or CapabilityInferenceService()
 
     def classify_tools(self, tools: List[str]) -> List[Dict[str, Any]]:
         """
-        Classifies each tool into action types and capabilities.
-        Returns a list of metadata dictionaries.
+        6C: Refactor for 4-tier precedence:
+        1. Curated Mapping
+        2. Domain Capability Catalog
+        3. Heuristic Policy
+        4. Explicit Unknown Fallback
         """
         audit_data = []
         for tool in tools:
+            # Tier 1: Curated
             actions = self.TOOL_ACTION_MAP.get(tool)
             caps = self.TOOL_TO_CAPABILITY.get(tool)
             
-            source = "Curated"
-            notes = "Mapping found in catalog"
+            source = "Curated Mapping"
+            notes = "Direct match in system tool-to-capability map"
             
+            # --- Tier 2: Domain Capability Catalog ---
+            # If not curated, check if tool belongs to a known domain and exists in its catalog
+            if caps is None:
+                # Infer domain from tool prefix (heuristic but accurate for known MCPs)
+                implied_domain = "General"
+                if "jira" in tool or "atlassian" in tool: implied_domain = "Atlassian"
+                elif "wiki" in tool: implied_domain = "Wikipedia"
+                elif "hummingbot" in tool: implied_domain = "Hummingbot"
+                elif "grafana" in tool or "prometheus" in tool: implied_domain = "Grafana"
+                elif "mongo" in tool: implied_domain = "MongoDB"
+
+                catalog_caps = self.cap_svc.catalog.get(implied_domain, [])
+                # If the tool name itself happens to be a capability (rare but possible for grouping tools)
+                if tool in catalog_caps:
+                    caps = [tool]
+                    source = "Domain Catalog"
+                    notes = f"Tool identified as concrete capability for domain: {implied_domain}"
+
+            # --- Tier 3: Heuristic Policy ---
             if actions is None:
-                source = "Heuristic"
-                actions, fallback_notes = self._heuristic_action_classification(tool)
-                notes = fallback_notes
+                new_actions, rule_id = self.heuristic_svc.infer_actions(tool)
+                actions = new_actions
+                source = "Heuristic Policy"
+                notes = f"Matched Action Rule '{rule_id}'"
             
             if caps is None:
-                source = "Heuristic"
-                caps = self._heuristic_capability_mapping(tool)
+                new_caps, rule_id = self.heuristic_svc.infer_capabilities(tool, actions)
+                
+                # 6C: If we got a generic fallback but have a known domain, prefer Tier 4
+                is_generic = rule_id.startswith("fallback_")
+                if is_generic and implied_domain != "General":
+                    caps = [f"{implied_domain}ResourceAccess"]
+                    source = "Domain Fallback"
+                    notes = f"Tier 4: Scoped fallback for known domain: {implied_domain}"
+                else:
+                    caps = new_caps
+                    if source == "Curated Mapping":
+                        source = "Merged (Curated + Heuristic)"
+                    else:
+                        source = "Heuristic Policy"
+                    notes += f" | Matched Cap Rule '{rule_id}'"
+                
+            # --- Tier 4: Explicit Fallback ---
+            if not caps:
+                # Scoped fallback: If domain is known, don't say 'Unknown'
+                if implied_domain != "General":
+                    caps = [f"{implied_domain}ResourceAccess"]
+                    source = "Domain Fallback"
+                    notes += f" | Scoped to domain: {implied_domain}"
+                else:
+                    caps = ["UnknownCapability"]
+                    notes += " | Fallback to UnknownCapability"
                 
             audit_data.append({
                 "tool": tool,
@@ -151,44 +223,3 @@ class ToolClassifier:
             "ContainsHistory": contains_history,
             "ContainsSearch": contains_search
         }
-
-    def _heuristic_action_classification(self, tool: str) -> tuple:
-        """
-        Fallback heuristic based on tool name naming conventions.
-        """
-        t_low = tool.lower()
-        read_keywords = ["get", "list", "query", "search", "retrieve", "fetch", "view", "show", "read", "summar"]
-        write_keywords = ["create", "update", "modify", "patch", "delete", "post", "put", "insert", "add", "remove"]
-        
-        actions = []
-        matched_kws = []
-        
-        if any(kw in t_low for kw in read_keywords):
-            actions.append("read")
-            matched_kws.append("read-like")
-            
-        if any(kw in t_low for kw in write_keywords):
-            actions.append("write")
-            matched_kws.append("write-like")
-            
-        if "delete" in t_low or "remove" in t_low:
-            actions.append("delete")
-            
-        if not actions:
-            return ["unknown"], "No matching keywords"
-            
-        return actions, f"Heuristic: Based on keywords: {', '.join(matched_kws)}"
-
-    def _heuristic_capability_mapping(self, tool: str) -> List[str]:
-        """
-        Fallback heuristic for capability mapping.
-        """
-        t_low = tool.lower()
-        if "jira" in t_low or "atlassian" in t_low: return ["IssueManagement"]
-        if "wiki" in t_low: return ["KnowledgeDiscovery"]
-        if "promo" in t_low or "metric" in t_low or "grafana" in t_low: return ["MetricsQuery"]
-        if "sql" in t_low or "db" in t_low: return ["DatabaseAccess"]
-        if "slack" in t_low or "notif" in t_low: return ["NotificationSend"]
-        
-        logger.warning(f"Fallback to GenericToolUse for tool: {tool}")
-        return ["GenericToolUse"]

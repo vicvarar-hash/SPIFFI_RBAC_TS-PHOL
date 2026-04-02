@@ -6,11 +6,17 @@ from app.models.selection import SelectionResult
 from app.services.llm_provider import LLMProvider
 import re
 
+from app.services.intent_engine import IntentEngine
+from app.services.tool_classifier import ToolClassifier
+from app.services.intent_taxonomy import IntentTaxonomy
+
 class PredictionService:
-    def __init__(self, llm: LLMProvider, personas: List[MCPPersona]):
+    def __init__(self, llm: LLMProvider, personas: List[MCPPersona], intent_engine: IntentEngine = None):
         self.llm = llm
         self.personas = personas
         self.persona_map = {p.name: p for p in personas}
+        self.intent_engine = intent_engine or IntentEngine()
+        self.classifier = ToolClassifier()
 
     def run_selection(self, task: AstraTask) -> SelectionResult:
         if not self.llm.is_configured():
@@ -22,8 +28,30 @@ class PredictionService:
                 validation_errors=["LLM_NOT_CONFIGURED"]
             )
 
+        # 5: Pre-Selection Capability Inference
+        # Determine primary domain and intent first
+        primary_domain = "General"
+        primary_intent = None
+        
+        if task.candidate_mcp:
+            domain_enum = IntentTaxonomy.get_domain_for_mcp(task.candidate_mcp[0])
+            primary_domain = domain_enum.value
+            
+            # 5: Quick intent detection for selection context
+            # We don't have tools yet, so we use task text + domain keywords
+            domain_intents = IntentTaxonomy.get_intents_for_domain(domain_enum)
+            task_lower = task.task.lower()
+            for intent, keywords in domain_intents.items():
+                if any(kw in task_lower for kw in keywords):
+                    primary_intent = intent
+                    break
+            
+        required_caps, optional_caps, _ = self.intent_engine.inference_svc.get_task_required_capabilities(
+            primary_domain, task.task, intent=primary_intent
+        )
+        
         system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(task)
+        user_prompt = self._build_user_prompt(task, list(required_caps), list(optional_caps))
         
         try:
             raw_output = self.llm.query(system_prompt, user_prompt)
@@ -46,11 +74,24 @@ class PredictionService:
                 selected_mcp.append(s.get("mcp", "Unknown"))
                 selected_tools.append(s.get("tool", "Unknown"))
             
+            # 6: Explicit Missing Capability Calculation (Final Consistency)
+            # We determine what's ACTUALLY missing from the selected tools
+            provided_caps = set()
+            for tool in selected_tools:
+                audit = self.classifier.classify_tools([tool])
+                if audit:
+                    provided_caps.update(audit[0].get("capabilities", []))
+            
+            # Mission critical: only flag missing REQUIRED capabilities
+            actual_missing = [cap for cap in required_caps if cap not in provided_caps]
+            
             prediction = SelectionResult(
                 selected_mcp=selected_mcp,
                 selected_tools=selected_tools,
                 justification=data.get("justification", "No justification provided."),
                 confidence=float(data.get("confidence", 0.0)),
+                capability_coverage_score=float(data.get("capability_coverage_score", 0.0)),
+                missing_capabilities=actual_missing, # 6: Real mission gap
                 raw_output=raw_output,
                 validation_errors=validation_errors
             )
@@ -75,6 +116,8 @@ class PredictionService:
         You are an expert orchestrator for an agentic system that uses Model Context Protocol (MCP) servers. 
         Your task is to select EXACTLY 3 tools and their corresponding MCP servers to fulfill a user request.
         
+        This selection is CAPABILITY-AWARE. You must prioritize tools that cover the required capabilities.
+        
         Return your answer ONLY in structured JSON format with the following fields:
         {
           "selections": [
@@ -82,22 +125,29 @@ class PredictionService:
             {"tool": "tool_name2", "mcp": "mcp_name2"},
             {"tool": "tool_name3", "mcp": "mcp_name3"}
           ],
-          "justification": "Why you chose these specific 3 tools.",
-          "confidence": 0.85
+          "justification": "Why you chose these specific 3 tools, focusing on capability coverage.",
+          "confidence": 0.85,
+          "capability_coverage_score": 0.67,
+          "missing_capabilities": []
         }
+        
+        SCORING RULES:
+        - +1.0 for each REQUIRED capability covered by the selected tools.
+        - +0.5 for each OPTIONAL capability covered.
+        - -1.0 for each IRRELEVANT tool selected that doesn't contribute to the task.
         
         RULES:
         1. Select ONLY from the provided MCP personas and their listed tools.
         2. Do NOT invent new tool names or MCP names.
         3. You MUST select EXACTLY 3 tool-mcp pairs.
         4. ALL 3 tools MUST come from the EXACT SAME MCP server. You cannot mix tools from different MCP servers.
-        5. Even if you think fewer tools are needed, find the next most relevant tools from that SAME MCP to reach exactly 3.
+        5. If one tool covers multiple capabilities, that is ideal.
         6. List EACH tool-mcp pair separately, repeating the same MCP server name 3 times.
-        7. Confidence must be between 0.0 and 1.0.
+        7. Confidence and Capability Coverage Score must be between 0.0 and 1.0.
         """
         return prompt
 
-    def _build_user_prompt(self, task: AstraTask) -> str:
+    def _build_user_prompt(self, task: AstraTask, required_caps: List[str], optional_caps: List[str]) -> str:
         persona_context = []
         for p in self.personas:
             p_text = f"MCP Persona: {p.name}\nDescription: {p.description}\nTools:\n"
@@ -111,9 +161,13 @@ class PredictionService:
         Available MCP Personas and Tools:
         {context_str}
         
+        Inferred Capability Requirements:
+        - REQUIRED: {', '.join(required_caps) if required_caps else 'None'}
+        - OPTIONAL: {', '.join(optional_caps) if optional_caps else 'None'}
+        
         User Task: {task.task}
         
-        Please select EXACTLY 3 tool-mcp pairs.
+        Please select EXACTLY 3 tool-mcp pairs from a single MCP server that maximize capability coverage for this task.
         """
         return user_prompt
 

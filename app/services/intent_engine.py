@@ -77,11 +77,11 @@ class IntentEngine:
                 elif intent in ["InformationDiscovery", "SystemUpdate"]: # Generic exceptions
                     secondary_intents.append(intent)
             
-        # 3. Precise Task-Derived Capability Extraction (Iteration 4O Reform)
-        # Logic: RequiredCapabilities come ONLY from Task/Intent signals.
+        # 3. Precise Task-Derived Capability Extraction (Iteration 4W Refactor)
+        # Logic: Distinguish between REQUIRED and OPTIONAL capabilities.
         
         # Call the refactored task-driven inference service
-        task_required_capabilities, cap_audit = self.inference_svc.get_task_required_capabilities(
+        task_required_capabilities, task_optional_capabilities, cap_audit = self.inference_svc.get_task_required_capabilities(
             primary_domain.value, task_text, intent=primary_intent
         )
         
@@ -94,6 +94,7 @@ class IntentEngine:
             "primary_intent": primary_intent,
             "secondary_intents": list(secondary_intents),
             "task_required_capabilities": list(task_required_capabilities),
+            "task_optional_capabilities": list(task_optional_capabilities),
             "required_capability_metadata": cap_audit,  # New 4H Audit Metadata
             "domain": primary_domain.value,
             "intent_properties": {

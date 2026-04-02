@@ -1,5 +1,6 @@
 import streamlit as st
 import json
+from typing import Any
 from app.services.spiffe_registry_service import SpiffeRegistryService
 from app.services.spiffe_allowlist_service import SpiffeAllowlistService
 from app.services.rbac_service import RBACService
@@ -14,14 +15,15 @@ def render_policy_studio():
     st.title("🛡️ Policy Studio")
     st.markdown("Configure identity, access control, and reasoning policies for the agentic system.")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "1. MCP Risk Levels",
         "2. SPIFFE Registry", 
         "3. Transport Allowlist", 
         "4. RBAC (Identity-Based)", 
         "5. ABAC (Attribute-Based)",
         "6. TS-PHOL Rules",
-        "7. Capability Inference"
+        "7. Domain Catalog",
+        "8. Heuristic Logic"
     ])
 
     registry_svc = SpiffeRegistryService()
@@ -54,7 +56,12 @@ def render_policy_studio():
         _render_tsphol(tsphol_svc)
         
     with tab7:
-        _render_capability_inference(cap_inf_svc)
+        _render_domain_catalog(cap_inf_svc)
+        
+    with tab8:
+        from app.services.heuristic_service import HeuristicService
+        h_svc = HeuristicService()
+        _render_heuristic_logic(h_svc)
 
 
 def _render_spiffe_registry(svc: SpiffeRegistryService, workload_svc: SpiffeWorkloadService):
@@ -345,33 +352,13 @@ def _render_abac_baseline(svc: ABACRuleService):
             except json.JSONDecodeError:
                 st.error("Invalid JSON format.")
 
-def _render_capability_inference(svc: CapabilityInferenceService):
-    st.header("🧬 Capability Inference Policy")
-    st.markdown("Configure how required capabilities are derived from task text and domain context.")
+def _render_domain_catalog(svc: CapabilityInferenceService):
+    st.header("🧬 Domain Capability Catalog")
+    st.markdown("Define which capabilities are allowed per domain. Inference will filter out non-catalog items.")
     
     # Reload for freshest UI data
     svc.catalog = PolicyLoader.load_json(svc.catalog_path)
-    svc.rules = PolicyLoader.load_json(svc.rules_path)
-    svc.config = PolicyLoader.load_json(svc.config_path)
 
-    # 1. Inference Configuration
-    st.subheader("Global Inference Configuration")
-    with st.form("inference_config_form"):
-        threshold = st.slider("Confidence Threshold (Intent -> Required)", 0.0, 1.0, svc.config.get("confidence_threshold", 0.75), 0.05)
-        st.caption("Low-confidence intent signals will be filtered out. Tool-derived capabilities are always confidence 1.0.")
-        if st.form_submit_button("Save Configuration"):
-            svc.config["confidence_threshold"] = threshold
-            if svc.save_config(svc.config):
-                st.success("Configuration saved.")
-                st.rerun()
-            else: st.error("Failed to save.")
-
-    st.divider()
-
-    # 2. Domain Capability Catalog
-    st.subheader("Domain Capability Catalog")
-    st.markdown("Define which capabilities are allowed per domain. Inference will filter out non-catalog items.")
-    
     for domain, caps in list(svc.catalog.items()):
         with st.expander(f"📚 Domain: {domain}"):
             st.write(f"**Allowed Capabilities:** {', '.join(caps)}")
@@ -392,6 +379,7 @@ def _render_capability_inference(svc: CapabilityInferenceService):
                     del svc.catalog[domain]
                     if svc.save_catalog(svc.catalog): st.rerun()
 
+    st.divider()
     st.subheader("➕ Add New Domain to Catalog")
     with st.form("add_domain_form", clear_on_submit=True):
         new_domain_name = st.text_input("New Domain Name (e.g. MongoDB)")
@@ -408,65 +396,70 @@ def _render_capability_inference(svc: CapabilityInferenceService):
                     else: st.error("Capabilities must be a JSON list.")
                 except: st.error("Invalid JSON for capabilities.")
 
-    st.divider()
-
-    # 3. Required Capability Rules
-    st.subheader("Strong Intent Capability Rules")
-    st.markdown("Define keyword-to-capability mappings with confidence levels.")
+def _render_heuristic_logic(svc: Any):
+    st.header("🧠 Heuristic Inference Rules")
+    st.markdown("Expose and edit the keyword-based inference rules used for tool classification.")
     
-    rules = svc.rules
-    for i, rule in enumerate(rules):
-        with st.expander(f"Rule: {rule.get('name')} ({rule.get('domain')})"):
-            # CRUD: Update Form inside expander
-            with st.form(f"edit_rule_{i}"):
+    policy = svc.get_all()
+    
+    # 1. Action Rules
+    st.subheader("1. Action Inference Rules (Prefix-based)")
+    action_rules = policy.get("action_rules", [])
+    
+    for i, rule in enumerate(action_rules):
+        with st.expander(f"Rule: {rule.get('id')}"):
+            with st.form(f"edit_action_rule_{i}"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    u_name = st.text_input("Rule Name", value=rule.get("name"))
-                    u_domain = st.selectbox("Domain", list(svc.catalog.keys()) + ["General"], index=0 if rule.get("domain") not in svc.catalog else list(svc.catalog.keys()).index(rule.get("domain")))
+                    u_id = st.text_input("Rule ID", value=rule.get("id"))
+                    u_prefix = st.text_input("Prefix", value=rule.get("prefix"))
                 with col2:
-                    current_kws = ", ".join(rule.get("keywords_any", []))
-                    u_kws = st.text_input("Keywords (comma separated)", value=current_kws)
-                    current_caps = ", ".join(rule.get("adds_capabilities", []))
-                    u_caps = st.text_input("Added Capabilities (comma separated)", value=current_caps)
+                    u_actions = st.text_input("Actions (comma separated)", value=", ".join(rule.get("actions", [])))
                 
-                u_conf = st.slider("Confidence", 0.0, 1.0, rule.get("confidence", 0.9), 0.05)
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.form_submit_button("Update Rule"):
-                        rules[i] = {
-                            "name": u_name,
-                            "domain": u_domain,
-                            "keywords_any": [k.strip() for k in u_kws.split(",") if k.strip()],
-                            "adds_capabilities": [c.strip() for c in u_caps.split(",") if c.strip()],
-                            "confidence": u_conf
-                        }
-                        if svc.save_rules(rules): st.success("Rule updated."); st.rerun()
-                with c2:
-                    pass # We use a separate button outside the form for Delete due to Streamlit form limitations
+                if st.form_submit_button("Update Action Rule"):
+                    action_rules[i] = {
+                        "id": u_id,
+                        "prefix": u_prefix,
+                        "actions": [a.strip() for a in u_actions.split(",") if a.strip()]
+                    }
+                    policy["action_rules"] = action_rules
+                    if svc.save_policy(policy): st.success("Saved."); st.rerun()
 
-            if st.button("Delete Rule", key=f"del_inf_{i}"):
-                rules.pop(i)
-                if svc.save_rules(rules): st.rerun()
+    # 2. Capability Rules
+    st.subheader("2. Capability Inference Rules (Keyword-based)")
+    cap_rules = policy.get("capability_rules", [])
     
-    st.subheader("➕ Add New Inference Rule")
-    with st.form("add_inf_rule", clear_on_submit=True):
-        r_name = st.text_input("Rule Name")
-        r_domain = st.selectbox("Domain", list(svc.catalog.keys()) + ["General"])
-        r_kws = st.text_input("Keywords (comma separated)")
-        r_caps = st.text_input("Added Capabilities (comma separated)")
-        r_conf = st.number_input("Confidence", 0.0, 1.0, 0.9, 0.05)
+    for i, rule in enumerate(cap_rules):
+        with st.expander(f"Rule: {rule.get('id')}"):
+            with st.form(f"edit_cap_rule_{i}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    u_id = st.text_input("Rule ID", value=rule.get("id"))
+                    u_kw = st.text_input("Keyword", value=rule.get("keyword"))
+                with col2:
+                    u_caps = st.text_input("Capabilities (comma separated)", value=", ".join(rule.get("capabilities", [])))
+                
+                if st.form_submit_button("Update Cap Rule"):
+                    cap_rules[i] = {
+                        "id": u_id,
+                        "keyword": u_kw,
+                        "capabilities": [c.strip() for c in u_caps.split(",") if c.strip()]
+                    }
+                    policy["capability_rules"] = cap_rules
+                    if svc.save_policy(policy): st.success("Saved."); st.rerun()
+
+    # 3. Fallbacks
+    st.subheader("3. Fallback Registry")
+    fallbacks = policy.get("fallbacks", {})
+    with st.form("fallback_form"):
+        f_read = st.text_input("Read-like Fallback", value=fallbacks.get("read_like", ""))
+        f_write = st.text_input("Write-like Fallback", value=fallbacks.get("write_like", ""))
+        f_default = st.text_input("Default Fallback", value=fallbacks.get("default", ""))
         
-        if st.form_submit_button("Add Rule"):
-            new_rule = {
-                "name": r_name,
-                "domain": r_domain,
-                "keywords_any": [k.strip() for k in r_kws.split(",") if k.strip()],
-                "adds_capabilities": [c.strip() for c in r_caps.split(",") if c.strip()],
-                "confidence": r_conf
+        if st.form_submit_button("Save Fallbacks"):
+            policy["fallbacks"] = {
+                "read_like": f_read,
+                "write_like": f_write,
+                "default": f_default
             }
-            rules.append(new_rule)
-            if svc.save_rules(rules):
-                st.success("Rule added.")
-                st.rerun()
-            else: st.error("Failed to save.")
+            if svc.save_policy(policy): st.success("Saved."); st.rerun()

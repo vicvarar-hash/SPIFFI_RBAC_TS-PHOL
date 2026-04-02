@@ -30,11 +30,10 @@ class CapabilityInferenceService:
     def get_task_required_capabilities(self, 
                                      domain: str, 
                                      task_text: str,
-                                     intent: str = None) -> Tuple[Set[str], List[Dict[str, Any]]]:
+                                     intent: str = None) -> Tuple[Set[str], Set[str], List[Dict[str, Any]]]:
         """
-        Calculates the set of required capabilities strictly from the task text, intent, and domain ontology.
-        Uses string-based domain key for dynamic catalog support.
-        This is Task-driven, not Tool-driven (Iteration 4Q Optimization).
+        4W: Refactored to distinguish between Required (minimal) and Optional (enrichment) capabilities.
+        Returns: (required_set, optional_set, audit_metadata)
         """
         from app.services.domain_capability_ontology import DomainCapabilityOntology
         
@@ -45,108 +44,91 @@ class CapabilityInferenceService:
         
         threshold = self.config.get("confidence_threshold", 0.75)
         
-        final_set = set()
+        required_set = set()
+        optional_set = set()
         audit_metadata = []
         
-        # 1. Ontology-Based Capabilities (Foundational for the Intent)
+        # 1. Ontology-Based Capabilities (Foundational)
         if intent:
-            ontology_caps = DomainCapabilityOntology.get_capabilities_for_intent(domain, intent)
-            for cap in ontology_caps:
-                final_set.add(cap)
+            ont_data = DomainCapabilityOntology.get_capabilities_for_intent(domain, intent)
+            for cap in ont_data.get("required", []):
+                required_set.add(cap)
                 audit_metadata.append({
                     "capability": cap,
                     "source": "ontology",
                     "status": "ACCEPTED",
-                    "reason": f"Required by ontology for intent: {intent}"
+                    "priority": "REQUIRED",
+                    "reason": f"Minimal required by ontology for intent: {intent}"
+                })
+            for cap in ont_data.get("optional", []):
+                optional_set.add(cap)
+                audit_metadata.append({
+                    "capability": cap,
+                    "source": "ontology",
+                    "status": "ACCEPTED",
+                    "priority": "OPTIONAL",
+                    "reason": f"Optional enrichment for intent: {intent}"
                 })
         
         # 2. Intent-Derived Candidates (Task-Text NLP)
         task_lower = task_text.lower()
+        allowed_caps = self.catalog.get(domain, [])
         
         for rule in self.rules:
-            # Domain Check (String-based)
             if rule.get("domain") != domain:
                 continue
                 
-            # Keyword Match
             keywords = rule.get("keywords_any", [])
             if any(kw in task_lower for kw in keywords):
                 confidence = rule.get("confidence", 0.0)
                 caps_to_add = rule.get("adds_capabilities", [])
                 
                 for cap in caps_to_add:
-                    # Filter: Candidate must be in the domain's catalog
-                    allowed_caps = self.catalog.get(domain, [])
                     if cap not in allowed_caps:
-                        audit_metadata.append({
-                            "capability": cap,
-                            "source": "task_inference",
-                            "confidence": confidence,
-                            "status": "REJECTED",
-                            "reason": f"Capability not allowed in domain: {domain}"
-                        })
                         continue
                     
-                    # Accept/Reject based on confidence threshold
                     if confidence >= threshold:
-                        if cap not in final_set:
-                            final_set.add(cap)
+                        if cap not in required_set and cap not in optional_set:
+                            # 4W: NLP candidates are 'OPTIONAL' (enrichment) unless they were already required by ontology
+                            optional_set.add(cap)
                             audit_metadata.append({
                                 "capability": cap,
                                 "source": "task_inference",
                                 "confidence": confidence,
                                 "status": "ACCEPTED",
-                                "reason": f"Strong task signal (rule: {rule.get('name')})"
+                                "priority": "OPTIONAL",
+                                "reason": f"Inferred enrichment (rule: {rule.get('name')})"
                             })
-                    else:
-                        if cap not in final_set:
-                            audit_metadata.append({
-                                "capability": cap,
-                                "source": "task_inference",
-                                "confidence": confidence,
-                                "status": "FILTERED",
-                                "reason": f"Confidence {confidence} below threshold {threshold}"
-                            })
-
+        
         # 3. 4Q Enforce Non-Empty (Fallback Inference)
-        if not final_set and domain != "General":
-            fallback_caps = DomainCapabilityOntology.infer_minimum_capabilities(domain)
-            logger.warning(f"Empty RequiredCapabilities for domain {domain} — fallback inference triggered")
-            for cap in fallback_caps:
-                final_set.add(cap)
+        if not required_set and domain != "General":
+            fallback_data = DomainCapabilityOntology.infer_minimum_capabilities(domain)
+            for cap in fallback_data.get("required", []):
+                required_set.add(cap)
                 audit_metadata.append({
                     "capability": cap,
                     "source": "fallback_ontology",
                     "status": "ACCEPTED",
+                    "priority": "REQUIRED",
                     "reason": "Minimum viable capability for known domain (fallback)"
                 })
                             
         # 4L/4T: Abstract Capability Filtering (Centralized authority)
-        from app.services.domain_capability_ontology import DomainCapabilityOntology
         abstract_caps = DomainCapabilityOntology.ABSTRACT_CAPABILITIES
         
-        filtered_set = {cap for cap in final_set if cap not in abstract_caps}
+        final_required = {cap for cap in required_set if cap not in abstract_caps}
+        final_optional = {cap for cap in optional_set if cap not in abstract_caps}
         
-        # Record filtering in audit metadata for transparency
-        for cap in final_set:
+        # Record filtering in audit metadata
+        all_candidates = required_set.union(optional_set)
+        for cap in all_candidates:
             if cap in abstract_caps:
-                # Find existing entry or add new one
-                found = False
                 for m in audit_metadata:
                     if m["capability"] == cap:
                         m["status"] = "FILTERED_ABSTRACT"
                         m["reason"] = f"Filtered as abstract/grouping capability: {cap}"
-                        found = True
-                        break
-                if not found:
-                    audit_metadata.append({
-                        "capability": cap,
-                        "source": "task_inference",
-                        "status": "FILTERED_ABSTRACT",
-                        "reason": f"Filtered as abstract/grouping capability: {cap}"
-                    })
                             
-        return filtered_set, audit_metadata
+        return final_required, final_optional, audit_metadata
 
     # --- Persistence Helpers ---
     

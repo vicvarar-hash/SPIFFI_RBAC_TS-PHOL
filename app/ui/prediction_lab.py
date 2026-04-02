@@ -26,9 +26,15 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     2. **Validation**: Evaluate the **proposed candidate bundle** from the ASTRA dataset.
     """)
     
+    # 5: Initialize Intent & Inference for Selection
+    from app.services.intent_engine import IntentEngine
+    from app.services.capability_inference_service import CapabilityInferenceService
+    inference_svc = CapabilityInferenceService()
+    intent_engine = IntentEngine(inference_svc=inference_svc)
+    
     # Initialize core services
     llm = LLMProvider()
-    predictor = PredictionService(llm, personas)
+    predictor = PredictionService(llm, personas, intent_engine=intent_engine)
     validator = ValidationService(llm, personas)
     comparer = ComparisonService()
     logger = LoggerService()
@@ -156,15 +162,20 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             selected_mode = st.radio("Experiment Mode", ["Selection (LLM-ResM)", "Validation"], horizontal=True)
             st.session_state["experiment_mode"] = selected_mode
         
-        # Dataset Context (Candidates & Groundtruth)
-        with st.expander("View Dataset Context (ASTRA Candidates & Groundtruth)", expanded=False):
+        # Dataset Context (ASTRA Candidates & Groundtruth)
+        with st.expander("View Dataset Context (ASTRA Validation Details)", expanded=False):
             col_cand, col_gt = st.columns(2)
             with col_cand:
-                st.markdown("### 🧪 Candidate Bundle")
-                st.write("**Candidate MCPs:**")
-                st.json(task.candidate_mcp)
-                st.write("**Candidate Tools:**")
-                st.json(task.candidate_tools)
+                if selected_mode == "Validation":
+                    st.markdown("### 🧪 Candidate Bundle")
+                    st.write("**Candidate MCPs:**")
+                    st.json(task.candidate_mcp)
+                    st.write("**Candidate Tools:**")
+                    st.json(task.candidate_tools)
+                else:
+                    st.markdown("### 🧪 Candidate Bundle")
+                    st.info("Hidden in Selection Mode to prevent leakage.")
+                    
             with col_gt:
                 st.markdown("### 🎯 Groundtruth")
                 st.write("**Groundtruth MCPs:**")
@@ -232,6 +243,11 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                             st.write("**Predicted Tools:**")
                             st.json(selection.selected_tools)
                             st.markdown(f"**Confidence:** `{selection.confidence}`")
+                            st.markdown(f"**Capability Coverage Score:** `{selection.capability_coverage_score}`")
+                            if selection.missing_capabilities:
+                                st.warning(f"⚠️ **Missing Capabilities:** {', '.join(selection.missing_capabilities)}")
+                            else:
+                                st.success("✅ **Sufficient Capability Coverage**")
                             st.markdown(f"**Justification:** {selection.justification}")
                         else:
                             st.warning("⚠️ LLM INFERENCE SKIPPED: Pre-LLM checks failed.")
@@ -360,8 +376,8 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
     st.markdown(f"**Status:** :{st_color}[{comparison.status.upper()}]")
     st.caption(comparison.details)
     cols_b = st.columns(2)
-    cols_b[0].metric("MCP Match", "✅" if comparison.mcp_match else "❌")
-    cols_b[1].metric("Tool Match", "✅" if comparison.tool_match else "❌")
+    cols_b[0].metric("MCP Match", "MATCH" if comparison.mcp_match else "MISMATCH")
+    cols_b[1].metric("Tool Match", "MATCH" if comparison.tool_match else "MISMATCH")
     
     st.divider()
     
@@ -383,19 +399,41 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
     tr_status = decision.evaluation_states.get("transport", "NOT_EVALUATED")
     
     cols_i = st.columns(2)
-    cols_i[0].metric("Registry Verified", "✅" if id_status == "ALLOW" else "❌")
-    cols_i[1].metric("mTLS Allowed", "✅" if tr_status == "ALLOW" else ("❌" if tr_status == "DENY" else "NOT EVALUATED"))
+    cols_i[0].metric("Registry Verified", "YES" if id_status == "ALLOW" else "NO")
+    cols_i[1].metric("mTLS Allowed", "YES" if tr_status == "ALLOW" else ("NO" if tr_status == "DENY" else "NOT EVALUATED"))
     
     if decision.denial_source in ["Identity", "Transport"]:
         st.error(f"Execution halted at {decision.denial_source}.")
         
     st.divider()
 
-    # Block C: RBAC Authorization
+    # Block C: RBAC Authorization (Iteration 4V Expanded)
     st.markdown("#### C. RBAC Authorization")
     rbac_status = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
+    rbac_audit = decision.context.get("rbac_evaluation", {})
+    
     st.metric("RBAC Allowed", "✅ Yes" if rbac_status == "ALLOW" else ("❌ No" if rbac_status == "DENY" else "NOT EVALUATED"))
-    if decision.denial_source == "RBAC":
+    
+    if rbac_audit:
+        with st.expander("⚖️ RBAC Reasoning Trace", expanded=(rbac_status == "DENY")):
+            st.markdown(f"**Matched Rule:** `{rbac_audit.get('matched_rule')}`")
+            st.markdown(f"**Decision:** `{rbac_audit.get('decision')}`")
+            st.markdown(f"**Reason:** {rbac_audit.get('reason')}")
+            
+            trace_data = rbac_audit.get("rbac_trace", [])
+            if trace_data:
+                import pandas as pd
+                df_rbac = pd.DataFrame(trace_data)
+                # Select and rename columns for cleaner display
+                df_disp = df_rbac[["tool", "mcp", "decision", "policy", "reason"]].copy()
+                df_disp.columns = ["Tool Name", "MCP Server", "Decision", "Policy ID", "Reason"]
+                
+                # Apply color styling (optional, but good for UX)
+                st.table(df_disp)
+            else:
+                st.caption("No per-tool trace available.")
+    
+    if rbac_status == "DENY":
         st.error(f"Denial Reason: {decision.reason}")
         
     st.divider()
@@ -423,9 +461,9 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
             # Summary Metrics
             m_cols = st.columns(5)
             m_cols[0].metric("Detected Domain", intent.get("domain", "GENERAL").upper())
-            m_cols[1].metric("Read-Before-Write", "✅" if aggregates.get("ContainsReadBeforeWrite") else "❌")
+            m_cols[1].metric("Read-Before-Write", "YES" if aggregates.get("ContainsReadBeforeWrite") else "NO")
             m_cols[2].metric("Dominant", aggregates.get("DominantActionType", "unknown").upper())
-            m_cols[3].metric("Multi-Domain", "✅" if aggregates.get("MultiDomain") else "❌")
+            m_cols[3].metric("Multi-Domain", "YES" if aggregates.get("MultiDomain") else "NO")
             m_cols[4].metric("Risk Level", decision.context.get("tsphol_predicate_set", {}).get("HighestRiskLevel", "low").upper())
         else:
             st.info("No tool audit data available (Pre-LLM or Baseline only).")
@@ -440,9 +478,13 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
                 st.markdown(f"**Primary Intent:** `{intent.get('primary_intent')}`")
                 st.markdown(f"**Secondary Intents:** {', '.join(intent.get('secondary_intents', [])) or 'None'}")
                 
-                # 4Q: Single Source of Truth
+                # 4W: Minimal Sufficient Coverage Split
                 task_reqs = decision.context.get("task_required_capabilities", [])
+                task_opts = decision.context.get("task_optional_capabilities", [])
+                
                 st.info(f"**Required Mission Capabilities:** {', '.join(task_reqs) or 'None'}")
+                if task_opts:
+                    st.caption(f"**Optional Enrichment Capabilities:** {', '.join(task_opts)}")
             else:
                 st.info("Intent not decomposed.")
                 
@@ -455,17 +497,25 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
                 st.markdown(f"**Result:** :{st_color}[{abac_decision}]")
                 st.caption(f"Rule: {abac.get('matched_rule')}")
 
-                # 4I: ABAC Reasoning Trace
+                # 6C: Enriched ABAC Reasoning Trace
                 if "reasoning_trace" in abac:
                     st.divider()
-                    st.markdown("**⚖️ Reasoning Trace**")
+                    st.markdown("**⚖️ ABAC Reasoning Trace**")
                     trace = abac["reasoning_trace"]
-                    st.markdown(f"**Risk Level:** `{trace.get('risk_level')}`")
-                    st.markdown(f"**Confidence:** `{trace.get('confidence')}`")
+                    
+                    app_label = "YES" if abac.get("applicable") else "NO"
+                    st.markdown(f"**Applicable:** `{app_label}`")
+                    st.markdown(f"**Matched Rule:** `{abac.get('matched_rule')}`")
+                    
+                    if abac.get("decision") == "ALLOW":
+                        st.success(f"**Allow Reason:** {abac.get('allow_reason', 'Passed baseline')}")
+                    else:
+                        st.error(f"**Failure Reason:** {abac.get('failure_reason', 'Denied by policy')}")
+                    
                     st.markdown("**Logic Steps:**")
                     for step in trace.get("logic_steps", []):
-                        icon = "✅" if step["matched"] else "❌"
-                        st.caption(f"{icon} {step['condition']}")
+                        icon = "✅ Match" if step["matched"] else "❌ No Match"
+                        st.caption(f"{icon}: {step['condition']}")
             else:
                 st.info("ABAC not evaluated.")
 
@@ -486,8 +536,9 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
                     cap = m["capability"]
                     conf = m.get("confidence", 1.0)
                     reason = m.get("reason", "")
+                    priority = f"[{m.get('priority', 'REQUIRED')}]"
                     
-                    st.markdown(f"{icon} **{cap}**")
+                    st.markdown(f"{icon} {priority} **{cap}**")
                     st.caption(f"↳ Source: {source} | Status: {status} | Conf: {conf} | {reason}")
         else:
             st.caption("No concrete capability requirements derived.")
@@ -496,28 +547,42 @@ def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_dis
     st.markdown("#### 🧠 Task Capability Requirements (4Q Audit)")
     
     req_caps = set(decision.context.get("task_required_capabilities", []))
+    opt_caps = set(decision.context.get("task_optional_capabilities", []))
     has_caps = set(decision.context.get("has_capabilities", []))
-    all_mentioned = req_caps.union(has_caps)
+    all_mentioned = req_caps.union(has_caps).union(opt_caps)
     
     if all_mentioned:
         comp_data = []
         for cap in sorted(list(all_mentioned)):
             is_req = cap in req_caps
+            is_opt = cap in opt_caps
             is_has = cap in has_caps
-            status = "✅ Satisfied" if (is_req and is_has) else ("❌ MISSING" if is_req else "➕ Extra")
+            
+            # Simple status icon
+            if is_req: status = "✅ Satisfied" if is_has else "❌ MISSING"
+            elif is_opt: status = "✅ Provided" if is_has else "ℹ️ Missing (Optional)"
+            else: status = "➕ Extra"
+            
             comp_data.append({
                 "Capability": cap,
-                "Required (Task)": "Yes" if is_req else "No",
+                "Minimal (Required)": "Yes" if is_req else "No",
+                "Optional (Enrichment)": "Yes" if is_opt else "No",
                 "Provided (Tools)": "Yes" if is_has else "No",
                 "Status": status
             })
         st.table(comp_data)
         
-        missing = req_caps - has_caps
-        if missing:
-            st.error(f"⚠️ **Mission Critical Failure:** The following capabilities required by the task are missing from the tool bundle: `{', '.join(missing)}`")
-        elif req_caps:
-            st.success("✨ **Capability Alignment Verified:** All mission-required capabilities are present in the mechanism bundle.")
+        # Error Summary (Only for Required)
+        missing_req = req_caps - has_caps
+        missing_opt = opt_caps - has_caps
+        
+        if missing_req:
+            st.error(f"⚠️ **Mission Critical Failure:** The following minimal required capabilities are missing: `{', '.join(missing_req)}`")
+        else:
+            st.success("✨ **Sufficient Capability Alignment:** All minimal mission requirements are present in the bundle.")
+            
+        if missing_opt:
+            st.info(f"ℹ️ **Optional Enrichment Missing:** `{', '.join(missing_opt)}` (This does not affect authorization).")
     else:
         st.info("No capability requirements or provisions detected.")
 

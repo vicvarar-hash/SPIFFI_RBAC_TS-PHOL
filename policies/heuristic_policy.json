@@ -1,4 +1,9 @@
 {
+  "selection_tolerance_policy": {
+    "enabled": true,
+    "allow_domain_mismatch_if_readonly": true,
+    "minimum_alignment_score": 0.4
+  },
   "action_rules": [
     {
       "id": "prefix:get_",

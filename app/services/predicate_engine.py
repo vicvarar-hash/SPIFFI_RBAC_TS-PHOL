@@ -72,8 +72,9 @@ class PredicateEngine:
         p["BundleDomainActual"] = context.get("actual_domain", "Uncertain")
         p["TaskAlignmentScore"] = context.get("task_alignment_score", 0.0)
         
-        # 4R: Alignment Reliability
+        # 4R: Alignment Reliability & Tolerance
         p["AlignmentEvaluated"] = (p["TaskDomainExpected"] != "Uncertain")
+        p["SelectionToleranceActive"] = context.get("selection_tolerance_active", False)
         
         # Logic Flags
         p["TaskBundleDomainMismatch"] = (p["TaskDomainExpected"] != p["BundleDomainActual"]) and (p["TaskDomainExpected"] != "Uncertain")

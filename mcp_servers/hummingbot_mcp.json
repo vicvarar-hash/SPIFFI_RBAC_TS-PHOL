@@ -822,26 +822,6 @@
         "title": "stop_bot_or_controllersArguments",
         "type": "object"
       }
-    },
-    {
-      "name": "evaluate_trading_strategy",
-      "description": "Performs a deep review of a trading strategy against historical and real-time market behavior. Analyzes price trajectories to determine optimal timing for bulk orders.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "strategy_params": {
-            "type": "string",
-            "description": "The configuration or logic of the strategy to review."
-          },
-          "market_context": {
-            "type": "string",
-            "description": "Target exchange or token context (e.g. BTC on Coinbase)."
-          }
-        },
-        "required": [
-          "strategy_params"
-        ]
-      }
     }
   ]
 }

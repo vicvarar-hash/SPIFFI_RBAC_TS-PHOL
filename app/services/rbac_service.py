@@ -2,12 +2,29 @@ from typing import List, Dict, Any, Tuple
 from app.services.policy_loader import PolicyLoader
 from app.services.policy_logger_service import PolicyLoggerService
 
+from app.services.normalization import normalize_mcp_name, normalize_tool_name
+
 class RBACService:
     def __init__(self, filepath: str = "policies/rbac.yaml"):
         self.filepath = filepath
         self.logger = PolicyLoggerService()
         data = PolicyLoader.load_yaml(filepath)
-        self.policies = data.get("policies", [])
+        raw_policies = data.get("policies", [])
+        
+        # Normalize upon loading
+        self.policies = []
+        for p in raw_policies:
+            norm_p = p.copy()
+            norm_rules = []
+            for r in p.get("rules", []):
+                norm_r = r.copy()
+                if "mcp" in norm_r and norm_r["mcp"] != "*":
+                    norm_r["mcp"] = normalize_mcp_name(norm_r["mcp"])
+                if "tools" in norm_r:
+                    norm_r["tools"] = [normalize_tool_name(t) if t != "*" else t for t in norm_r["tools"]]
+                norm_rules.append(norm_r)
+            norm_p["rules"] = norm_rules
+            self.policies.append(norm_p)
 
     def get_all(self) -> List[Dict[str, Any]]:
         return self.policies

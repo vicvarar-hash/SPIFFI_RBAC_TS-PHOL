@@ -114,8 +114,11 @@ class ToolClassifier:
         3. Heuristic Policy
         4. Explicit Unknown Fallback
         """
+        from app.services.normalization import normalize_tool_name
+        
         audit_data = []
-        for tool in tools:
+        for raw_tool in tools:
+            tool = normalize_tool_name(raw_tool)
             # Tier 1: Curated
             actions = self.TOOL_ACTION_MAP.get(tool)
             caps = self.TOOL_TO_CAPABILITY.get(tool)

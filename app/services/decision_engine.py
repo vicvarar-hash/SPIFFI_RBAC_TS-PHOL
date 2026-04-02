@@ -16,6 +16,11 @@ from app.services.abac_engine import ABACEngine
 from app.services.tsphol_interpreter import TSPHOLInterpreter
 from app.services.tool_classifier import ToolClassifier
 
+from app.services.normalization import normalize_mcp_name, normalize_tool_name, normalize_domain_name
+from app.models.domain import resolve_domain
+import json
+import os
+
 logger = logging.getLogger(__name__)
 
 class DecisionEngine:
@@ -98,6 +103,9 @@ class DecisionEngine:
                  task_text: str = "",
                  mode: str = "selection",
                  mcp_filter: str = "All") -> DecisionResult:
+        
+        mcps = [normalize_mcp_name(m) for m in mcps] if mcps else []
+        tools = [normalize_tool_name(t) for t in tools] if tools else []
         
         trace = pre_llm_result.get("trace", [])
         eval_context = pre_llm_result.get("context", {})
@@ -202,25 +210,47 @@ class DecisionEngine:
         else:
             expected_domain = llm_outputs.get("expected_domain", "Uncertain")
             
-        if expected_domain == "Unknown": expected_domain = "Uncertain"
+        expected_domain = resolve_domain(expected_domain)
         
-        # 4R: Bundle Domain Inference (Patch)
-        if mode == "selection":
-            if mcps:
-                unique_mcps = set(mcps)
-                if len(unique_mcps) == 1:
-                    actual_domain = list(unique_mcps)[0]
-                else:
-                    actual_domain = "multi-domain"
+        # Explicit tolerance loading
+        tolerance_policy = {"enabled": False}
+        heur_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "policies", "heuristic_policy.json")
+        if os.path.exists(heur_path):
+            try:
+                with open(heur_path, "r") as f:
+                    heur_data = json.load(f)
+                    tolerance_policy = heur_data.get("selection_tolerance_policy", {"enabled": False})
+            except Exception:
+                pass
+
+        applying_tolerance = False
+        if mode == "selection" and tolerance_policy.get("enabled"):
+            applying_tolerance = True
+
+        # Resolve Actual Domain
+        if mcps:
+            unique_mcps = set(mcps)
+            if len(unique_mcps) == 1:
+                actual_domain = list(unique_mcps)[0]
             else:
-                actual_domain = "Uncertain"
+                actual_domain = "multi_domain"
         else:
-            actual_domain = llm_outputs.get("actual_domain", "Uncertain")
+            actual_domain = "Uncertain"
         
-        if actual_domain == "Unknown": actual_domain = "Uncertain"
+        # Let LLM output provide an actual domain if we had a multi-domain inference
+        llm_actual_domain = llm_outputs.get("actual_domain")
+        if llm_actual_domain and actual_domain == "multi_domain":
+            actual_domain = llm_actual_domain
+            
+        actual_domain = resolve_domain(actual_domain)
         
         # 4T/4V: Deterministic Alignment Score Computation (Weighted Formula)
-        domain_match = (expected_domain.lower() == actual_domain.lower()) if expected_domain != "Uncertain" else True
+        domain_match = (expected_domain == actual_domain) if expected_domain not in ["uncertain", "unknown"] else True
+        
+        if not domain_match and applying_tolerance and tolerance_policy.get("allow_domain_mismatch_if_readonly"):
+            if not intent_info["intent_properties"].get("contains_write"):
+                domain_match = True
+                trace.append("Tolerance Policy Applied: Domain mismatch bypassed for read-only selection request. ⚠️")
         domain_match_score = 1.0 if domain_match else 0.0
         
         req_caps = set(intent_info.get("task_required_capabilities", []))
@@ -280,7 +310,8 @@ class DecisionEngine:
                 "semantic_score": semantic_score
             },
             "issue_codes": llm_outputs.get("issue_codes", []),
-            "mode": mode # 4R
+            "mode": mode, # 4R
+            "selection_tolerance_active": applying_tolerance
         }
         
         predicate_engine = PredicateEngine(pred_context)

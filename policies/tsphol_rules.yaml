@@ -74,6 +74,21 @@ rules:
       equals: true
     - predicate: TaskAlignmentScore
       lt: 0.5
+    - predicate: SelectionToleranceActive
+      equals: false
+  then: DENY
+  derive: LowAlignment
+  priority: 60
+
+- rule_name: low_task_alignment_with_tolerance
+  description: Deny when the bundle is semantically irrelevant to the task, even with tolerance permitted
+  if:
+    - predicate: AlignmentEvaluated
+      equals: true
+    - predicate: TaskAlignmentScore
+      lt: 0.4
+    - predicate: SelectionToleranceActive
+      equals: true
   then: DENY
   derive: LowAlignment
   priority: 60

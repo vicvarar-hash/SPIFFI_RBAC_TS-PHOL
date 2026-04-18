@@ -2,31 +2,61 @@
   "devops_agent": {
     "display_name": "DevOps Agent",
     "spiffe_id": "spiffe://demo.local/agent/devops",
-    "description": "Handles monitoring and operational diagnostics"
+    "description": "Handles monitoring and operational diagnostics",
+    "attributes": {
+      "clearance_level": "L3",
+      "department": "Engineering",
+      "trust_score": 1.0
+    }
   },
   "incident_agent": {
     "display_name": "Incident Agent",
     "spiffe_id": "spiffe://demo.local/agent/incident",
-    "description": "Handles incident tracking and escalation"
+    "description": "Handles incident tracking and escalation",
+    "attributes": {
+      "clearance_level": "L1",
+      "department": "Engineering",
+      "trust_score": 1.0
+    }
   },
   "finance_agent": {
     "display_name": "Finance Agent",
     "spiffe_id": "spiffe://demo.local/agent/finance",
-    "description": "Handles billing and financial workflows"
+    "description": "Handles billing and financial workflows",
+    "attributes": {
+      "clearance_level": "L1",
+      "department": "Engineering",
+      "trust_score": 1.0
+    }
   },
   "research_agent": {
     "display_name": "Research Agent",
     "spiffe_id": "spiffe://demo.local/agent/research",
-    "description": "Handles low-risk information discovery"
+    "description": "Handles low-risk information discovery",
+    "attributes": {
+      "clearance_level": "L1",
+      "department": "Engineering",
+      "trust_score": 1.0
+    }
   },
   "automation_gateway": {
     "display_name": "Automation Gateway",
     "spiffe_id": "spiffe://demo.local/service/gateway",
-    "description": "Executes approved tool operations"
+    "description": "Executes approved tool operations",
+    "attributes": {
+      "clearance_level": "L1",
+      "department": "Engineering",
+      "trust_score": 1.0
+    }
   },
   "security_engine": {
     "display_name": "Security Engine",
     "spiffe_id": "spiffe://demo.local/service/security",
-    "description": "Evaluates transport, RBAC, and TS-PHOL rules"
+    "description": "Evaluates transport, RBAC, and TS-PHOL rules",
+    "attributes": {
+      "clearance_level": "L3",
+      "department": "Security",
+      "trust_score": 1.0
+    }
   }
 }

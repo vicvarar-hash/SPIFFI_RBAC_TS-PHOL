@@ -25,7 +25,7 @@ This iteration refactors the pipeline for efficiency and complete transparency:
 - **LLM Transparency & Derived Features**: The UI strictly separates the raw AI output (Predicted MCPs/Tools, Justification, Confidence) from the System-Derived Features calculated post-inference (Operation risk score, tool counts, read/write heuristics). This eliminates "black box" behavior.
 
 ### Iteration 4C & 4E: Intent-Aware Predicate-Based Reasoning + Declarative Engine
-This iteration transforms the security engine into a formal logic reasoning system (TS-PHOL) that understands **intent** and **capabilities**.
+This iteration transforms the security engine into a formal logic reasoning system (Tractable Scoped Probabilistic Higher-Order Logic, or TS-PHOL) that understands **intent** and **capabilities**.
 - **Intent Decomposition & Capability Mapping**: Extracts the "Why" behind an agent's request (e.g., `InvestigateAnomaly` vs `SystemUpdate`) and maps tools to abstract capabilities like `MetricsQuery` or `LogAnalysis`.
 - **Declarative TS-PHOL**: Rules are now evaluated using formal logic predicates (e.g., `ConfidenceValue < 0.9 ∧ HasWriteCapability → DENY`) through a generic logic interpreter.
 - **ABAC Baseline Layer**: A parallel, strictly attribute-based access control tier (Role, MCP, Action, Confidence) provides a comparison point for the more advanced TS-PHOL logic.
@@ -87,7 +87,7 @@ The **Unified Decision Engine** operates in a strict 6-step sequence:
 3. **Fact Extraction (Tool Audit & Intent Decomposition)**: Performs tool-centric action classification, capability mapping, and intent inference.
 4. **RBAC**: Evaluates the caller's allowed/denied permissions against the requested MCP tools.
 5. **ABAC Baseline (Parallel)**: Evaluates simple attribute-based rules for comparison and transparency.
-6. **TS-PHOL Logical Reasoning**: Executes formal predicate logic to reach the final authoritative decision.
+6. **TS-PHOL (Tractable Scoped Probabilistic Higher-Order Logic) Reasoning**: Executes formal predicate logic to reach the final authoritative decision.
 
 #### Prediction Lab Integration
 The Parallel Reasoning Lab features a fully integrated **Execution Pipeline Panel**. It dynamically runs the 6-step engine, producing detailed traces separating benchmark results from logical reasoning. Intent decomposition, ABAC baselines, and formal predicate traces are cleanly isolated in the view.

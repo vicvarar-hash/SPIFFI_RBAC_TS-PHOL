@@ -1,24 +1,32 @@
 rules:
-- id: abac_write_confidence
-  condition: "confidence < 0.9"
-  target_action: "write"
+- id: abac_finance_isolation
   action: "deny"
-  description: "High-confidence required for write operations (LLM confidence >= 0.9)"
-  failure_reason: "Write access denied: LLM confidence is too low for a mutation"
-- id: abac_high_risk_confidence
-  condition: "risk < confidence"
-  target_risk: "high"
+  description: "Finance resources are restricted to the Finance department"
+  failure_reason: "Access denied: Subject does not belong to the Finance department"
+  match_attributes:
+    - { source: "resource", attribute: "compliance_tier", value: "Financial", op: "==" }
+    - { source: "subject", attribute: "attributes.department", value: "Finance", op: "!=" }
+
+- id: abac_hipaa_restriction
   action: "deny"
-  description: "Confidence must exceed the resource risk threshold (high=0.9, med=0.7, low=0.5)"
-  failure_reason: "Access denied: Request confidence does not meet high-risk safety threshold"
-- id: abac_multi_domain_high_risk
-  multi_domain_limit: true
-  target_risk: "high"
+  description: "HIPAA compliance requirement for medical data"
+  failure_reason: "Access denied: Subject lacks necessary department traits for HIPAA data"
+  match_attributes:
+    - { source: "resource", attribute: "compliance_tier", value: "HIPAA", op: "==" }
+    - { source: "subject", attribute: "attributes.department", value: "Medical", op: "!=" }
+
+- id: abac_clearance_enforcement
   action: "deny"
-  description: "Multi-domain high-risk operations are restricted to contain blast radius"
-  failure_reason: "Access denied: Multi-domain high-risk operation exceeds current safety policy"
-- id: abac_guest_deny
-  role: "guest"
+  description: "High-sensitivity data requires L3 clearance"
+  failure_reason: "Access denied: Subject clearance level is insufficient for this resource"
+  match_attributes:
+    - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
+    - { source: "subject", attribute: "attributes.clearance_level", value: "L3", op: "!=" }
+
+- id: abac_beta_trust_denial
   action: "deny"
-  description: "Explicit safety deny for the guest persona"
-  failure_reason: "Access denied: Persona 'guest' is unauthorized for executable actions"
+  description: "Experimental tools are denied for low-trust identities"
+  failure_reason: "Access denied: Identity trust score is too low for experimental boundaries"
+  match_attributes:
+    - { source: "resource", attribute: "trust_boundary", value: "Experimental", op: "==" }
+    - { source: "subject", attribute: "attributes.trust_score", value: "0.5", op: "<" }

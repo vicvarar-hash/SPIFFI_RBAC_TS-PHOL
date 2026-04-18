@@ -52,10 +52,19 @@ class ToolClassifier:
         "get_candles": ["read", "market_data"],
         "get_funding_rate": ["read", "market_data"],
         "get_market_data": ["read", "market_data"],
+        "get_order_book": ["read", "market_data"],
+        "get_ticker": ["read", "market_data"],
+        "get_market_status": ["read", "market_data"],
         "get_orders": ["read", "strategy"],
         "get_balances": ["read", "strategy"],
         "place_order": ["write", "execution"],
-        "cancel_order": ["write", "execution"]
+        "cancel_order": ["write", "execution"],
+        # Wikipedia (6C Curated)
+        "extract_key_facts": ["read", "extraction"],
+        "get_sections": ["read"],
+        "get_coordinates": ["read"],
+        "summarize_article_for_query": ["read", "summarization"],
+        "get_article": ["read"]
     }
     
     # Curated mappings for tool capabilities
@@ -94,10 +103,19 @@ class ToolClassifier:
         "get_candles": ["MarketDataAnalysis"],
         "get_funding_rate": ["MarketDataAnalysis"],
         "get_market_data": ["MarketDataAnalysis"],
+        "get_order_book": ["MarketDataAnalysis"],
+        "get_ticker": ["MarketDataAnalysis"],
+        "get_market_status": ["MarketDataAnalysis"],
         "get_orders": ["StrategyReview"],
         "get_balances": ["StrategyReview"],
         "place_order": ["StrategyExecution"],
-        "cancel_order": ["StrategyExecution"]
+        "cancel_order": ["StrategyExecution"],
+        # Wikipedia (6C Curated)
+        "extract_key_facts": ["InformationDiscovery"],
+        "get_sections": ["ContentSynthesis"],
+        "get_coordinates": ["GeographicAnalysis"],
+        "summarize_article_for_query": ["TopicSummarization"],
+        "get_article": ["KnowledgeSearch"]
     }
 
     def __init__(self, heuristic_svc: Any = None, cap_svc: Any = None):

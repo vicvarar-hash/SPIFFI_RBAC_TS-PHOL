@@ -6,7 +6,7 @@ from app.services.spiffe_registry_service import SpiffeRegistryService
 from app.services.spiffe_allowlist_service import SpiffeAllowlistService
 from app.services.rbac_service import RBACService
 from app.services.tsphol_rule_service import TSPHOLRuleService
-from app.services.mcp_risk_service import MCPRiskService
+from app.services.mcp_attribute_service import MCPAttributeService
 
 # New Services for Iteration 4C & 4E
 from app.services.intent_engine import IntentEngine
@@ -29,13 +29,13 @@ class DecisionEngine:
                  allowlist_svc: SpiffeAllowlistService,
                  rbac_svc: RBACService,
                  tsphol_svc: TSPHOLRuleService,
-                 risk_svc: MCPRiskService,
+                 attribute_svc: MCPAttributeService,
                  personas: List[MCPPersona]):
         self.registry_svc = registry_svc
         self.allowlist_svc = allowlist_svc
         self.rbac_svc = rbac_svc
         self.tsphol_svc = tsphol_svc
-        self.risk_svc = risk_svc
+        self.attribute_svc = attribute_svc
         self.persona_map = {p.name: p for p in personas}
         
         # Initialize new engines
@@ -48,7 +48,7 @@ class DecisionEngine:
     def pre_llm_check(self, caller_spiffe_id: str, mcps: List[str] = None, tools: List[str] = None) -> dict:
         trace = []
         eval_context = {}
-        trace.append(f"Engine initialized. Pre-LLM check for {caller_spiffe_id}")
+        trace.append(f"[Phase I] Engine initialized. Pre-LLM check for {caller_spiffe_id}")
         
         evaluation_states = {
             "identity": "NOT_EVALUATED",
@@ -62,14 +62,14 @@ class DecisionEngine:
         evaluation_states["identity"] = "DENY"
         registry_ids = [v.get("spiffe_id") for v in self.registry_svc.get_all().values()]
         if caller_spiffe_id not in registry_ids:
-            trace.append("SPIFFE Check: Identity not found in Registry. ❌")
+            trace.append("[Phase I] SPIFFE Check: Identity not found in Registry. ❌")
             eval_context["step_1_identity"] = {"caller": caller_spiffe_id, "found_in_registry": False}
             return {
                 "passed": False, "decision": "DENY", "reason": "Identity not verified", 
                 "denial_source": "Identity", "trace": trace, "context": eval_context, "evaluation_states": evaluation_states
             }
         
-        trace.append("SPIFFE Check: Identity verified. ✅")
+        trace.append("[Phase I] SPIFFE Check: Identity verified. ✅")
         evaluation_states["identity"] = "ALLOW"
         eval_context["step_1_identity"] = {"caller": caller_spiffe_id, "found_in_registry": True}
 
@@ -77,14 +77,14 @@ class DecisionEngine:
         evaluation_states["transport"] = "DENY"
         allowlist = self.allowlist_svc.get_all()
         if caller_spiffe_id not in allowlist:
-            trace.append("Transport Allowlist: Identity not explicitly allowed. ❌")
+            trace.append("[Phase I] Transport Allowlist: Identity not explicitly allowed. ❌")
             eval_context["step_2_transport"] = {"allowed": False}
             return {
                 "passed": False, "decision": "DENY", "reason": "Transport blocked", 
                 "denial_source": "Transport", "trace": trace, "context": eval_context, "evaluation_states": evaluation_states
             }
             
-        trace.append("Transport Allowlist: Identity allowed. ✅")
+        trace.append("[Phase I] Transport Allowlist: Identity allowed. ✅")
         evaluation_states["transport"] = "ALLOW"
         eval_context["step_2_transport"] = {"allowed": True}
 
@@ -128,6 +128,23 @@ class DecisionEngine:
             
         trace.append(f"Proceeding to Post-LLM evaluation (Mode: {mode}).")
 
+        # Initialize phase-based context for UI categorization
+        eval_context["phases"] = {
+            "phase_1_context": {
+                "identity": evaluation_states["identity"],
+                "transport": evaluation_states["transport"],
+                "identity_source": llm_outputs.get("id_source", "Unknown")
+            },
+            "phase_2_inference": {
+                "mode": mode,
+                "llm_executed": True,
+                "confidence": confidence
+            },
+            "phase_3_logic": {
+                "status": "EVALUATING"
+            }
+        }
+
         # --- Step 3: Tool Classification, Intent Decomposition & Capability Mapping ---
         justification = llm_outputs.get("justification", "") or llm_outputs.get("reason", "")
         
@@ -139,27 +156,29 @@ class DecisionEngine:
         # Request-level aggregates from tools
         tool_aggregates = self.tool_classifier.get_aggregate_predicates(tool_audit)
         
-        risk_levels = [self.risk_svc.get_risk_for_mcp(m) for m in set(mcps)]
-        highest_risk = "low"
-        if "high" in risk_levels: highest_risk = "high"
-        elif "medium" in risk_levels: highest_risk = "medium"
+        # Aggregate Resource Attributes (from MCPAttributeService)
+        resource_attrs_list = [self.attribute_svc.get_attributes_for_mcp(m) for m in set(mcps)]
         
-        # Check for multi-domain (intent refinement)
-        is_multi_domain = len(set(mcps)) > 1
-        intent_info["intent_properties"]["multi_domain"] = is_multi_domain
-        tool_aggregates["MultiDomain"] = is_multi_domain
+        # Flattened aggregate for logic mapping (take most conservative for simple predicates)
+        highest_risk = "low"
+        aggregated_compliance = set()
+        for r_attr in resource_attrs_list:
+            agg_risk = r_attr.get("risk_level", "low")
+            if agg_risk == "high": highest_risk = "high"
+            elif agg_risk == "medium" and highest_risk == "low": highest_risk = "medium"
+            aggregated_compliance.add(r_attr.get("compliance_tier", "General"))
             
         eval_context["tool_audit"] = tool_audit
         eval_context["tool_aggregates"] = tool_aggregates
         eval_context["intent_decomposition"] = intent_info
         eval_context["capability_mapping"] = list(capabilities)
-        trace.append(f"Fact Extraction: Domain -> {intent_info['domain']}, Intent -> {intent_info['primary_intent']}. ✅")
+        trace.append(f"[Phase III] Fact Extraction: Domain -> {intent_info['domain']}, Intent -> {intent_info['primary_intent']}. ✅")
 
         # --- Step 4: RBAC (Generalized Refinement) ---
         evaluation_states["rbac"] = "DENY"
         policy = self.rbac_svc.get_policy_for_identity(caller_spiffe_id)
         if not policy:
-            trace.append("RBAC Check: No identity policies found. ❌")
+            trace.append("[Phase III] RBAC Check: No identity policies found. ❌")
             rbac_audit = {"decision": "DENY", "reason": "No RBAC policies mapped", "matched_rule": "none", "rbac_trace": []}
             eval_context["rbac_evaluation"] = rbac_audit
             return self._finalize(caller_spiffe_id, evaluation_states, "DENY", "No RBAC rules mapped", "RBAC", trace, eval_context, True, True, llm_outputs, None)
@@ -168,27 +187,30 @@ class DecisionEngine:
         eval_context["rbac_evaluation"] = rbac_audit
         
         if rbac_audit["decision"] == "DENY":
-            trace.append(f"RBAC Check: DENY triggered by {rbac_audit['matched_rule']}. ❌")
+            trace.append(f"[Phase III] RBAC Check: DENY triggered by {rbac_audit['matched_rule']}. ❌")
             return self._finalize(caller_spiffe_id, evaluation_states, "DENY", rbac_audit["reason"], "RBAC", trace, eval_context, True, True, llm_outputs, None)
 
         evaluation_states["rbac"] = "ALLOW"
 
         # --- Step 5: ABAC Baseline (Parallel/Informational) ---
         registry = self.registry_svc.get_all()
-        persona_key = next((k for k, v in registry.items() if v.get("spiffe_id") == caller_spiffe_id), "unknown")
+        # Find the specific persona data for attributes
+        persona_data = next((v for k, v in registry.items() if v.get("spiffe_id") == caller_spiffe_id), {})
+        subject_attrs = persona_data.get("attributes", {"clearance_level": "L1", "department": "Public", "trust_score": 0.5}).copy()
         
-        # New Iteration 4D Nested ABAC Model
+        # We also pass the 'role' for backward compatibility
+        persona_key = next((k for k, v in registry.items() if v.get("spiffe_id") == caller_spiffe_id), "unknown")
+        subject_attrs["role"] = persona_key
+
+        # 6D: Enriched ABAC Model - Comparing static traits
         abac_attrs = {
-            "subject": {"role": persona_key},
-            "resource": {
-                "mcps": mcps,
-                "risk_level": highest_risk
-            },
+            "subject": subject_attrs,
+            "resource": resource_attrs_list[0] if resource_attrs_list else {"risk_level": "medium"},
             "action": {
                 "tools": tools,
                 "tool_count": len(tools),
-                "contains_write": intent_info["intent_properties"]["contains_write"],
-                "multi_domain": intent_info["intent_properties"]["multi_domain"]
+                "contains_write": intent_info["intent_properties"].get("contains_write", False),
+                "multi_domain": intent_info["intent_properties"].get("multi_domain", False)
             },
             "environment": {
                 "confidence": confidence
@@ -197,18 +219,18 @@ class DecisionEngine:
         abac_result = self.abac_engine.evaluate(abac_attrs)
         evaluation_states["abac"] = abac_result["decision"]
         eval_context["abac_baseline"] = abac_result
-        trace.append(f"ABAC baseline evaluated: {abac_result['decision']} (matched: {abac_result['matched_rule']})")
+        trace.append(f"[Phase III] ABAC baseline evaluated: {abac_result['decision']} (matched: {abac_result['matched_rule']})")
 
         # --- Step 6: TS-PHOL Policy-Driven Reasoning (Iteration 4E) ---
         evaluation_states["tsphol"] = "DENY"
         
         # 4R: Hierarchical Domain Inference
         if mcp_filter and mcp_filter != "All":
-            expected_domain = mcp_filter
+            expected_domain = normalize_mcp_name(mcp_filter)
         elif intent_info.get("domain") and intent_info.get("domain") != "Unknown":
-            expected_domain = intent_info.get("domain")
+            expected_domain = normalize_domain_name(intent_info.get("domain"))
         else:
-            expected_domain = llm_outputs.get("expected_domain", "Uncertain")
+            expected_domain = llm_outputs.get("expected_domain", "uncertain")
             
         expected_domain = resolve_domain(expected_domain)
         
@@ -299,7 +321,9 @@ class DecisionEngine:
             "intent_info": intent_info,
             "tool_aggregates": tool_aggregates, # 4I: Direct aggregate sync
             "confidence": confidence,
+            "ConfidenceValue": confidence, # Direct predicate injection for TS-PHOL
             "highest_risk": highest_risk,
+            "HighestRiskLevel": highest_risk, # Direct predicate injection for TS-PHOL
             # 4M: Validation-Aware Context
             "expected_domain": expected_domain,
             "actual_domain": actual_domain,
@@ -332,8 +356,8 @@ class DecisionEngine:
         
         tsphol_rules = self.tsphol_svc.get_all()
         
-        # Execute Declarative Interpreter (Restored after accidental deletion)
-        final_status, derived_set, logic_trace = self.tsphol_interpreter.evaluate_rules(all_predicates, tsphol_rules)
+        # Execute Declarative Interpreter
+        final_status, derived_set, logic_trace, certainty = self.tsphol_interpreter.evaluate_rules(all_predicates, tsphol_rules)
         
         eval_context["tsphol_predicate_set"] = all_predicates
         eval_context["tsphol_logic_trace"] = logic_trace
@@ -345,7 +369,8 @@ class DecisionEngine:
             "triggered_rules": len([r for r in logic_trace if r["triggered"]]),
             "final_status": final_status,
             "final_decision": final_status,  # Compatibility
-            "reason": "No rule violations detected" if final_status == "ALLOW" else "Security policy violation"
+            "reason": "No rule violations detected" if final_status == "ALLOW" else "Security policy violation",
+            "certainty": certainty
         }
 
         # 6: Mandatory Reasoning - Always satisfy at least 3 logical predicates for ALLOW
@@ -384,18 +409,31 @@ class DecisionEngine:
         # 4S: Synthesis - TS-PHOL IS THE FINAL AUTHORITY
         evaluation_states["tsphol"] = final_status
         reason = "TS-PHOL approved access" if final_status == "ALLOW" else "TS-PHOL formal logical denial"
-        # Label ABAC as advisory
-        eval_context["abac_baseline"]["advisory"] = True
+        # ABAC is now a formal part of the flow
+        eval_context["abac_baseline"]["advisory"] = False
         
-        trace.append(f"TS-PHOL evaluated {len(tsphol_rules)} declarative rules. FINAL STATUS: {final_status}")
-        trace.append(f"Authority Check: TS-PHOL overrides context. Decision: {final_status}")
-        
+        trace.append(f"[Phase III] TS-PHOL evaluated {len(tsphol_rules)} declarative rules. FINAL STATUS: {final_status}")
+        trace.append(f"[Phase III] Authority Check: TS-PHOL overrides context. Decision: {final_status}")
+        # Phase 3: Deception Routing (Sandbox Response)
+        if final_status == "DENY" and all_predicates.get("ContainsWrite"):
+            final_status = "DECEPTION_ROUTED"
+            reason = "High-risk write denied; agent logically routed to sandbox deception environment."
+            trace.append("DECEPTION TRIGGERED: High risk write operation sandboxed. 🛡️")
+
+        # Finalize phase summaries
+        eval_context["phases"]["phase_3_logic"] = {
+            "status": final_status,
+            "tsphol_logic": final_status,
+            "certainty": certainty,
+            "alignment_score": final_alignment_score
+        }
+
         return self._finalize(
             caller_spiffe_id, 
             evaluation_states, 
             final_status, # Authoritative decision
             reason, 
-            "TS-PHOL" if final_status == "DENY" else None, 
+            "TS-PHOL" if "DENY" in evaluation_states["tsphol"] else None, 
             trace, 
             eval_context, 
             True, True, llm_outputs, all_predicates
@@ -404,6 +442,8 @@ class DecisionEngine:
     def _finalize(self, spiffe_id, states, final_dec, reason, denial_source, trace, context, pre_llm_result, llm_executed, llm_output, derived_features) -> DecisionResult:
         if final_dec == "DENY" and "FINAL: DENY" not in trace:
             trace.append("FINAL: DENY")
+        elif final_dec == "DECEPTION_ROUTED" and "FINAL: DECEPTION_ROUTED" not in trace:
+            trace.append("FINAL: DECEPTION_ROUTED")
             
         return DecisionResult(
             spiffe_id=spiffe_id,
@@ -415,6 +455,7 @@ class DecisionEngine:
             final_decision=final_dec,
             reason=reason,
             denial_source=denial_source,
+            deception_routed=(final_dec == "DECEPTION_ROUTED"),
             trace=trace,
             context=context,
             pre_llm_result=pre_llm_result,

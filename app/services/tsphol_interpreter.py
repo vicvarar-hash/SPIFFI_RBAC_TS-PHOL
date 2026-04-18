@@ -10,10 +10,10 @@ class TSPHOLInterpreter:
     Refined in Iteration 4K to support full evaluation traces (audit transparency).
     """
     
-    def evaluate_rules(self, predicates: Dict[str, Any], rules: List[Dict[str, Any]]) -> Tuple[str, Set[str], List[Dict[str, Any]]]:
+    def evaluate_rules(self, predicates: Dict[str, Any], rules: List[Dict[str, Any]]) -> Tuple[str, Set[str], List[Dict[str, Any]], float]:
         """
         Orchestrates rule evaluation over predicates based on priority.
-        Records evaluation status for EVERY rule.
+        Records evaluation status for EVERY rule and calculates a mathematical certainty probability.
         """
         derived = set()
         trace = []
@@ -94,7 +94,22 @@ class TSPHOLInterpreter:
             
             trace.append(rule_res)
 
-        return final_decision, derived, trace
+        # Phase 2: Probabilistic Hardening
+        # Calculate a mathematical certainty based on TS-PHOL facts and LLM confidence
+        base_confidence = predicates.get("ConfidenceValue", 1.0)
+        certainty = base_confidence
+        
+        # Penalize certainty for skipped safeguards or multiple derived warnings
+        if final_decision == "ALLOW":
+            safeguards_skipped = sum(1 for r in trace if r.get("status") == "SAFEGUARDED")
+            warnings = len([d for d in derived if d in ["UnsafeWrite", "LowConfidence"]])
+            penalty = (safeguards_skipped * 0.05) + (warnings * 0.1)
+            certainty = max(0.5, certainty - penalty)
+        else:
+            # If TS-PHOL mathematically denies, we are highly certain of the DENY (fail-secure)
+            certainty = min(1.0, certainty + 0.2)
+
+        return final_decision, derived, trace, round(certainty, 2)
 
     def evaluate_conditions(self, conditions: List[Dict[str, Any]], predicates: Dict[str, Any], derived: Set[str]) -> Tuple[bool, str]:
         """

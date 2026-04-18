@@ -26,8 +26,8 @@ DOMAIN_CAPABILITIES = {
     },
     "Atlassian": {
         "IssueReview": {
-            "required": ["IssueRead", "IssueCreation", "HistoryReview"],
-            "optional": ["CommentInspection"]
+            "required": ["IssueRead", "HistoryReview"],
+            "optional": ["CommentInspection", "IssueCreation"]
         },
         "TaskManagement": {
             "required": ["IssueUpdate", "IssueRead", "WorkflowTransition"],
@@ -108,6 +108,35 @@ class DomainCapabilityOntology:
         "DataHealth", "SecurityAudit",
         "IssueReview", "TaskManagement"
     }
+
+    CAPABILITY_IMPLICATIONS = {
+        "IssueUpdate": ["IssueRead", "IssueReview"],
+        "IssueCreation": ["IssueRead", "AtlassianWrite"],
+        "StrategyExecution": ["StrategyReview", "MarketDataAnalysis", "BalanceCheck"],
+        "OrderCreation": ["MarketDataRetrieval", "ExchangeInteraction"],
+        "PlaceOrder": ["StrategyExecution"],
+        "CancelOrder": ["StrategyExecution"],
+        "UpdateSubscription": ["FinancialRead", "FinancialWrite"],
+        "IncidentAnnotation": ["IncidentCorrelation", "InvestigationLookup"]
+    }
+
+    @staticmethod
+    def expand_capabilities(caps: Set[str]) -> Set[str]:
+        """
+        Performs Capability Subsumption:
+        Computes the complete semantic closure of capabilities based on hierarchical implication rules.
+        """
+        expanded = set(caps)
+        # Simple iterative transitive closure (in case of nested implications)
+        changed = True
+        while changed:
+            changed = False
+            for cap in list(expanded):
+                for implied in DomainCapabilityOntology.CAPABILITY_IMPLICATIONS.get(cap, []):
+                    if implied not in expanded:
+                        expanded.add(implied)
+                        changed = True
+        return expanded
 
     @staticmethod
     def is_concrete(capability: str) -> bool:

@@ -46,7 +46,12 @@ class SpiffeRegistryService:
         self.registry[name] = {
             "display_name": display_name,
             "spiffe_id": spiffe_id,
-            "description": description
+            "description": description,
+            "attributes": {
+                "clearance_level": "L1",
+                "department": "Engineering",
+                "trust_score": 1.0
+            }
         }
         success = PolicyLoader.save_json(self.filepath, self.registry)
         if success:

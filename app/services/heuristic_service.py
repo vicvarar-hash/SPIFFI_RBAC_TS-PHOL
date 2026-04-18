@@ -36,8 +36,9 @@ class HeuristicService:
         
         for rule in rules:
             prefix = rule.get("prefix")
-            if prefix and t_low.startswith(prefix):
-                return rule.get("actions", ["unknown"]), rule.get("id", "prefix_match")
+            # Improved matching: startswith OR contains as a separated part (e.g. jira_get_issue)
+            if prefix and (t_low.startswith(prefix) or f"_{prefix}" in t_low or f".{prefix}" in t_low):
+                return rule.get("actions", ["unknown"]), rule.get("id", rule.get("id", "prefix_match"))
                 
         # Default fallback if no prefix matches
         return ["unknown"], "no_matching_prefix"

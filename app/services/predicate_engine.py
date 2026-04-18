@@ -32,7 +32,10 @@ class PredicateEngine:
         p["UsesTools"] = set(context.get("tools", []))
         
         # 4T: Keep full set for internal rule logic (SSOT filtering handled in UI/Context)
-        p["HasCapabilities"] = set(context.get("has_capabilities", []))
+        # Phase 1: Apply Subsumption (expand implied capabilities)
+        from app.services.domain_capability_ontology import DomainCapabilityOntology
+        raw_caps = set(context.get("has_capabilities", []))
+        p["HasCapabilities"] = DomainCapabilityOntology.expand_capabilities(raw_caps)
         p["RequiredCapabilities"] = set(context.get("task_required_capabilities", []))
 
         # Intent Metadata (for tracing)
@@ -76,11 +79,21 @@ class PredicateEngine:
         p["AlignmentEvaluated"] = (p["TaskDomainExpected"] != "Uncertain")
         p["SelectionToleranceActive"] = context.get("selection_tolerance_active", False)
         
+        evaluation_states = context.get("evaluation_states", {})
+        p["ABACDenied"] = evaluation_states.get("abac") == "DENY"
+        
         # Logic Flags
         p["TaskBundleDomainMismatch"] = (p["TaskDomainExpected"] != p["BundleDomainActual"]) and (p["TaskDomainExpected"] != "Uncertain")
         
         issue_codes = context.get("issue_codes", [])
         p["ValidationFailed"] = len(issue_codes) > 0
+        
+        # 4V: Define Critical failures vs Advisory warnings
+        # Critical = Security or Mission failure (Wrong domain, missing required cap, invalid tool)
+        # Advisory = Sub-optimal but functionally sufficient (Logic bloat, irrelevant extra tools)
+        critical_codes = {"WRONG_DOMAIN", "MISSING_CAPABILITY", "INVALID_TOOL_COUNT", "INVALID_TOOL"}
+        p["CriticalValidationFailure"] = any(code in issue_codes for code in critical_codes)
+        
         # 4O/4T: Strict Capability Alignment Logic
         from app.services.domain_capability_ontology import DomainCapabilityOntology
         full_missing = p["RequiredCapabilities"] - p["HasCapabilities"]

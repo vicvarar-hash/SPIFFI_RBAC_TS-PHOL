@@ -45,6 +45,8 @@ rules:
   if:
     - predicate: TaskBundleDomainMismatch
       equals: true
+    - predicate: SelectionToleranceActive
+      equals: false
   then: DENY
   derive: IrrelevantBundle
   priority: 120
@@ -52,11 +54,20 @@ rules:
 - rule_name: validation_failure_denial
   description: Deny when validation explicitly determines the bundle is invalid for the task
   if:
-    - predicate: ValidationFailed
+    - predicate: CriticalValidationFailure
       equals: true
   then: DENY
   derive: TaskMismatch
   priority: 110
+
+- rule_name: abac_failure_denial
+  description: Deny when attribute-based access control baseline is not met
+  if:
+    - predicate: ABACDenied
+      equals: true
+  then: DENY
+  derive: ABACFailure
+  priority: 115
 
 - rule_name: capability_coverage_violation
   description: Deny when the bundle lacks a critical capability implied by the task
@@ -86,9 +97,30 @@ rules:
     - predicate: AlignmentEvaluated
       equals: true
     - predicate: TaskAlignmentScore
-      lt: 0.4
     - predicate: SelectionToleranceActive
       equals: true
   then: DENY
   derive: LowAlignment
   priority: 60
+
+- rule_name: low_confidence_write_prevention
+  description: Deny write operations if LLM confidence is below 0.9
+  if:
+    - predicate: ContainsWrite
+      equals: true
+    - predicate: ConfidenceValue
+      lt: 0.9
+  then: DENY
+  derive: LowConfidenceWrite
+  priority: 130
+
+- rule_name: high_risk_confidence_safeguard
+  description: High-risk resources require at least 0.9 confidence
+  if:
+    - predicate: HighestRiskLevel
+      equals: high
+    - predicate: ConfidenceValue
+      lt: 0.9
+  then: DENY
+  derive: HighRiskLowConfidence
+  priority: 125

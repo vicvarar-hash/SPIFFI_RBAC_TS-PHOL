@@ -19,9 +19,10 @@ class DecisionResult(BaseModel):
     rbac_allowed: bool
     tsphol_decision: str  # "allow", "deny", "flag", "not_evaluated"
     
-    final_decision: str  # "ALLOW", "DENY", "FLAG", "NOT_EVALUATED"
+    final_decision: str  # "ALLOW", "DENY", "FLAG", "NOT_EVALUATED", "DECEPTION_ROUTED"
     reason: str
     denial_source: Optional[str] = None
+    deception_routed: bool = False
     trace: List[str]
     context: Optional[Dict[str, Any]] = None
     

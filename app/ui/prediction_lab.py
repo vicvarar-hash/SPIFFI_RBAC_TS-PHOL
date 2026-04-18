@@ -13,9 +13,10 @@ from app.services.spiffe_registry_service import SpiffeRegistryService
 from app.services.spiffe_allowlist_service import SpiffeAllowlistService
 from app.services.rbac_service import RBACService
 from app.services.tsphol_rule_service import TSPHOLRuleService
-from app.services.mcp_risk_service import MCPRiskService
+from app.services.mcp_attribute_service import MCPAttributeService
 from app.services.decision_engine import DecisionEngine
 from app.services.spiffe_workload_service import SpiffeWorkloadService
+from app.services.reasoning_auditor import ReasoningAuditor
 
 def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     st.title("🔮 Parallel reasoning lab")
@@ -38,20 +39,21 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     validator = ValidationService(llm, personas)
     comparer = ComparisonService()
     logger = LoggerService()
+    auditor = ReasoningAuditor(llm)
     
     # Initialize Policy Services
     registry_svc = SpiffeRegistryService()
     allowlist_svc = SpiffeAllowlistService(registry_service=registry_svc)
     rbac_svc = RBACService()
     tsphol_svc = TSPHOLRuleService()
-    risk_svc = MCPRiskService()
+    attribute_svc = MCPAttributeService()
     
     decision_engine = DecisionEngine(
         registry_svc=registry_svc,
         allowlist_svc=allowlist_svc,
         rbac_svc=rbac_svc,
         tsphol_svc=tsphol_svc,
-        risk_svc=risk_svc,
+        attribute_svc=attribute_svc,
         personas=personas
     )
     
@@ -161,6 +163,12 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             # New Iteration 4F: Mode Selection
             selected_mode = st.radio("Experiment Mode", ["Selection (LLM-ResM)", "Validation"], horizontal=True)
             st.session_state["experiment_mode"] = selected_mode
+            
+        # Reset results if task context changes
+        context_key = f"{selected_mcp_filter}_{selected_filter}_{task_idx_in_filtered}_{selected_mode}"
+        if st.session_state.get("last_context_key") != context_key:
+            st.session_state["last_run_data"] = None
+            st.session_state["last_context_key"] = context_key
         
         # Dataset Context (ASTRA Candidates & Groundtruth)
         with st.expander("View Dataset Context (ASTRA Validation Details)", expanded=False):
@@ -205,6 +213,9 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                     "task_category": task.match_tag
                 }
 
+                # Exec results container
+                run_data = {"experiment_context": experiment_context}
+
                 # 1. Selection Pipeline
                 if selected_mode.startswith("Selection"):
                     sel_pre_llm = decision_engine.pre_llm_check(caller_spiffe_id, None, None)
@@ -224,35 +235,11 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                         sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, [], [], 0.0, {}, task.task)
                         sel_decision.llm_executed = False
                     
-                    sel_ctx = sel_decision.model_dump()
-                    sel_ctx["caller_display_name"] = caller_display_name
-                    sel_ctx["benchmark_result"] = sel_comparison.status
-                    sel_ctx["identity_source"] = id_source
-                    sel_ctx["experiment_context"] = experiment_context
-                    
-                    logger.log_prediction("selection", task_idx_in_filtered, task.task, selection.model_dump(), sel_comparison.model_dump())
-                    logger.log_decision(task_idx_in_filtered, "selection", selection.model_dump(), sel_ctx)
-                    
-                    # Display Single Panel
-                    st.header("🧠 Selection (LLM-ResM)")
-                    with st.container(border=True):
-                        if sel_decision.llm_executed:
-                            st.subheader("🧠 LLM Inference Summary")
-                            st.write("**Predicted MCPs:**")
-                            st.json(selection.selected_mcp)
-                            st.write("**Predicted Tools:**")
-                            st.json(selection.selected_tools)
-                            st.markdown(f"**Confidence:** `{selection.confidence}`")
-                            st.markdown(f"**Capability Coverage Score:** `{selection.capability_coverage_score}`")
-                            if selection.missing_capabilities:
-                                st.warning(f"⚠️ **Missing Capabilities:** {', '.join(selection.missing_capabilities)}")
-                            else:
-                                st.success("✅ **Sufficient Capability Coverage**")
-                            st.markdown(f"**Justification:** {selection.justification}")
-                        else:
-                            st.warning("⚠️ LLM INFERENCE SKIPPED: Pre-LLM checks failed.")
-                        st.divider()
-                        _render_decision_panel(sel_decision, sel_comparison, caller_display_name, "sel")
+                    run_data.update({
+                        "decision": sel_decision,
+                        "inference": selection,
+                        "comparison": sel_comparison
+                    })
 
                 # 2. Validation Pipeline
                 elif selected_mode == "Validation":
@@ -275,7 +262,7 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                             "expected_domain": validation.expected_domain,
                             "actual_domain": validation.actual_domain,
                             "task_alignment_score": validation.task_alignment_score,
-                            "task_alignment_details": validation.task_alignment_details # 4O: Transparency
+                            "task_alignment_details": validation.task_alignment_details
                         }
                     else:
                         validation = ValidationResult(is_valid=False, confidence=0.0, reason="Skipped due to Pre-LLM block", issues=["SKIPPED"], raw_output=None)
@@ -283,403 +270,335 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                         val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, 0.0, {}, task.task)
                         val_decision.llm_executed = False
                     
-                    val_ctx = val_decision.model_dump()
-                    val_ctx["caller_display_name"] = caller_display_name
-                    val_ctx["benchmark_result"] = val_comparison.status
-                    val_ctx["identity_source"] = id_source
-                    val_ctx["experiment_context"] = experiment_context
-                    
-                    logger.log_prediction("validation", task_idx_in_filtered, task.task, validation.model_dump(), val_comparison.model_dump())
-                    logger.log_decision(task_idx_in_filtered, "validation", validation.model_dump(), val_ctx)
-                    
-                    # Display Single Panel
-                    st.header("🛡️ Validation Mode")
-                    with st.container(border=True):
-                        if val_decision.llm_executed:
-                            st.subheader("🧠 LLM Inference Summary")
-                            st.write("**Validated MCPs:**")
-                            st.json(task.candidate_mcp)
-                            st.write("**Validated Tools:**")
-                            st.json(task.candidate_tools)
-                            st.markdown(f"**Confidence:** `{validation.confidence}`")
-                        else:
-                            st.warning("⚠️ LLM INFERENCE SKIPPED: Pre-LLM checks failed.")
-                        st.divider()
-                        _render_decision_panel(val_decision, val_comparison, caller_display_name, "val")
-                        
-                        # 4M: Task/Bundle Alignment Audit
-                        st.divider()
-                        st.subheader("🚦 Task/Bundle Alignment Audit")
-                        
-                        v_out = val_decision.llm_output or {}
-                        col_a1, col_a2, col_a3 = st.columns(3)
-                        
-                        # 4R: Transparency
-                        alignment_eval = val_decision.context.get("tsphol_predicate_set", {}).get("AlignmentEvaluated", False)
-                        eval_icon = "✅" if alignment_eval else "❌"
-                        
-                        col_a1.metric("Expected Domain", v_out.get("expected_domain", "Uncertain"))
-                        col_a2.metric("Actual Domain", v_out.get("actual_domain", "Uncertain"))
-                        
-                        score_label = f"Alignment Score ({eval_icon} Evaluated)"
-                        col_a3.metric(score_label, f"{v_out.get('task_alignment_score', 0.0):.2f}")
-                        
-                        # 4S: Alignment Breakdown (Components)
-                        components = val_decision.context.get("alignment_components", {})
-                        if components:
-                            with st.expander("📊 Alignment Breakdown (Weighted Audit)", expanded=True):
-                                c1, c2, c3 = st.columns(3)
-                                c1.metric("Domain (40%)", f"{components.get('domain_score', 0.0):.2f}")
-                                c2.metric("Capability (40%)", f"{components.get('capability_score', 0.0):.2f}")
-                                c3.metric("Semantic (20%)", f"{components.get('semantic_score', 0.0):.2f}")
-                                
-                                st.caption("Formula: `0.4*Domain + 0.4*Cap + 0.2*Semantic`")
-
-                        if v_out.get("issue_codes"):
-                            st.write("**Validation Issue Codes:**")
-                            st.info(", ".join(v_out.get("issue_codes", [])))
-                        
-                        if v_out.get("actual_domain") != v_out.get("expected_domain") and v_out.get("expected_domain") != "Uncertain":
-                            st.warning("⚠️ Domain Mismatch Detected")
-                        elif v_out.get("task_alignment_score", 1.0) < 0.4:
-                            st.error("❌ Critical Low Alignment")
-                        else:
-                            st.success("✅ Mission Alignment Verified")
+                    run_data.update({
+                        "decision": val_decision,
+                        "inference": validation,
+                        "comparison": val_comparison
+                    })
                 
-                with st.expander("📄 Raw Model Outputs & Details", expanded=False):
-                    st.subheader("📋 Context Initialization Audit")
-                    st.json(experiment_context)
-                    
-                    if selected_mode.startswith("Selection"):
-                        st.divider()
-                        st.subheader("Selection Inference Details")
-                        st.write("**Inference Justification:**", selection.justification)
-                        st.write("**Comparison Result:**")
-                        st.json(sel_comparison.model_dump())
-                        st.write("**Detailed Logical Predicates:**")
-                        st.json(sel_decision.context)
-                    else:
-                        st.divider()
-                        st.subheader("Validation Inference Details")
-                        st.write("**Inference Reason:**", validation.reason)
-                        st.write("**Detected Issues:**")
-                        st.json(validation.issues)
-                        st.write("**Detailed Logical Predicates:**")
-                        st.json(val_decision.context)
+                st.session_state["last_run_data"] = run_data
 
-def _render_decision_panel(decision: DecisionResult, comparison: Any, caller_display_name: str, key_prefix: str = ""):
-    st.subheader("🚦 Execution Pipeline")
-    
-    # Block A: Benchmark Evaluation
-    st.markdown("#### A. Benchmark Evaluation")
-    st_color = {"exact_match": "green", "partial_match": "orange", "mismatch": "red"}.get(comparison.status, "gray")
-    st.markdown(f"**Status:** :{st_color}[{comparison.status.upper()}]")
-    st.caption(comparison.details)
-    cols_b = st.columns(2)
-    cols_b[0].metric("MCP Match", "MATCH" if comparison.mcp_match else "MISMATCH")
-    cols_b[1].metric("Tool Match", "MATCH" if comparison.tool_match else "MISMATCH")
-    
-    st.divider()
-    
-    # Block B: Identity & Transport
-    st.markdown("#### B. Identity & Transport")
-    
-    # Render caller and source
-    st.write(f"**Caller:** {caller_display_name}")
-    st.code(decision.spiffe_id)
-    
-    # Attempt to pull from session state to display real identity badge
-    _id_source = st.session_state.get("current_identity_source", "Simulated")
-    if "api" in _id_source.lower() or "real" in _id_source.lower():
-        st.success(f"**Source:** {_id_source}  \n🛡️ Real SPIFFE Identity")
-    else:
-        st.info(f"**Source:** {_id_source}")
-    
-    id_status = decision.evaluation_states.get("identity", "NOT_EVALUATED")
-    tr_status = decision.evaluation_states.get("transport", "NOT_EVALUATED")
-    
-    cols_i = st.columns(2)
-    cols_i[0].metric("Registry Verified", "YES" if id_status == "ALLOW" else "NO")
-    cols_i[1].metric("mTLS Allowed", "YES" if tr_status == "ALLOW" else ("NO" if tr_status == "DENY" else "NOT EVALUATED"))
-    
-    if decision.denial_source in ["Identity", "Transport"]:
-        st.error(f"Execution halted at {decision.denial_source}.")
+    # --- Persistent Result Rendering ---
+    last_run = st.session_state.get("last_run_data")
+    if last_run:
+        decision = last_run["decision"]
+        inference = last_run["inference"]
+        comparison = last_run["comparison"]
+        ctx = last_run["experiment_context"]
         
-    st.divider()
+        # Display Architecture
+        mode_tag = "selection" if ctx["mode"].startswith("Selection") else "validation"
+        title = "🧠 Research Mode: Selection (LLM-ResM)" if mode_tag == "selection" else "🛡️ Research Mode: Validation (Meta-Level)"
+        st.header(title)
+        
+        # Phase 1: Context
+        _render_phase_1(decision, caller_display_name, mode=mode_tag)
+        st.divider()
+        
+        # Phase 2: Generation
+        if decision.llm_executed:
+            _render_phase_2(inference, mode_tag, task=task)
+        else:
+            st.warning("⚠️ GENERATION LAYER SKIPPED: Pre-LLM checks failed.")
+        st.divider()
+        
+        # Phase 3: Logic
+        _render_phase_3(decision, comparison, mode=mode_tag)
+        
+        # Details & Auditor
+        with st.expander("📄 Raw Model Outputs & Details", expanded=False):
+            st.subheader("📋 Context Initialization Audit")
+            st.json(ctx)
+            
+            st.divider()
+            if ctx["mode"].startswith("Selection"):
+                st.subheader("Selection Inference Details")
+                st.write("**Inference Justification:**", inference.justification)
+                st.write("**Comparison Result:**")
+                st.json(comparison.model_dump())
+            else:
+                st.subheader("Validation Inference Details")
+                st.write("**Inference Reason:**", inference.reason)
+                st.write("**Detected Issues:**")
+                st.json(inference.issues)
+            
+            st.subheader("Detailed Logical Predicates")
+            st.json(decision.context)
 
-    # Block C: RBAC Authorization (Iteration 4V Expanded)
-    st.markdown("#### C. RBAC Authorization")
+        # --- Post-Reasoning Auditor ---
+        st.divider()
+        st.markdown("### 🔍 Run Assessment & Recommendations")
+        
+        state_key = f"audit_{ctx['mode']}_{ctx['task_index']}"
+        if state_key not in st.session_state:
+            st.session_state[state_key] = None
+        
+        if st.button("🚀 Generate Logic Post-Mortem & Strategic Advice", key=f"btn_{state_key}"):
+            with st.spinner("LLoM Auditor analyzing execution trace..."):
+                assessment = auditor.generate_assessment(
+                    task=task.task,
+                    metadata=ctx,
+                    decision_data=decision.model_dump(),
+                    benchmark_status=comparison.status
+                )
+                st.session_state[state_key] = assessment
+        
+        report = st.session_state[state_key]
+        if report:
+            with st.container(border=True):
+                st.markdown(f"#### 📊 Auditor Summary: {report.get('summary')}")
+                for section in report.get("sections", []):
+                    with st.expander(f"📌 {section.get('title')}", expanded=True):
+                        st.markdown(section.get("content"))
+                if report.get("recommendations"):
+                    st.markdown("---")
+                    st.markdown("**💡 Strategic Recommendations:**")
+                    for rec in report.get("recommendations", []):
+                        st.success(f"- {rec}")
+
+def _render_authorization_trace(decision: DecisionResult):
+    """
+    Helper to render the RBAC and ABAC status and trace.
+    Used in Phase I for Validation and Phase III for Selection.
+    """
     rbac_status = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
-    rbac_audit = decision.context.get("rbac_evaluation", {})
-    
-    st.metric("RBAC Allowed", "✅ Yes" if rbac_status == "ALLOW" else ("❌ No" if rbac_status == "DENY" else "NOT EVALUATED"))
-    
-    if rbac_audit:
-        with st.expander("⚖️ RBAC Reasoning Trace", expanded=(rbac_status == "DENY")):
-            st.markdown(f"**Matched Rule:** `{rbac_audit.get('matched_rule')}`")
-            st.markdown(f"**Decision:** `{rbac_audit.get('decision')}`")
-            st.markdown(f"**Reason:** {rbac_audit.get('reason')}")
+    abac_status = decision.evaluation_states.get("abac", "NOT_EVALUATED")
+
+    with st.expander("⚖️ View Baseline Authority Trace (RBAC/ABAC)"):
+        # Display Subject Attributes
+        from app.services.spiffe_registry_service import SpiffeRegistryService
+        registry = SpiffeRegistryService().get_all()
+        persona_data = next((v for k, v in registry.items() if v.get("spiffe_id") == decision.spiffe_id), {})
+        attrs = persona_data.get("attributes", {})
+        if attrs:
+            col1, col2, col3 = st.columns(3)
+            col1.write(f"**Dept:** {attrs.get('department', 'Unknown')}")
+            col2.write(f"**Clearance:** {attrs.get('clearance_level', 'L1')}")
+            col3.write(f"**Trust:** {attrs.get('trust_score', 0.5):.1f}")
+            st.divider()
+
+        rbac_audit = decision.context.get("rbac_evaluation", {})
+        if rbac_audit:
+            st.markdown(f"**Overall RBAC Result:** `{rbac_audit.get('decision')}` | Policy: `Persona Role`")
+            st.caption(rbac_audit.get("reason", ""))
             
-            trace_data = rbac_audit.get("rbac_trace", [])
-            if trace_data:
+            # Detailed Tool Breakdown
+            rbac_trace = rbac_audit.get("rbac_trace", [])
+            if rbac_trace:
                 import pandas as pd
-                df_rbac = pd.DataFrame(trace_data)
-                # Select and rename columns for cleaner display
-                df_disp = df_rbac[["tool", "mcp", "decision", "policy", "reason"]].copy()
-                df_disp.columns = ["Tool Name", "MCP Server", "Decision", "Policy ID", "Reason"]
+                st.markdown("**Per-Tool Authorization Trace:**")
+                rdf = pd.DataFrame(rbac_trace)
+                rdf.columns = ["Tool", "MCP", "Decision", "Matched Rule", "Rationale"]
+                st.table(rdf)
+        
+        st.divider()
+        abac = decision.context.get("abac_baseline", {})
+        if abac:
+            st.markdown(f"**ABAC Evaluation Status:** `{abac.get('decision')}` | Rule: `{abac.get('matched_rule')}`")
+            
+            # ABAC Attribute Mapping Detail (6D Detailed Trace)
+            trace_steps = abac.get("reasoning_trace", {}).get("logic_steps", [])
+            if trace_steps:
+                import pandas as pd
+                st.markdown("**Attribute Authority Evidence:**")
                 
-                # Apply color styling (optional, but good for UX)
+                # Transform logic steps into display rows
+                rows = []
+                for s in trace_steps:
+                    rows.append({
+                        "Condition": s.get("condition"),
+                        "Value": s.get("actual"),
+                        "Decision": s.get("decision", "ALLOW"),
+                        "Rule ID": s.get("rule_id", "baseline")
+                    })
+                
+                st.table(pd.DataFrame(rows))
+            
+            if abac.get("failure_reason"):
+                st.error(f"ABAC Denial Rationale: {abac.get('failure_reason')}")
+        else:
+            st.info("No ABAC status available.")
+
+def _render_phase_1(decision: DecisionResult, caller_display_name: str, mode: str = "validation"):
+    """
+    PHASE 1: PRE-LLM CONTEXT & IDENTITY
+    """
+    st.markdown("### 🏛️ Phase I: Context & Identity (Pre-LLM)")
+    with st.container(border=True):
+        st.write(f"**Subject Caller:** {caller_display_name}")
+        st.code(decision.spiffe_id)
+        
+        id_source = st.session_state.get("current_identity_source", "Unknown")
+        if "api" in id_source.lower() or "real" in id_source.lower():
+            st.success(f"**Identity Source:** {id_source} | 🛡️ Real SPIFFE ID")
+        else:
+            st.info(f"**Identity Source:** {id_source} (Simulated)")
+            
+        id_status = decision.evaluation_states.get("identity", "NOT_EVALUATED")
+        tr_status = decision.evaluation_states.get("transport", "NOT_EVALUATED")
+        
+        if mode == "selection":
+            c1, c2 = st.columns(2)
+            c1.metric("Identity Verified", "ALLOW" if id_status == "ALLOW" else "DENY")
+            c2.metric("mTLS Transport", "ALLOW" if tr_status == "ALLOW" else "DENY")
+        else:
+            rbac_status = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
+            abac_status = decision.evaluation_states.get("abac", "NOT_EVALUATED")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Identity Verified", "ALLOW" if id_status == "ALLOW" else "DENY")
+            c2.metric("mTLS Transport", "ALLOW" if tr_status == "ALLOW" else "DENY")
+            c3.metric("RBAC Status", rbac_status)
+            c4.metric("ABAC Status", abac_status)
+            
+            if rbac_status == "DENY":
+                st.error(f"RBAC Denial: {decision.reason}")
+            
+            _render_authorization_trace(decision)
+
+def _render_phase_2(result: Any, mode: str, task: Any = None):
+    """
+    PHASE 2: LLM INFERENCE (GENERATION LAYER)
+    Displays the LLoM logic hypotheses and alignment scores.
+    """
+    st.markdown("### 🧠 Phase II: LLoM Generation (Inference)")
+    with st.container(border=True):
+        if mode == "selection":
+            st.subheader("Logic Hypothesis (Tools Selection)")
+            st.write("**Predicted MCPs:**")
+            st.json(result.selected_mcp)
+            st.write("**Predicted Tools:**")
+            st.json(result.selected_tools)
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Model Confidence", f"{result.confidence:.0%}")
+            c2.metric("Capability Coverage", f"{result.capability_coverage_score:.0%}")
+            
+            if result.missing_capabilities:
+                st.warning(f"⚠️ **Missing Capabilities:** {', '.join(result.missing_capabilities)}")
+            else:
+                st.success("✅ **Sufficient Capability Coverage Hypothesized**")
+            st.markdown(f"**Model Justification:** {result.justification}")
+            
+        else:
+            st.subheader("Meta-Level Logic Verification")
+            st.write("**Grounded Bundle for Validation:**")
+            st.json({"MCPs": task.candidate_mcp, "Tools": task.candidate_tools})
+            
+            v_out = result.model_dump() if hasattr(result, "model_dump") else result
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Model Confidence", f"{v_out.get('confidence', 0.0):.0%}")
+            
+            alignment_score = v_out.get("task_alignment_score", 0.0)
+            eval_eval = "✅" if alignment_score > 0 else "❌" # Simulated indicator
+            c2.metric(f"Alignment Score {eval_eval}", f"{alignment_score:.2f}")
+            
+            is_valid = v_out.get("is_valid", False)
+            c3.metric("Logical Validity", "VALID" if is_valid else "INVALID")
+            
+            if v_out.get("issue_codes"):
+                st.write("**Detected Issue Codes:**")
+                st.warning(", ".join(v_out.get("issue_codes", [])))
+            
+            st.markdown(f"**Validator Reasoning:** {v_out.get('reason')}")
+            
+            components = v_out.get("task_alignment_details", {})
+            if components:
+                with st.expander("📊 Alignment Breakdown (Weighted Reasoning)"):
+                    st.json(components)
+
+def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "validation"):
+    """
+    PHASE 3: VERIFIED LOGIC TRACE (POST-LLM)
+    Displays the final grounding, TS-PHOL audit, and verified decision.
+    """
+    st.markdown("### 🚦 Phase III: Verified Logic Trace (Post-LLM)")
+    with st.container(border=True):
+        st.markdown("#### D. Fact Extraction & Audit")
+        audit_data = decision.context.get("tool_audit", [])
+        intent = decision.context.get("intent_decomposition", {})
+        
+        with st.expander("🔍 Domain-Aware Predicate Audit", expanded=True):
+            if audit_data:
+                import pandas as pd
+                df = pd.DataFrame(audit_data)
+                # Filter caps
+                from app.services.domain_capability_ontology import DomainCapabilityOntology
+                df["capabilities"] = df["capabilities"].apply(lambda caps: [c for c in caps if DomainCapabilityOntology.is_concrete(c)])
+                df_disp = df[["tool", "source", "actions", "capabilities", "notes"]].copy()
+                df_disp.columns = ["Tool Name", "Classification Authority", "Action Types", "Concrete Caps", "Grounding Rationale"]
                 st.table(df_disp)
+                st.caption("💡 **Classification Authority**: Where the mapping comes from (Curated, Heuristic, or Catalog).")
+                st.caption("💡 **Grounding Rationale**: Detailed evidence for the identified capabilities.")
             else:
-                st.caption("No per-tool trace available.")
-    
-    if rbac_status == "DENY":
-        st.error(f"Denial Reason: {decision.reason}")
+                st.info("No tool audit data available.")
         
-    st.divider()
+        if mode == "selection":
+            st.divider()
+            st.markdown("#### E.2 Authorization Status (Post-Inference)")
+            rbac_status = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
+            abac_status = decision.evaluation_states.get("abac", "NOT_EVALUATED")
+            c1, c2 = st.columns(2)
+            c1.metric("RBAC Status", rbac_status)
+            c2.metric("ABAC Status", abac_status)
+            
+            if rbac_status == "DENY":
+                st.error(f"RBAC Denial: {decision.reason}")
+            
+            _render_authorization_trace(decision)
 
-    # Block D: Fact Extraction & Audit (Iteration 4G)
-    st.markdown("#### D. Fact Extraction & Audit (4G)")
-    
-    # 1. Tool Audit Table
-    audit_data = decision.context.get("tool_audit", [])
-    aggregates = decision.context.get("tool_aggregates", {})
-    intent = decision.context.get("intent_decomposition", {})
-    
-    with st.expander("🔍 Domain-Aware Predicate Audit", expanded=True):
-        if audit_data:
-            import pandas as pd
-            df = pd.DataFrame(audit_data)
-            # 4T Hide abstract capabilities from audit table
-            from app.services.domain_capability_ontology import DomainCapabilityOntology
-            df["capabilities"] = df["capabilities"].apply(lambda caps: [c for c in caps if DomainCapabilityOntology.is_concrete(c)])
-            
-            df_disp = df[["tool", "source", "actions", "capabilities", "notes"]].copy()
-            df_disp.columns = ["Tool Name", "Source", "Action Classes", "Capabilities", "Notes"]
-            st.table(df_disp)
-            
-            # Summary Metrics
-            m_cols = st.columns(5)
-            m_cols[0].metric("Detected Domain", intent.get("domain", "GENERAL").upper())
-            m_cols[1].metric("Read-Before-Write", "YES" if aggregates.get("ContainsReadBeforeWrite") else "NO")
-            m_cols[2].metric("Dominant", aggregates.get("DominantActionType", "unknown").upper())
-            m_cols[3].metric("Multi-Domain", "YES" if aggregates.get("MultiDomain") else "NO")
-            m_cols[4].metric("Risk Level", decision.context.get("tsphol_predicate_set", {}).get("HighestRiskLevel", "low").upper())
+        st.divider()
+        st.markdown("#### E. TS-PHOL Final Authority")
+        tsphol_status = decision.evaluation_states.get("tsphol", "NOT_EVALUATED")
+        summary = decision.context.get("tsphol_summary", {})
+        
+        if tsphol_status == "NOT_EVALUATED":
+            st.info("TS-PHOL not reached (Pre-LLM Block)")
         else:
-            st.info("No tool audit data available (Pre-LLM or Baseline only).")
-
-    # 2. Intent & Baseline
-    col_ib1, col_ib2 = st.columns([2, 1])
-    
-    with col_ib1:
-        with st.expander("🧠 Intent Decomposition", expanded=True):
-            if intent:
-                st.markdown(f"**Domain Context:** `{intent.get('domain', 'GENERAL')}`")
-                st.markdown(f"**Primary Intent:** `{intent.get('primary_intent')}`")
-                st.markdown(f"**Secondary Intents:** {', '.join(intent.get('secondary_intents', [])) or 'None'}")
-                
-                # 4W: Minimal Sufficient Coverage Split
-                task_reqs = decision.context.get("task_required_capabilities", [])
-                task_opts = decision.context.get("task_optional_capabilities", [])
-                
-                st.info(f"**Required Mission Capabilities:** {', '.join(task_reqs) or 'None'}")
-                if task_opts:
-                    st.caption(f"**Optional Enrichment Capabilities:** {', '.join(task_opts)}")
-            else:
-                st.info("Intent not decomposed.")
-                
-    with col_ib2:
-        with st.expander("⚖️ ABAC Baseline (Advisory)", expanded=True):
-            abac = decision.context.get("abac_baseline", {})
-            if abac:
-                abac_decision = abac.get("decision", "NOT_EVALUATED")
-                st_color = "green" if abac_decision == "ALLOW" else "red"
-                st.markdown(f"**Result:** :{st_color}[{abac_decision}]")
-                st.caption(f"Rule: {abac.get('matched_rule')}")
-
-                # 6C: Enriched ABAC Reasoning Trace
-                if "reasoning_trace" in abac:
-                    st.divider()
-                    st.markdown("**⚖️ ABAC Reasoning Trace**")
-                    trace = abac["reasoning_trace"]
-                    
-                    app_label = "YES" if abac.get("applicable") else "NO"
-                    st.markdown(f"**Applicable:** `{app_label}`")
-                    st.markdown(f"**Matched Rule:** `{abac.get('matched_rule')}`")
-                    
-                    if abac.get("decision") == "ALLOW":
-                        st.success(f"**Allow Reason:** {abac.get('allow_reason', 'Passed baseline')}")
-                    else:
-                        st.error(f"**Failure Reason:** {abac.get('failure_reason', 'Denied by policy')}")
-                    
-                    st.markdown("**Logic Steps:**")
-                    for step in trace.get("logic_steps", []):
-                        icon = "✅ Match" if step["matched"] else "❌ No Match"
-                        st.caption(f"{icon}: {step['condition']}")
-            else:
-                st.info("ABAC not evaluated.")
-
-    # 3. Required Capability Audit (New 4H)
-    st.markdown("##### 🧪 Required Capability Audit (4H)")
-    metadata = intent.get("required_capability_metadata", [])
-    if metadata:
-        from app.services.domain_capability_ontology import DomainCapabilityOntology
-        # Filter out abstract capabilities from provenance view for cleanliness
-        visible_metadata = [m for m in metadata if DomainCapabilityOntology.is_concrete(m["capability"])]
-        
-        if visible_metadata:
-            with st.expander("View Requirement Provenance"):
-                for m in visible_metadata:
-                    icon = "✅" if m["status"] == "ACCEPTED" else ("⚠️" if m["status"] == "FILTERED" else "❌")
-                    status = m["status"]
-                    source = m["source"]
-                    cap = m["capability"]
-                    conf = m.get("confidence", 1.0)
-                    reason = m.get("reason", "")
-                    priority = f"[{m.get('priority', 'REQUIRED')}]"
-                    
-                    st.markdown(f"{icon} {priority} **{cap}**")
-                    st.caption(f"↳ Source: {source} | Status: {status} | Conf: {conf} | {reason}")
-        else:
-            st.caption("No concrete capability requirements derived.")
-    # 4. 🧠 Task Capability Requirements (Iteration 4Q: Mission vs. Mechanism)
-    st.divider()
-    st.markdown("#### 🧠 Task Capability Requirements (4Q Audit)")
-    
-    req_caps = set(decision.context.get("task_required_capabilities", []))
-    opt_caps = set(decision.context.get("task_optional_capabilities", []))
-    has_caps = set(decision.context.get("has_capabilities", []))
-    all_mentioned = req_caps.union(has_caps).union(opt_caps)
-    
-    if all_mentioned:
-        comp_data = []
-        for cap in sorted(list(all_mentioned)):
-            is_req = cap in req_caps
-            is_opt = cap in opt_caps
-            is_has = cap in has_caps
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Rules Evaluated", summary.get("evaluated_rules", 0))
+            c2.metric("Rules Triggered", summary.get("triggered_rules", 0))
+            c3.metric("Math Certainty", f"{summary.get('certainty', 1.0):.0%}")
             
-            # Simple status icon
-            if is_req: status = "✅ Satisfied" if is_has else "❌ MISSING"
-            elif is_opt: status = "✅ Provided" if is_has else "ℹ️ Missing (Optional)"
-            else: status = "➕ Extra"
-            
-            comp_data.append({
-                "Capability": cap,
-                "Minimal (Required)": "Yes" if is_req else "No",
-                "Optional (Enrichment)": "Yes" if is_opt else "No",
-                "Provided (Tools)": "Yes" if is_has else "No",
-                "Status": status
-            })
-        st.table(comp_data)
-        
-        # Error Summary (Only for Required)
-        missing_req = req_caps - has_caps
-        missing_opt = opt_caps - has_caps
-        
-        if missing_req:
-            st.error(f"⚠️ **Mission Critical Failure:** The following minimal required capabilities are missing: `{', '.join(missing_req)}`")
-        else:
-            st.success("✨ **Sufficient Capability Alignment:** All minimal mission requirements are present in the bundle.")
-            
-        if missing_opt:
-            st.info(f"ℹ️ **Optional Enrichment Missing:** `{', '.join(missing_opt)}` (This does not affect authorization).")
-    else:
-        st.info("No capability requirements or provisions detected.")
-
-    st.divider()
-
-    # Block E: TS-PHOL Final Authority
-    st.markdown("#### E. TS-PHOL Final Authority")
-    tsphol_status = decision.evaluation_states.get("tsphol", "NOT_EVALUATED")
-    if tsphol_status == "NOT_EVALUATED":
-        st.info("Status: NOT EVALUATED (Prior RBAC Block)")
-    else:
-        with st.expander("🔍 Logical Predicate Trace", expanded=True):
-            st.markdown("**1. Base & Derived Predicates**")
-            # 4T: Filter abstract predicates for visible trace
-            from app.services.domain_capability_ontology import DomainCapabilityOntology
-            base_p = decision.context.get("tsphol_predicate_set", {})
-            clean_p = {}
-            for k, v in base_p.items():
-                if k.startswith("_"): continue
-                
-                # Filter capability sets
-                if k in ["RequiredCapabilities", "HasCapabilities"] and isinstance(v, (set, list)):
-                    v = sorted([c for c in v if DomainCapabilityOntology.is_concrete(c)])
-                elif isinstance(v, (set, list)): 
-                    v = sorted(list(v))
-                
-                clean_p[k] = v
-            st.json(clean_p)
-            
-            st.markdown("**2. TS-PHOL Rule Evaluation Audit (4K)**")
-            summary = decision.context.get("tsphol_summary", {})
-            if summary:
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Rules Evaluated", summary.get("evaluated_rules", 0))
-                c2.metric("Rules Triggered", summary.get("triggered_rules", 0))
-                
-                # Check for both possible keys (fix for KeyError)
-                f_status = summary.get("final_status") or summary.get("final_decision", "UNKNOWN")
-                c3.metric("Final Status", f_status)
-            
-            l_trace = decision.context.get("tsphol_logic_trace", [])
-            if l_trace:
+            with st.expander("🔍 Detailed Logic Evaluation Trace"):
+                l_trace = decision.context.get("tsphol_logic_trace", [])
                 for entry in l_trace:
-                    with st.container(border=True):
-                        # Result column-like layout
-                        r1, r2 = st.columns([4, 1])
-                        with r1:
-                            st.markdown(f"**Rule:** `{entry['rule']}`")
-                        with r2:
-                            if entry["passed"]: st.success("✔ Passed")
-                            else: st.error("✖ Triggered")
-                            
-                        st.caption(f"↳ Reasoning: {entry['reason']}")
-                        if entry.get("derived"):
-                            st.info(f"🧬 Derived: `{entry['derived']}`")
-                        
-                        # Show trigger indicator if applicable
-                        if entry["triggered"]:
-                            icon = "🔴" if entry["action"] == "DENY" else "🟢"
-                            st.caption(f"{icon} Action triggered: {entry['action']}")
-            else:
-                st.info("No rules evaluated.")
-                
-            # 4L: Positive Findings Display
-            findings = summary.get("positive_findings", [])
-            if findings:
-                st.divider()
-                st.markdown("**✅ Positive Findings**")
-                for f in findings:
-                    st.success(f"↳ {f}")
+                    icon = "✅ Pass" if entry["passed"] else "❌ Triggered"
+                    st.write(f"{icon}: `{entry['rule']}`")
+                    st.caption(f"↳ {entry['reason']}")
+            
+            # 6D: Redundant positive findings removed as per user request
+            pass
 
-        st.metric("Final TS-PHOL Decision", tsphol_status, delta="Authority Layer", delta_color="off")
-        if decision.denial_source == "TS-PHOL":
-            st.error(f"Denial Reason: {decision.reason}")
+        st.divider()
+        st.markdown("#### F. Final Result")
+        color_map = {"ALLOW": "green", "DENY": "red", "DECEPTION_ROUTED": "#FF8C00"}
+        bg_color = color_map.get(decision.final_decision, "gray")
+        display_text = "SANDBOXED / DECEIVED" if decision.deception_routed else decision.final_decision
         
-    st.divider()
+        st.markdown(f"""
+        <div style="background-color: {bg_color}; padding: 15px; border-radius: 8px; text-align: center;">
+            <h2 style="color: white; margin: 0;">{display_text}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        st.info(f"**Conclusion:** {decision.reason}")
+        
+        # Benchmark Evaluation Section (Moved to end for clarity)
+        st.divider()
+        st.markdown("### 📊 Benchmark Assessment (Reference Only)")
+        st_color = {"exact_match": "green", "partial_match": "orange", "mismatch": "red"}.get(comparison.status, "gray")
+        st.markdown(f"**Groundtruth Alignment Status:** :{st_color}[{comparison.status.upper()}]")
+        st.caption("⚠️ **Research Disclaimer**: This assessment reflects a direct comparison against the ASTRA dataset. This data is **NOT** shared with the LLM and is not used in the logical decision pipeline. It is provided purely for benchmark analysis.")
 
-    # Block F: Final Decision
-    st.markdown("#### F. Final Result")
-    color_map = {"ALLOW": "green", "DENY": "red"}
-    bg_color = color_map.get(decision.final_decision, "gray")
-    
-    st.markdown(f"""
-    <div style="background-color: {bg_color}; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 10px;">
-        <h2 style="color: white; margin: 0;">{decision.final_decision}</h2>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.info(f"**Pipeline Conclusion:** {decision.reason}")
-    
-    with st.expander("View Logic Trace"):
-        for step in decision.trace:
-            if "❌" in step or "DENY" in step:
-                st.error(step)
-            elif "⚠️" in step or "FLAG" in step:
-                st.warning(step)
-            elif "✅" in step or "ALLOW" in step:
-                st.success(step)
-            else:
-                st.info(step)
+        with st.expander("View Full Pipeline Trace"):
+            for step in decision.trace:
+                if "DECEPTION" in step:
+                    st.warning(step)
+                elif "❌" in step or "DENY" in step:
+                    st.error(step)
+                elif "⚠️" in step or "FLAG" in step:
+                    st.warning(step)
+                elif "✅" in step or "ALLOW" in step:
+                    st.success(step)
+                else:
+                    st.info(step)

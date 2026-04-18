@@ -1,57 +1,93 @@
 import streamlit as st
 from typing import List
+import pandas as pd
 from app.models.astra import AstraTask
 from app.models.mcp import MCPPersona
-import pandas as pd
 
 def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
-    st.title("🏠 Home / Overview")
-    
+    # 🚀 Hero Header
     st.markdown("""
-    Welcome to the **SPIFFI_RBACK_TS-PHOL** research and demo platform. 
-    This application is designed to showcase the integration of SPIFFE/SPIRE identity, RBAC, and TS-PHOL for agentic tool selection and authorization.
+        <div style="background-color: #f0f2f6; padding: 30px; border-radius: 15px; margin-bottom: 25px; border-left: 8px solid #4A90E2;">
+            <h1 style="color: #1E3A5F; margin: 0;">🛡️ SPIFFI RBACK Research Portal</h1>
+            <p style="font-size: 1.2rem; color: #4A5568;">Secure Policy-driven Inference for Federated Identity in Agentic Tool Orchestration</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # 🧐 Section 1: Research Objectives
+    st.header("🧐 Problem Statement & Research Questions")
+    st.markdown("""
+    Modern autonomous agents operate in open, federated ecosystems using protocols like **MCP**. This creates a critical "Security Gap" where 
+    probabilistic AI decisions must be grounded by non-repudiable identity and deterministic logic.
     """)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total ASTRA Tasks", len(tasks))
-    with col2:
-        st.metric("Total MCP Personas", len(personas))
-    with col3:
-        match_tags = [t.match_tag for t in tasks]
-        correct_count = match_tags.count("correct")
-        st.metric("Correct Tasks", correct_count)
+    rq1, rq2, rq3 = st.columns(3)
+    with rq1:
+        st.info("### RQ1: Identity\nHow can federated identity (SPIFFE) anchor autonomous tool-use in a non-repudiable way?")
+    with rq2:
+        st.info("### RQ2: Logic\nCan Tractable Scoped Probabilistic Higher-Order Logic (TS-PHOL) provide a deterministic safety floor for probabilistic LLM inferences?")
+    with rq3:
+        st.info("### RQ3: Semantics\nWhat is the impact of semantic grounding on ABAC precision in cross-domain workflows?")
 
-    st.markdown("---")
+    st.divider()
+
+    # 💡 Section 2: Technical Novelty
+    st.header("💡 The Novelty: TS-PHOL")
+    col_novelty, col_img = st.columns([2, 1])
+    with col_novelty:
+        st.markdown("""
+        **Tractable Scoped Probabilistic Higher-Order Logic (TS-PHOL)** is our primary contribution.
+        Unlike traditional RBAC which asks *"Can this user run this tool?"*, TS-PHOL asks:
+        > *"Does the intent of this specific mission align with the security properties of the proposed tool bundle?"*
+        
+        **Key Features:**
+        - **Mission-Permission Decoupling**: Safety is evaluated against the *task intent*, not just the identity.
+        - **Predictive Hardening**: Safety is ensured *post-inference but pre-execution*.
+        - **Semantic Grounding**: Dynamic classification of tools into capabilities like `MarketDataAnalysis` or `IssueUpdate`.
+        """)
+    with col_img:
+        st.image("https://img.icons8.com/illustrations/external-pack-flat-icons-maxicons/512/external-logic-intelligence-and-intellect-pack-flat-icons-maxicons.png", use_container_width=True)
+
+    st.divider()
+
+    # 📚 Section 3: ASTRA Dataset
+    st.header("📚 The ASTRA Dataset")
+    st.markdown(f"""
+    The **ASTRA Dataset** serves as our primary benchmark for evaluating the engine's precision.
+    - **Total Corpus**: {len(tasks)} curated agentic tasks.
+    - **Domains**: 9 Heterogeneous MCP Domains (Atlassian, Hummingbot, Wikipedia, MongoDB, etc.).
+    - **Evaluations**: Dual-mode coverage for both **Selection** (Generative) and **Validation** (Discriminative) reasoning.
+    """)
     
+    st.divider()
+
+    # 🛠️ Section 4: Quick Guide
+    st.header("🛠️ How to Use this App")
+    g1, g2, g3, g4 = st.columns(4)
+    g1.markdown("#### 1. Identity\nGo to **Policy Studio** to explore agent personas and their SPIFFE attributes.")
+    g2.markdown("#### 2. Policies\nConfigure **TS-PHOL** and **ABAC** rules to define the boundaries of safe tool-use.")
+    g3.markdown("#### 3. Prediction\nUse the **Prediction Lab** to run a mission from the ASTRA dataset.")
+    g4.markdown("#### 4. Audit\nExpand the **Verified Logic Trace** to see the formal mathematical proof of the decision.")
+
+    st.divider()
+
+    # 📊 Section 5: Current Operational Status
+    st.header("📊 Current System State")
     col_left, col_right = st.columns(2)
     
     with col_left:
-        st.subheader("Match Tag Distribution")
+        st.subheader("Match Tag Distribution (ASTRA)")
         df_tags = pd.DataFrame([{"Tag": t.match_tag} for t in tasks])
         counts = df_tags["Tag"].value_counts()
         st.bar_chart(counts)
         
     with col_right:
-        st.subheader("MCP Personas Overview")
-        # Display as a pretty list in a box
+        st.subheader("Loaded MCP Personas")
         persona_names = sorted([p.name for p in personas])
-        st.write("Loaded personas:")
-        for name in persona_names:
-            st.markdown(f"- {name}")
-        
+        # Display as columns to save vertical space
+        p_cols = st.columns(2)
+        for i, name in enumerate(persona_names):
+            p_cols[i % 2].markdown(f"- `{name}`")
+
+    # 🔗 Footer
     st.markdown("---")
-    st.subheader("Future Phases")
-    cols = st.columns(4)
-    with cols[0]:
-        st.warning("Phase 2: SPIFFE/SPIRE")
-        st.caption("Identity Attestation")
-    with cols[1]:
-        st.warning("Phase 2: RBAC")
-        st.caption("Access Control Policies")
-    with cols[2]:
-        st.warning("Phase 3: TS-PHOL")
-        st.caption("Probabilistic Reasoning")
-    with cols[3]:
-        st.warning("Phase 3: Evaluation")
-        st.caption("Batch Performance Tracking")
+    st.caption("© 2026 SPIFFI_RBACK_TS-PHOL Research Framework | Built for Advanced Agentic Coding")

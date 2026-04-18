@@ -61,14 +61,12 @@ class PredictionService:
             selections = data.get("selections", [])
             selected_mcp = []
             selected_tools = []
-            validation_errors = []
             
-            # Enforce exactly 3
-            if len(selections) > 3:
-                selections = selections[:3]
-                validation_errors.append("Model returned >3 pairs. Truncated to 3.")
-            elif len(selections) < 3 and len(selections) > 0:
-                validation_errors.append(f"Model returned only {len(selections)} pairs; expected 3.")
+            # Map issues from unified schema if present
+            issue_meta = data.get("issue_metadata", {})
+            validation_errors = issue_meta.get("details", [])
+            if not selections:
+                validation_errors.append("Model returned 0 pairs.")
             
             for s in selections:
                 selected_mcp.append(s.get("mcp", "Unknown"))
@@ -85,13 +83,22 @@ class PredictionService:
             # Mission critical: only flag missing REQUIRED capabilities
             actual_missing = [cap for cap in required_caps if cap not in provided_caps]
             
+            # Compute actual coverage score (0.0 - 1.0)
+            if required_caps:
+                coverage_score = (len(required_caps) - len(actual_missing)) / len(required_caps)
+            else:
+                coverage_score = 1.0 # No requirements -> Perfect coverage for empty set
+            
+            # Handle unified metrics
+            metrics = data.get("mission_metrics", {})
+            
             prediction = SelectionResult(
                 selected_mcp=selected_mcp,
                 selected_tools=selected_tools,
                 justification=data.get("justification", "No justification provided."),
                 confidence=float(data.get("confidence", 0.0)),
-                capability_coverage_score=float(data.get("capability_coverage_score", 0.0)),
-                missing_capabilities=actual_missing, # 6: Real mission gap
+                capability_coverage_score=coverage_score,
+                missing_capabilities=actual_missing, 
                 raw_output=raw_output,
                 validation_errors=validation_errors
             )
@@ -113,22 +120,27 @@ class PredictionService:
 
     def _build_system_prompt(self) -> str:
         prompt = """
-        You are an expert orchestrator for an agentic system that uses Model Context Protocol (MCP) servers. 
-        Your task is to select EXACTLY 3 tools and their corresponding MCP servers to fulfill a user request.
+        You are the 'Generation Layer' of an authoritative Automated Reasoning pipeline. Your role is to act as a Large Logic Model (LLoM) that proposes logic hypotheses to solve a user task.
         
-        This selection is CAPABILITY-AWARE. You must prioritize tools that cover the required capabilities.
+        Your task is to select the appropriate tools and their corresponding MCP servers. This selection is CAPABILITY-AWARE. You must prioritize tools that coverage the required capabilities found in the 'Domain Action Space'.
         
         Return your answer ONLY in structured JSON format with the following fields:
         {
+          "is_valid": true,
+          "confidence": 0.9,
+          "justification": "Why you chose these specific logic hypotheses, focusing on capability coverage.",
           "selections": [
             {"tool": "tool_name1", "mcp": "mcp_name1"},
-            {"tool": "tool_name2", "mcp": "mcp_name2"},
-            {"tool": "tool_name3", "mcp": "mcp_name3"}
+            {"tool": "tool_name2", "mcp": "mcp_name2"}
           ],
-          "justification": "Why you chose these specific 3 tools, focusing on capability coverage.",
-          "confidence": 0.85,
-          "capability_coverage_score": 0.67,
-          "missing_capabilities": []
+          "mission_metrics": {
+            "capability_coverage": 1.0,
+            "task_alignment": 0.0
+          },
+          "issue_metadata": {
+            "codes": [],
+            "details": []
+          }
         }
         
         SCORING RULES:
@@ -137,13 +149,13 @@ class PredictionService:
         - -1.0 for each IRRELEVANT tool selected that doesn't contribute to the task.
         
         RULES:
-        1. Select ONLY from the provided MCP personas and their listed tools.
+        1. Select ONLY from the provided MCP catalog and their listed tools.
         2. Do NOT invent new tool names or MCP names.
-        3. You MUST select EXACTLY 3 tool-mcp pairs.
-        4. ALL 3 tools MUST come from the EXACT SAME MCP server. You cannot mix tools from different MCP servers.
-        5. If one tool covers multiple capabilities, that is ideal.
-        6. List EACH tool-mcp pair separately, repeating the same MCP server name 3 times.
-        7. Confidence and Capability Coverage Score must be between 0.0 and 1.0.
+        3. Aim for SUFFICIENCY. A bundle is valid if it covers the REQUIRED capabilities.
+        4. ALL tools MUST come from the EXACT SAME MCP server for this specific task execution context.
+        5. 'mission_metrics.capability_coverage' must be a float between 0.0 and 1.0.
+        6. List EACH tool-mcp pair separately in the 'selections' list.
+        7. Confidence and scores must be ACTUAL computed numbers (e.g. 0.92). DO NOT use placeholders.
         """
         return prompt
 
@@ -167,7 +179,7 @@ class PredictionService:
         
         User Task: {task.task}
         
-        Please select EXACTLY 3 tool-mcp pairs from a single MCP server that maximize capability coverage for this task.
+        Please select the tool-mcp pairs from a single MCP server that maximize capability coverage for this task.
         """
         return user_prompt
 
@@ -197,9 +209,9 @@ class PredictionService:
 
     def _validate_prediction(self, prediction: SelectionResult) -> List[str]:
         errors = []
-        # Check lengths
-        if len(prediction.selected_tools) != 3:
-            errors.append(f"Selection contains {len(prediction.selected_tools)} tools instead of exactly 3.")
+        # No hard length check for Selection mode anymore, but we want at least one tool
+        if len(prediction.selected_tools) == 0:
+            errors.append("Selection contains 0 tools.")
 
         # Check single MCP constraint
         unique_mcps = set(prediction.selected_mcp)

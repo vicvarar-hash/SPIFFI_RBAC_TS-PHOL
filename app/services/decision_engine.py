@@ -333,6 +333,7 @@ class DecisionEngine:
                 "capability_score": cap_score,
                 "semantic_score": semantic_score
             },
+            "evaluation_states": evaluation_states,
             "issue_codes": llm_outputs.get("issue_codes", []),
             "mode": mode, # 4R
             "selection_tolerance_active": applying_tolerance

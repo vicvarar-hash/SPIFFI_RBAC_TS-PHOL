@@ -97,6 +97,7 @@ rules:
     - predicate: AlignmentEvaluated
       equals: true
     - predicate: TaskAlignmentScore
+      lt: 0.3
     - predicate: SelectionToleranceActive
       equals: true
   then: DENY

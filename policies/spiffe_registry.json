@@ -14,9 +14,9 @@
     "spiffe_id": "spiffe://demo.local/agent/incident",
     "description": "Handles incident tracking and escalation",
     "attributes": {
-      "clearance_level": "L1",
-      "department": "Engineering",
-      "trust_score": 1.0
+      "clearance_level": "L2",
+      "department": "Operations",
+      "trust_score": 0.88
     }
   },
   "finance_agent": {
@@ -24,9 +24,9 @@
     "spiffe_id": "spiffe://demo.local/agent/finance",
     "description": "Handles billing and financial workflows",
     "attributes": {
-      "clearance_level": "L1",
-      "department": "Engineering",
-      "trust_score": 1.0
+      "clearance_level": "L2",
+      "department": "Finance",
+      "trust_score": 0.95
     }
   },
   "research_agent": {
@@ -35,8 +35,8 @@
     "description": "Handles low-risk information discovery",
     "attributes": {
       "clearance_level": "L1",
-      "department": "Engineering",
-      "trust_score": 1.0
+      "department": "Research",
+      "trust_score": 0.75
     }
   },
   "automation_gateway": {
@@ -44,8 +44,8 @@
     "spiffe_id": "spiffe://demo.local/service/gateway",
     "description": "Executes approved tool operations",
     "attributes": {
-      "clearance_level": "L1",
-      "department": "Engineering",
+      "clearance_level": "L3",
+      "department": "Infrastructure",
       "trust_score": 1.0
     }
   },

@@ -1,110 +1,144 @@
 policies:
-- spiffe_id: spiffe://demo.local/agent/incident
-  description: v2 Incident Management
+- description: Complete RBAC for devops_agent
   rules:
-  - mcp: grafana
+  - action: allow
+    mcp: atlassian
+    rule_name: allow_atlassian
     tools:
-    - grafana.list_datasources
-    - query_prometheus
-    - find_error_pattern_logs
-    - list_alert_rules
-    - list_sift_investigations
-    - add_activity_to_incident
-    - list_incidents
-    - create_incident
-    - get_incident
-    - list_oncall_users
-    - list_oncall_schedules
-    action: allow
-  - mcp: atlassian
+    - '*'
+  - action: allow
+    mcp: mongodb
+    rule_name: allow_mongodb
     tools:
-    - jira_get_issue
-    - jira_add_comment
-    - jira_create_issue
-    - jira_transition_issue
-    action: allow
-- spiffe_id: spiffe://demo.local/agent/finance
-  description: Financial operations and subscriptions
+    - '*'
+  - action: allow
+    mcp: azure
+    rule_name: allow_azure
+    tools:
+    - '*'
+  - action: allow
+    mcp: grafana
+    rule_name: allow_grafana
+    tools:
+    - '*'
+  - action: deny
+    mcp: '*'
+    rule_name: default_deny
+    tools:
+    - '*'
+  spiffe_id: spiffe://demo.local/agent/devops
+- description: Complete RBAC for incident_agent
   rules:
-  - mcp: stripe
+  - action: allow
+    mcp: atlassian
+    rule_name: allow_atlassian
     tools:
     - '*'
-    action: allow
-  - mcp: grafana
+  - action: allow
+    mcp: grafana
+    rule_name: allow_grafana
     tools:
     - '*'
-    action: deny
-  - mcp: hummingbot-mcp
+  - action: deny
+    mcp: '*'
+    rule_name: default_deny
     tools:
-    - get_positions
-    - get_portfolio_balances
-    - get_order_book
-    action: allow
-- spiffe_id: spiffe://demo.local/agent/research
-  description: Low-risk research and knowledge tasks
+    - '*'
+  spiffe_id: spiffe://demo.local/agent/incident
+- description: Complete RBAC for finance_agent
   rules:
-  - mcp: wikipedia-mcp
+  - action: allow
+    mcp: hummingbot-mcp
+    rule_name: allow_hummingbot-mcp
     tools:
     - '*'
-    action: allow
-  - mcp: paper-search
+  - action: allow
+    mcp: stripe
+    rule_name: allow_stripe
     tools:
     - '*'
-    action: allow
-  - mcp: notion
-    tools:
-    - API-post-search
-    - API-retrieve-a-page
-    - API-get-block-children
-    action: allow
-  - mcp: stripe
+  - action: deny
+    mcp: '*'
+    rule_name: default_deny
     tools:
     - '*'
-    action: deny
-- spiffe_id: spiffe://demo.local/service/gateway
-  description: Automation Gateway executes approved tool operations
+  spiffe_id: spiffe://demo.local/agent/finance
+- description: Complete RBAC for research_agent
   rules:
-  - mcp: '*'
+  - action: allow
+    mcp: paper-search
+    rule_name: allow_paper-search
     tools:
     - '*'
-    action: allow
-- spiffe_id: spiffe://demo.local/service/security
-  description: Security Engine evaluates policy and does not execute business tools
+  - action: allow
+    mcp: notion
+    rule_name: allow_notion
+    tools:
+    - '*'
+  - action: allow
+    mcp: wikipedia-mcp
+    rule_name: allow_wikipedia-mcp
+    tools:
+    - '*'
+  - action: deny
+    mcp: '*'
+    rule_name: default_deny
+    tools:
+    - '*'
+  spiffe_id: spiffe://demo.local/agent/research
+- description: Complete RBAC for automation_gateway
+  rules:
+  - action: allow
+    mcp: azure
+    rule_name: allow_azure
+    tools:
+    - '*'
+  - action: allow
+    mcp: stripe
+    rule_name: allow_stripe
+    tools:
+    - '*'
+  - action: allow
+    mcp: paper-search
+    rule_name: allow_paper-search
+    tools:
+    - '*'
+  - action: allow
+    mcp: hummingbot-mcp
+    rule_name: allow_hummingbot-mcp
+    tools:
+    - '*'
+  - action: allow
+    mcp: notion
+    rule_name: allow_notion
+    tools:
+    - '*'
+  - action: allow
+    mcp: atlassian
+    rule_name: allow_atlassian
+    tools:
+    - '*'
+  - action: allow
+    mcp: grafana
+    rule_name: allow_grafana
+    tools:
+    - '*'
+  - action: allow
+    mcp: mongodb
+    rule_name: allow_mongodb
+    tools:
+    - '*'
+  - action: allow
+    mcp: wikipedia-mcp
+    rule_name: allow_wikipedia-mcp
+    tools:
+    - '*'
+  - action: deny
+    mcp: '*'
+    rule_name: default_deny
+    tools:
+    - '*'
+  spiffe_id: spiffe://demo.local/service/gateway
+- description: Complete RBAC for security_engine
   rules: []
-- spiffe_id: spiffe://demo.local/agent/devops
-  description: v2
-  rules:
-  - mcp: grafana
-    tools:
-    - query_prometheus
-    - find_error_pattern_logs
-    - list_alert_rules
-    - list_sift_investigations
-    - add_activity_to_incident
-    - list_oncall_users
-    - list_oncall_schedules
-    - get_dashboard_summary
-    - get_dashboard_by_uid
-    - get_datasource_by_name
-    - get_datasource_by_uid
-    - generate_deeplink
-    action: allow
-  - mcp: atlassian
-    tools:
-    - jira_batch_get_changelogs
-    - jira_get_issue
-    - jira_get_project_issues
-    - jira_get_board_issues
-    - jira_search
-    - jira_add_comment
-    - jira_create_issue
-    - jira_link_to_epic
-    action: allow
-  - mcp: stripe
-    tools:
-    - '*'
-    action: deny
-  - mcp: hummingbot-mcp
-    tools:
-    - '*'
-    action: deny
+  spiffe_id: spiffe://demo.local/service/security

@@ -1,32 +1,153 @@
 rules:
-- id: abac_finance_isolation
-  action: "deny"
-  description: "Finance resources are restricted to the Finance department"
-  failure_reason: "Access denied: Subject does not belong to the Finance department"
+- action: deny
+  description: Financial compliance resources restricted to Finance department
+  failure_reason: 'Access denied: Subject does not belong to the Finance department'
+  id: abac_finance_isolation
   match_attributes:
-    - { source: "resource", attribute: "compliance_tier", value: "Financial", op: "==" }
-    - { source: "subject", attribute: "attributes.department", value: "Finance", op: "!=" }
-
-- id: abac_hipaa_restriction
-  action: "deny"
-  description: "HIPAA compliance requirement for medical data"
-  failure_reason: "Access denied: Subject lacks necessary department traits for HIPAA data"
+  - attribute: compliance_tier
+    op: ==
+    source: resource
+    value: Financial
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Finance
+- action: deny
+  description: PCI-DSS compliance resources restricted to Finance department
+  failure_reason: 'Access denied: PCI-DSS data requires Finance department'
+  id: abac_pci_isolation
   match_attributes:
-    - { source: "resource", attribute: "compliance_tier", value: "HIPAA", op: "==" }
-    - { source: "subject", attribute: "attributes.department", value: "Medical", op: "!=" }
-
-- id: abac_clearance_enforcement
-  action: "deny"
-  description: "High-sensitivity data requires L3 clearance"
-  failure_reason: "Access denied: Subject clearance level is insufficient for this resource"
+  - attribute: compliance_tier
+    op: ==
+    source: resource
+    value: PCI-DSS
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Finance
+- action: deny
+  description: HIPAA compliance requirement for medical data
+  failure_reason: 'Access denied: Subject lacks necessary department traits for HIPAA
+    data'
+  id: abac_hipaa_restriction
   match_attributes:
-    - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
-    - { source: "subject", attribute: "attributes.clearance_level", value: "L3", op: "!=" }
-
-- id: abac_beta_trust_denial
-  action: "deny"
-  description: "Experimental tools are denied for low-trust identities"
-  failure_reason: "Access denied: Identity trust score is too low for experimental boundaries"
+  - attribute: compliance_tier
+    op: ==
+    source: resource
+    value: HIPAA
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Medical
+- action: deny
+  description: Financial data requires Finance or Infrastructure department
+  failure_reason: 'Access denied: Financial data restricted to authorized departments'
+  id: abac_financial_data_isolation
   match_attributes:
-    - { source: "resource", attribute: "trust_boundary", value: "Experimental", op: "==" }
-    - { source: "subject", attribute: "attributes.trust_score", value: "0.5", op: "<" }
+  - attribute: data_sensitivity
+    op: ==
+    source: resource
+    value: Financial
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Finance
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Infrastructure
+- action: deny
+  description: Infrastructure writes require Engineering or Infrastructure department
+  failure_reason: 'Access denied: Infrastructure write access restricted'
+  id: abac_infrastructure_write_isolation
+  match_attributes:
+  - attribute: data_sensitivity
+    op: ==
+    source: resource
+    value: Infrastructure
+  - attribute: contains_write
+    op: ==
+    source: action
+    value: true
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Engineering
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Infrastructure
+- action: deny
+  description: High-risk write operations require L3 clearance
+  failure_reason: 'Access denied: L3 clearance required for high-risk write operations'
+  id: abac_clearance_write_high_risk
+  match_attributes:
+  - attribute: risk_level
+    op: ==
+    source: resource
+    value: high
+  - attribute: contains_write
+    op: ==
+    source: action
+    value: true
+  - attribute: attributes.clearance_level
+    op: '!='
+    source: subject
+    value: L3
+- action: deny
+  description: High-risk read operations require at least L2 clearance
+  failure_reason: 'Access denied: Minimum L2 clearance required for high-risk resources'
+  id: abac_clearance_read_high_risk
+  match_attributes:
+  - attribute: risk_level
+    op: ==
+    source: resource
+    value: high
+  - attribute: attributes.clearance_level
+    op: ==
+    source: subject
+    value: L1
+- action: deny
+  description: Low-trust agents cannot perform write operations
+  failure_reason: 'Access denied: Trust score too low for write operations'
+  id: abac_low_trust_write
+  match_attributes:
+  - attribute: contains_write
+    op: ==
+    source: action
+    value: true
+  - attribute: attributes.trust_score
+    op: <
+    source: subject
+    value: '0.8'
+- action: deny
+  description: Experimental tools denied for low-trust identities
+  failure_reason: 'Access denied: Identity trust score too low for experimental boundaries'
+  id: abac_beta_trust_denial
+  match_attributes:
+  - attribute: trust_boundary
+    op: ==
+    source: resource
+    value: Experimental
+  - attribute: attributes.trust_score
+    op: <
+    source: subject
+    value: '0.85'
+- action: deny
+  description: Write operations on high-risk resources denied outside business hours
+  failure_reason: 'Access denied: High-risk write operations restricted to business
+    hours'
+  id: abac_after_hours_write
+  match_attributes:
+  - attribute: risk_level
+    op: ==
+    source: resource
+    value: high
+  - attribute: contains_write
+    op: ==
+    source: action
+    value: true
+  - attribute: after_hours
+    op: ==
+    source: environment
+    value: true

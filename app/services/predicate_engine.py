@@ -94,15 +94,31 @@ class PredicateEngine:
         critical_codes = {"WRONG_DOMAIN", "MISSING_CAPABILITY", "INVALID_TOOL_COUNT", "INVALID_TOOL"}
         p["CriticalValidationFailure"] = any(code in issue_codes for code in critical_codes)
         
-        # 4O/4T: Strict Capability Alignment Logic
+        # 4O/4T: Two-Tier Capability Coverage Logic
         from app.services.domain_capability_ontology import DomainCapabilityOntology
         full_missing = p["RequiredCapabilities"] - p["HasCapabilities"]
         
         # summary list: only concrete for user-facing transparency
         p["MissingCapabilities"] = [c for c in full_missing if DomainCapabilityOntology.is_concrete(c)]
         
+        # Two-tier: hard obligations are mission-critical, soft are advisory
+        expected_domain = context.get("expected_domain", "Uncertain")
+        primary_intent = intent_info.get("primary_intent", "Unknown")
+        hard_caps = DomainCapabilityOntology.get_hard_capabilities(expected_domain, primary_intent)
+        hard_missing = hard_caps - p["HasCapabilities"]
+        
+        p["HardCapabilityMissing"] = len(hard_missing) > 0
+        p["MissingHardCapabilities"] = list(hard_missing)
+        
+        # Graduated coverage score (ratio of satisfied/total required)
+        if p["RequiredCapabilities"]:
+            satisfied = len(p["RequiredCapabilities"] - full_missing)
+            p["CapabilityCoverageScore"] = satisfied / len(p["RequiredCapabilities"])
+        else:
+            p["CapabilityCoverageScore"] = 1.0
+        
         p["CapabilityCoverageSatisfied"] = len(full_missing) == 0
-        p["CapabilityCoverageViolation"] = len(full_missing) > 0
+        p["CapabilityCoverageViolation"] = p["HardCapabilityMissing"]  # Only hard misses trigger violation
         p["BundleIrrelevantToTask"] = "IRRELEVANT_TOOLS" in issue_codes or "WRONG_DOMAIN" in issue_codes
         
         return p

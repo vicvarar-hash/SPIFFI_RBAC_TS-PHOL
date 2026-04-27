@@ -196,13 +196,25 @@ class DecisionEngine:
         registry = self.registry_svc.get_all()
         # Find the specific persona data for attributes
         persona_data = next((v for k, v in registry.items() if v.get("spiffe_id") == caller_spiffe_id), {})
-        subject_attrs = persona_data.get("attributes", {"clearance_level": "L1", "department": "Public", "trust_score": 0.5}).copy()
+        inner_attrs = persona_data.get("attributes", {"clearance_level": "L1", "department": "Public", "trust_score": 0.5}).copy()
         
         # We also pass the 'role' for backward compatibility
         persona_key = next((k for k, v in registry.items() if v.get("spiffe_id") == caller_spiffe_id), "unknown")
-        subject_attrs["role"] = persona_key
+
+        # Build subject with nested 'attributes' key for ABAC rule resolution
+        subject_attrs = {
+            "role": persona_key,
+            "attributes": inner_attrs,
+            # Flat copies for backward compatibility
+            **inner_attrs
+        }
 
         # 6D: Enriched ABAC Model - Comparing static traits
+        # Temporal control: simulate after_hours based on deterministic hash of task
+        import hashlib as _hl
+        _hour_seed = int(_hl.sha256((task_text[:80] + caller_spiffe_id).encode()).hexdigest()[:4], 16) % 24
+        _after_hours = _hour_seed < 6 or _hour_seed >= 20  # Before 6am or after 8pm
+
         abac_attrs = {
             "subject": subject_attrs,
             "resource": resource_attrs_list[0] if resource_attrs_list else {"risk_level": "medium"},
@@ -213,7 +225,9 @@ class DecisionEngine:
                 "multi_domain": intent_info["intent_properties"].get("multi_domain", False)
             },
             "environment": {
-                "confidence": confidence
+                "confidence": confidence,
+                "after_hours": _after_hours,
+                "simulated_hour": _hour_seed
             }
         }
         abac_result = self.abac_engine.evaluate(abac_attrs)
@@ -335,7 +349,8 @@ class DecisionEngine:
             },
             "issue_codes": llm_outputs.get("issue_codes", []),
             "mode": mode, # 4R
-            "selection_tolerance_active": applying_tolerance
+            "selection_tolerance_active": applying_tolerance,
+            "evaluation_states": evaluation_states
         }
         
         predicate_engine = PredicateEngine(pred_context)
@@ -412,6 +427,21 @@ class DecisionEngine:
         # ABAC is now a formal part of the flow
         eval_context["abac_baseline"]["advisory"] = False
         
+        # Determine denial source with proper ABAC attribution
+        denial_source = None
+        if final_status == "DENY":
+            # Find the rule that triggered the DENY (triggered=True, passed=False)
+            deny_rules = [r for r in logic_trace if r.get("triggered") and not r.get("passed")]
+            if deny_rules:
+                trigger_name = deny_rules[-1].get("rule", "")
+                if "abac_failure" in trigger_name:
+                    denial_source = "ABAC"
+                    reason = eval_context.get("abac_baseline", {}).get("failure_reason", reason)
+                else:
+                    denial_source = "TS-PHOL"
+            else:
+                denial_source = "TS-PHOL"
+        
         trace.append(f"[Phase III] TS-PHOL evaluated {len(tsphol_rules)} declarative rules. FINAL STATUS: {final_status}")
         trace.append(f"[Phase III] Authority Check: TS-PHOL overrides context. Decision: {final_status}")
         # Phase 3: Deception Routing (Sandbox Response)
@@ -433,7 +463,7 @@ class DecisionEngine:
             evaluation_states, 
             final_status, # Authoritative decision
             reason, 
-            "TS-PHOL" if "DENY" in evaluation_states["tsphol"] else None, 
+            denial_source, 
             trace, 
             eval_context, 
             True, True, llm_outputs, all_predicates

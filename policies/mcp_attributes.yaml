@@ -20,12 +20,12 @@ mcp_attributes:
     data_sensitivity: Metadata
     trust_boundary: Internal
   atlassian:
-    risk_level: medium
+    risk_level: high
     compliance_tier: General
     data_sensitivity: Internal
     trust_boundary: Vetted-Partner
   mongodb:
-    risk_level: medium
+    risk_level: high
     compliance_tier: General
     data_sensitivity: Financial
     trust_boundary: Internal

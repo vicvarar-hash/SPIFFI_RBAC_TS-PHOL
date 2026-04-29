@@ -1,5 +1,6 @@
 import streamlit as st
 import json
+import yaml
 from typing import Any
 from app.services.spiffe_registry_service import SpiffeRegistryService
 from app.services.spiffe_allowlist_service import SpiffeAllowlistService
@@ -15,7 +16,7 @@ def render_policy_studio():
     st.title("🛡️ Policy Studio")
     st.markdown("Configure identity, access control, and reasoning policies for the agentic system.")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "1. MCP Attributes",
         "2. SPIFFE Registry", 
         "3. Transport Allowlist", 
@@ -23,7 +24,8 @@ def render_policy_studio():
         "5. ABAC (Attribute-Based)",
         "6. TS-PHOL Rules",
         "7. Domain Catalog",
-        "8. Heuristic Logic"
+        "8. Heuristic Logic",
+        "9. Experiment Policies"
     ])
 
     registry_svc = SpiffeRegistryService()
@@ -62,6 +64,94 @@ def render_policy_studio():
         from app.services.heuristic_service import HeuristicService
         h_svc = HeuristicService()
         _render_heuristic_logic(h_svc)
+
+    with tab9:
+        _render_experiment_policies()
+
+
+def _render_experiment_policies():
+    """Show the generated policies for each of the 34 experiment configurations."""
+    from app.services.experiment_config import (
+        EXPERIMENTS, EXPERIMENT_GROUPS, ExperimentConfig,
+    )
+
+    st.header("Experiment Policies")
+    st.markdown(
+        "Browse the security policies generated for each experiment configuration. "
+        "These are the exact policy bundles used in the Experiment Lab evaluations."
+    )
+
+    # Group filter
+    group_options = ["All Groups"] + [f"Group {g}: {d[:50]}" for g, d in EXPERIMENT_GROUPS.items()]
+    selected_group = st.selectbox("Filter by Group", group_options, key="ps_exp_group")
+
+    if selected_group == "All Groups":
+        configs = EXPERIMENTS
+    else:
+        group_letter = selected_group.split(":")[0].replace("Group ", "").strip()
+        configs = [e for e in EXPERIMENTS if e.group == group_letter]
+
+    # Config selector
+    config_display = [f"{e.name}: {e.description}" for e in configs]
+    selected = st.selectbox("Select Configuration", config_display, key="ps_exp_config")
+
+    if not selected:
+        return
+
+    config_name = selected.split(":")[0].strip()
+    config = next((e for e in configs if e.name == config_name), None)
+    if not config:
+        return
+
+    # Config metadata
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"**Name**: {config.name}")
+        st.markdown(f"**Group**: {config.group} — {EXPERIMENT_GROUPS[config.group]}")
+        st.markdown(f"**Pre-LLM Bypass**: {'Yes' if config.bypass_pre_llm else 'No'}")
+    with col2:
+        st.markdown(f"**Registry**: `{config.registry_fn}`")
+        st.markdown(f"**Allowlist**: `{config.allowlist_fn}`")
+        st.markdown(f"**RBAC**: `{config.rbac_fn}`")
+        st.markdown(f"**ABAC**: `{config.abac_fn}`")
+        st.markdown(f"**TS-PHOL**: `{config.tsphol_fn}`")
+
+    st.markdown("---")
+
+    # Generate and display policies
+    policies = config.get_policies()
+
+    policy_tabs = st.tabs(["RBAC", "ABAC", "TS-PHOL", "Registry", "Allowlist"])
+
+    with policy_tabs[0]:
+        st.subheader("RBAC Policy")
+        rbac = policies.get("rbac", {})
+        st.metric("Roles defined", len(rbac.get("roles", [])))
+        st.code(yaml.dump(rbac, default_flow_style=False, sort_keys=False), language="yaml")
+
+    with policy_tabs[1]:
+        st.subheader("ABAC Policy")
+        abac = policies.get("abac", {})
+        st.metric("Rules defined", len(abac.get("rules", [])))
+        st.code(yaml.dump(abac, default_flow_style=False, sort_keys=False), language="yaml")
+
+    with policy_tabs[2]:
+        st.subheader("TS-PHOL Rules")
+        tsphol = policies.get("tsphol", {})
+        st.metric("Rules defined", len(tsphol.get("rules", [])))
+        st.code(yaml.dump(tsphol, default_flow_style=False, sort_keys=False), language="yaml")
+
+    with policy_tabs[3]:
+        st.subheader("SPIFFE Registry")
+        registry = policies.get("registry", {})
+        st.metric("Entries", len(registry.get("agents", [])))
+        st.code(json.dumps(registry, indent=2), language="json")
+
+    with policy_tabs[4]:
+        st.subheader("Transport Allowlist")
+        allowlist = policies.get("allowlist", {})
+        st.metric("Entries", len(allowlist.get("allowed_transports", [])))
+        st.code(json.dumps(allowlist, indent=2), language="json")
 
 
 def _render_spiffe_registry(svc: SpiffeRegistryService, workload_svc: SpiffeWorkloadService):

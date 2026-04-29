@@ -8,6 +8,7 @@ from app.ui.mcp_explorer import render_mcp_explorer
 from app.ui.prediction_lab import render_prediction_lab
 from app.ui.health import render_health
 from app.ui.policy_studio import render_policy_studio
+from app.ui.experiment_lab import render_experiment_lab
 
 # Page configuration
 st.set_page_config(
@@ -45,7 +46,7 @@ st.sidebar.markdown("---")
 
 selection = st.sidebar.radio(
     "Navigation",
-    ["🏠 Home / Overview", "🔍 ASTRA Task Explorer", "🤖 MCP Persona Explorer", "🔮 Prediction Lab", "🛡️ Policy Studio", "🏥 Data Health / Validation"]
+    ["🏠 Home / Overview", "🔍 ASTRA Task Explorer", "🤖 MCP Persona Explorer", "🔮 Prediction Lab", "🧪 Experiment Lab", "🛡️ Policy Studio", "🏥 Data Health / Validation"]
 )
 
 st.sidebar.markdown("---")
@@ -75,6 +76,8 @@ elif selection == "🤖 MCP Persona Explorer":
     render_mcp_explorer(personas)
 elif selection == "🔮 Prediction Lab":
     render_prediction_lab(tasks, personas)
+elif selection == "🧪 Experiment Lab":
+    render_experiment_lab(tasks, personas)
 elif selection == "🛡️ Policy Studio":
     render_policy_studio()
 elif selection == "🏥 Data Health / Validation":

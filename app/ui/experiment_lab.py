@@ -20,7 +20,8 @@ from app.services.experiment_config import (
     PERSONAS, LEGITIMATE_PAIRINGS, ExperimentConfig,
 )
 from app.services.experiment_runner import (
-    run_experiment, compute_domain_breakdown,
+    run_experiment, compute_domain_breakdown, build_llm_cache,
+    _task_fingerprint,
     ExperimentMetrics, RunResult,
 )
 
@@ -124,6 +125,38 @@ def _render_experiment_runner(tasks, personas):
 
     st.markdown("---")
 
+    # ── Inference mode selection ──
+    st.markdown("### ⚙️ Inference Settings")
+    inf_col1, inf_col2, inf_col3 = st.columns([2, 2, 2])
+    with inf_col1:
+        inference_mode = st.radio(
+            "Inference Mode",
+            ["🧪 Simulation (Deterministic)", "🤖 Real LLM (API)"],
+            horizontal=True,
+            help="Simulation uses deterministic passthrough (no API calls). "
+                 "Real LLM calls the OpenAI API once per unique task."
+        )
+        use_real_llm = inference_mode.startswith("🤖")
+
+    api_key = None
+    llm_model = "gpt-4o"
+    if use_real_llm:
+        with inf_col2:
+            api_key = st.text_input(
+                "OpenAI API Key",
+                type="password",
+                placeholder="sk-...",
+                help="Your OpenAI API key. Not stored — used only for this run."
+            )
+        with inf_col3:
+            llm_model = st.selectbox(
+                "Model",
+                ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+                help="Model used for tool selection inference."
+            )
+        if not api_key:
+            st.warning("⚠️ Enter your OpenAI API key to run real LLM experiments.")
+
     # ── Run controls ──
     col_sel, col_mode, col_btn = st.columns([2, 2, 1])
     with col_sel:
@@ -151,7 +184,12 @@ def _render_experiment_runner(tasks, personas):
 
     # ── Results area ──
     if run_clicked:
-        _run_and_display(configs_to_run, tasks, personas, mode_str)
+        if use_real_llm and not api_key:
+            st.error("Please enter your OpenAI API key before running.")
+        else:
+            _run_and_display(configs_to_run, tasks, personas, mode_str,
+                             use_real_llm=use_real_llm, api_key=api_key,
+                             llm_model=llm_model)
     elif "experiment_results" in st.session_state:
         _display_results(st.session_state["experiment_results"])
     else:
@@ -159,34 +197,104 @@ def _render_experiment_runner(tasks, personas):
 
 
 def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
-                     mode: str):
+                     mode: str, use_real_llm: bool = False,
+                     api_key: str = None, llm_model: str = "gpt-4o"):
     """Execute experiments with progress tracking and display results."""
     all_metrics: List[ExperimentMetrics] = []
     all_results: Dict[str, List[RunResult]] = {}
 
     progress_bar = st.progress(0, text="Starting experiments...")
     status_text = st.empty()
+    llm_cache = None
 
+    # Phase 1: Build LLM cache if using real inference
+    if use_real_llm:
+        status_text.markdown("**Phase 1/2 — LLM Inference** (one API call per unique task)")
+
+        # Collect all unique tasks across all configs
+        all_tasks_for_cache = set()
+        for config in configs:
+            if config.match_tag_filter:
+                for t in tasks:
+                    tag = t.get("match_tag", "null") if isinstance(t, dict) else getattr(t, "match_tag", "null")
+                    if tag == config.match_tag_filter:
+                        all_tasks_for_cache.add(_task_fingerprint(t))
+            else:
+                for t in tasks:
+                    all_tasks_for_cache.add(_task_fingerprint(t))
+
+        unique_count = len(all_tasks_for_cache)
+        st.info(f"🤖 Calling {llm_model} for **{unique_count}** unique tasks "
+                f"(~{unique_count * 2:.0f}–{unique_count * 3:.0f}s estimated)")
+
+        try:
+            def llm_progress(info):
+                cur = info["current"]
+                tot = info["total"]
+                errs = info.get("errors", 0)
+                pct = cur / tot if tot > 0 else 0
+                err_str = f" · ⚠️ {errs} errors" if errs > 0 else ""
+                progress_bar.progress(
+                    pct * 0.7,  # LLM phase is 70% of total progress
+                    text=f"Phase 1: LLM Inference — {cur}/{tot} tasks{err_str}"
+                )
+
+            llm_cache = build_llm_cache(
+                tasks, personas, api_key=api_key, model=llm_model,
+                progress_callback=llm_progress,
+            )
+
+            failed = sum(1 for v in llm_cache.values() if v.get("_failed"))
+            status_text.markdown(
+                f"✅ **Phase 1 complete** — {len(llm_cache)} tasks cached"
+                f"{f', ⚠️ {failed} failures' if failed else ''}"
+            )
+        except Exception as e:
+            st.error(f"❌ LLM cache build failed: {e}")
+            return
+
+    # Phase 2: Run governance evaluation
+    phase_label = "Phase 2/2" if use_real_llm else ""
     total_configs = len(configs)
-    for cfg_idx, config in enumerate(configs):
-        status_text.text(f"Running {config.name}: {config.description[:60]}...")
 
-        def progress_cb(pct):
+    for cfg_idx, config in enumerate(configs):
+        phase_text = f"{phase_label} — " if phase_label else ""
+        status_text.markdown(f"**{phase_text}Governance Evaluation** — {config.name}: {config.description[:60]}")
+
+        def progress_cb(info):
+            if isinstance(info, dict):
+                cur = info.get("current", 0)
+                tot = info.get("total", 1)
+                pct = cur / tot if tot > 0 else 0
+            else:
+                pct = float(info)
             overall = (cfg_idx + pct) / total_configs
+            if use_real_llm:
+                overall = 0.7 + overall * 0.3  # 70-100% range
             progress_bar.progress(overall, text=f"{config.name} — {pct:.0%}")
 
         metrics, results = run_experiment(config, tasks, personas, mode=mode,
-                                          progress_callback=progress_cb)
+                                          progress_callback=progress_cb,
+                                          llm_cache=llm_cache)
         all_metrics.append(metrics)
         all_results[config.name] = results
 
     progress_bar.progress(1.0, text="Complete!")
-    status_text.text(f"✅ Completed {total_configs} experiment(s) in {mode} mode")
+    inference_label = f"real LLM ({llm_model})" if use_real_llm else "simulation"
+    status_text.markdown(f"✅ **Completed {total_configs} experiment(s)** — {mode} mode, {inference_label}")
+
+    # Show LLM failure summary if any
+    total_failures = sum(m.llm_failures for m in all_metrics)
+    if total_failures > 0:
+        st.warning(f"⚠️ {total_failures} evaluations skipped due to LLM failures "
+                   f"(excluded from governance metrics)")
 
     st.session_state["experiment_results"] = {
         "metrics": all_metrics,
         "results": all_results,
         "mode": mode,
+        "inference_mode": "llm" if use_real_llm else "simulation",
+        "llm_model": llm_model if use_real_llm else None,
     }
     _display_results(st.session_state["experiment_results"])
 
@@ -196,16 +304,24 @@ def _display_results(data: dict):
     metrics_list: List[ExperimentMetrics] = data["metrics"]
     results_dict: Dict[str, List[RunResult]] = data["results"]
     mode = data.get("mode", "selection")
+    inf_mode = data.get("inference_mode", "simulation")
+    llm_model = data.get("llm_model")
 
     if not metrics_list:
         st.warning("No results to display.")
         return
 
+    # ── Inference badge ──
+    if inf_mode == "llm":
+        st.success(f"🤖 Results from **real LLM inference** ({llm_model})")
+    else:
+        st.info("🧪 Results from **deterministic simulation** (no API calls)")
+
     # ── Summary metrics ──
     st.markdown("### 📊 Summary Metrics")
     rows = []
     for m in metrics_list:
-        rows.append({
+        row = {
             "Config": m.name,
             "Total": m.total,
             "F₁": f"{m.f1:.4f}",
@@ -218,7 +334,10 @@ def _display_results(data: dict):
             "TN": m.true_negative,
             "FP": m.false_positive,
             "FN": m.false_negative,
-        })
+        }
+        if m.llm_failures > 0:
+            row["LLM Fail"] = m.llm_failures
+        rows.append(row)
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     # ── Denial source ──

@@ -3,14 +3,18 @@ Experiment runner — batch execution of experiment configurations.
 
 Writes temporary policy files, builds a fresh DecisionEngine per config,
 runs all (persona × task) evaluations, and computes aggregate metrics.
+Supports both deterministic simulation and real LLM inference with smart
+per-task caching (one API call per unique task, replayed across personas).
 """
 
 import os
 import json
 import yaml
+import hashlib
 import shutil
 import tempfile
-from dataclasses import dataclass, asdict
+import time
+from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Optional, Callable, Any
 from collections import defaultdict
 
@@ -50,6 +54,14 @@ class RunResult:
     tsphol_state: str
     confidence: float
     has_write: bool
+    # LLM inference tracking
+    inference_mode: str = "simulation"        # "simulation" or "llm"
+    llm_failed: bool = False                  # True if LLM call errored
+    llm_error: Optional[str] = None           # Error message if failed
+    selected_tools: List[str] = field(default_factory=list)   # What was actually evaluated
+    selected_mcps: List[str] = field(default_factory=list)    # What was actually evaluated
+    groundtruth_tools: List[str] = field(default_factory=list)
+    groundtruth_mcps: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -70,6 +82,7 @@ class ExperimentMetrics:
     abac_denials: int = 0
     tsphol_denials: int = 0
     other_denials: int = 0
+    llm_failures: int = 0
 
     @property
     def precision(self) -> float:
@@ -182,42 +195,78 @@ WRITE_KEYWORDS = {"create", "update", "delete", "transition", "place", "add", "s
 
 
 def run_single(engine: DecisionEngine, persona_key: str, task,
-               task_idx: int, config: ExperimentConfig, mode: str = "selection") -> RunResult:
+               task_idx: int, config: ExperimentConfig, mode: str = "selection",
+               llm_output: Optional[dict] = None) -> RunResult:
     """Run one (persona, task) pair through the decision engine.
     
     Accepts either a raw dict (from JSON) or an AstraTask pydantic model.
+    If llm_output is provided, uses its selected tools/mcps for governance
+    evaluation (real LLM mode). Otherwise falls back to simulation.
     """
     persona = PERSONAS[persona_key]
     spiffe_id = persona["spiffe_id"]
 
-    # Normalize task shape — support both raw dicts and AstraTask objects
+    # Extract groundtruth / task metadata (never changes)
     if isinstance(task, dict):
-        tools = task["input"]["tools"]
-        mcps = task["input"]["mcp_servers"]
+        gt_tools = task["input"]["tools"]
+        gt_mcps = task["input"]["mcp_servers"]
         task_text = task["input"]["task"]
         match_tag = task.get("match_tag", "null")
     else:
-        # AstraTask pydantic model
-        tools = task.candidate_tools
-        mcps = task.candidate_mcp
+        gt_tools = task.candidate_tools
+        gt_mcps = task.candidate_mcp
         task_text = task.task
         match_tag = getattr(task, "match_tag", "null")
 
-    task_domain = normalize_mcp_name(mcps[0]) if mcps else "unknown"
+    task_domain = normalize_mcp_name(gt_mcps[0]) if gt_mcps else "unknown"
     domain_authorized = task_domain in LEGITIMATE_PAIRINGS.get(persona_key, set())
     is_legitimate = domain_authorized and match_tag == "correct"
 
-    llm_out = simulate_llm_output(task, mode=mode, seed_extra=persona_key)
-    confidence = llm_out["confidence"]
-    mcp_filter = mcps[0] if mcps else "All"
+    # Determine inference source and the bundle to evaluate
+    inference_mode = "simulation"
+    llm_failed = False
+    llm_error = None
 
-    pre_llm = engine.pre_llm_check(spiffe_id, mcps, tools)
+    if llm_output is not None:
+        inference_mode = "llm"
+        if llm_output.get("_failed"):
+            # LLM call errored — mark as failed, skip governance
+            llm_failed = True
+            llm_error = llm_output.get("_error", "Unknown LLM error")
+            return RunResult(
+                experiment=config.name, group=config.group,
+                persona=persona_key, task_idx=task_idx,
+                domain=task_domain, match_tag=match_tag,
+                is_legitimate=is_legitimate,
+                final_decision="LLM_FAILED", denial_source=None,
+                identity_state="N/A", transport_state="N/A",
+                rbac_state="N/A", abac_state="N/A", tsphol_state="N/A",
+                confidence=0.0, has_write=False,
+                inference_mode="llm", llm_failed=True, llm_error=llm_error,
+                selected_tools=[], selected_mcps=[],
+                groundtruth_tools=gt_tools, groundtruth_mcps=gt_mcps,
+            )
+        # Use LLM-selected tools for governance evaluation
+        eval_tools = llm_output.get("selected_tools", gt_tools)
+        eval_mcps = llm_output.get("selected_mcps", gt_mcps)
+        confidence = llm_output.get("confidence", 0.5)
+        llm_out = llm_output
+    else:
+        # Simulation: use groundtruth tools (deterministic passthrough)
+        llm_out = simulate_llm_output(task, mode=mode, seed_extra=persona_key)
+        eval_tools = llm_out.get("selected_tools", gt_tools)
+        eval_mcps = llm_out.get("selected_mcps", gt_mcps)
+        confidence = llm_out["confidence"]
+
+    mcp_filter = gt_mcps[0] if gt_mcps else "All"
+
+    pre_llm = engine.pre_llm_check(spiffe_id, eval_mcps, eval_tools)
 
     result = engine.evaluate(
         pre_llm_result=pre_llm,
         caller_spiffe_id=spiffe_id,
-        mcps=mcps,
-        tools=tools,
+        mcps=eval_mcps,
+        tools=eval_tools,
         confidence=confidence,
         llm_outputs=llm_out,
         task_text=task_text,
@@ -225,7 +274,7 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
         mcp_filter=mcp_filter,
     )
 
-    has_write = any(kw in t for t in tools for kw in WRITE_KEYWORDS)
+    has_write = any(kw in t for t in eval_tools for kw in WRITE_KEYWORDS)
 
     return RunResult(
         experiment=config.name,
@@ -244,6 +293,13 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
         tsphol_state=result.evaluation_states.get("tsphol", "N/A"),
         confidence=confidence,
         has_write=has_write,
+        inference_mode=inference_mode,
+        llm_failed=False,
+        llm_error=None,
+        selected_tools=list(eval_tools),
+        selected_mcps=list(eval_mcps),
+        groundtruth_tools=gt_tools,
+        groundtruth_mcps=gt_mcps,
     )
 
 
@@ -256,6 +312,11 @@ def compute_metrics(results: List[RunResult], config: ExperimentConfig) -> Exper
     m.total = len(results)
 
     for r in results:
+        # Skip LLM failures from governance metrics
+        if r.llm_failed:
+            m.llm_failures += 1
+            continue
+
         is_denied = r.final_decision in ("DENY", "DECEPTION_ROUTED")
         is_allowed = not is_denied
 
@@ -318,14 +379,128 @@ def compute_domain_breakdown(results: List[RunResult]) -> Dict[str, Dict[str, in
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# LLM inference cache — one API call per unique task
+# ═══════════════════════════════════════════════════════════════════════
+
+def _task_fingerprint(task) -> str:
+    """Stable fingerprint for a task — used as cache key."""
+    if isinstance(task, dict):
+        text = task["input"]["task"]
+        mcps = task["input"]["mcp_servers"]
+    else:
+        text = task.task
+        mcps = task.candidate_mcp
+    raw = f"{text}|{','.join(sorted(mcps))}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _to_astra_task(task):
+    """Convert raw dict to AstraTask if needed."""
+    if not isinstance(task, dict):
+        return task
+    from app.models.astra import AstraTask
+    inp = task["input"]
+    return AstraTask(
+        task=inp["task"],
+        candidate_tools=inp["tools"],
+        candidate_mcp=inp["mcp_servers"],
+        groundtruth_tools=task.get("expected_output", {}).get("tools", inp["tools"]),
+        groundtruth_mcp=task.get("expected_output", {}).get("mcp_servers", inp["mcp_servers"]),
+        match_tag=task.get("match_tag", "null"),
+    )
+
+
+def build_llm_cache(tasks: list, personas_list, api_key: str,
+                    model: str = "gpt-4o",
+                    progress_callback: Optional[Callable] = None,
+                    max_retries: int = 2) -> Dict[str, dict]:
+    """Call the LLM once per unique task and cache results.
+    
+    Returns dict mapping task fingerprint → llm_output dict compatible
+    with run_single()'s llm_output parameter.
+    """
+    from app.services.llm_provider import LLMProvider
+    from app.services.prediction_service import PredictionService
+    from app.services.intent_engine import IntentEngine
+
+    llm = LLMProvider(api_key=api_key, model=model)
+    if not llm.is_configured():
+        raise ValueError("LLM provider not configured — check API key")
+
+    intent_engine = IntentEngine()
+    pred_svc = PredictionService(llm=llm, personas=personas_list,
+                                  intent_engine=intent_engine)
+
+    # Dedupe tasks by fingerprint
+    unique_tasks: Dict[str, Any] = {}
+    for task in tasks:
+        fp = _task_fingerprint(task)
+        if fp not in unique_tasks:
+            unique_tasks[fp] = task
+
+    cache: Dict[str, dict] = {}
+    total = len(unique_tasks)
+    done = 0
+    errors = 0
+
+    for fp, task in unique_tasks.items():
+        astra_task = _to_astra_task(task)
+        result = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                sel = pred_svc.run_selection(astra_task)
+                if sel.validation_errors and "LLM_NOT_CONFIGURED" in sel.validation_errors:
+                    cache[fp] = {"_failed": True, "_error": "LLM not configured"}
+                    break
+
+                cache[fp] = {
+                    "selected_tools": sel.selected_tools,
+                    "selected_mcps": sel.selected_mcp,
+                    "confidence": sel.confidence,
+                    "justification": sel.justification,
+                    "id_source": "LLM",
+                    "expected_domain": normalize_mcp_name(
+                        astra_task.candidate_mcp[0]) if astra_task.candidate_mcp else "uncertain",
+                    "raw_output": sel.raw_output,
+                    "validation_errors": sel.validation_errors,
+                }
+                result = True
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    time.sleep(1.0 * (attempt + 1))  # backoff
+                    continue
+                cache[fp] = {"_failed": True, "_error": str(e)}
+                errors += 1
+                result = False
+                break
+
+        done += 1
+        if progress_callback:
+            progress_callback({
+                "phase": "llm_cache",
+                "current": done,
+                "total": total,
+                "errors": errors,
+            })
+
+    return cache
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Batch experiment runner
 # ═══════════════════════════════════════════════════════════════════════
 
 def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
                    mode: str = "selection",
-                   progress_callback: Optional[Callable] = None) -> tuple:
+                   progress_callback: Optional[Callable] = None,
+                   llm_cache: Optional[Dict[str, dict]] = None) -> tuple:
     """
     Run a complete experiment: build engine, iterate all persona×task pairs, compute metrics.
+
+    If llm_cache is provided, uses real LLM results for governance evaluation.
+    Otherwise falls back to deterministic simulation.
 
     Returns: (metrics: ExperimentMetrics, results: List[RunResult])
     """
@@ -351,14 +526,31 @@ def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
 
         for persona_key in active_personas:
             for task_idx, task in enumerate(filtered_tasks):
-                result = run_single(engine, persona_key, task, task_idx, config, mode=mode)
+                # Look up cached LLM output if available
+                llm_out = None
+                if llm_cache is not None:
+                    fp = _task_fingerprint(task)
+                    llm_out = llm_cache.get(fp)
+
+                result = run_single(engine, persona_key, task, task_idx, config,
+                                    mode=mode, llm_output=llm_out)
                 results.append(result)
                 done += 1
-                if progress_callback and done % 100 == 0:
-                    progress_callback(done / total_evals)
+                if progress_callback and done % 50 == 0:
+                    progress_callback({
+                        "phase": "governance",
+                        "current": done,
+                        "total": total_evals,
+                        "config": config.name,
+                    })
 
         if progress_callback:
-            progress_callback(1.0)
+            progress_callback({
+                "phase": "governance",
+                "current": total_evals,
+                "total": total_evals,
+                "config": config.name,
+            })
 
         metrics = compute_metrics(results, config)
         return metrics, results

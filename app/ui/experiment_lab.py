@@ -462,6 +462,277 @@ def _display_results(data: dict):
             raw_csv = pd.DataFrame(all_raw).to_csv(index=False)
             st.download_button("Download Raw CSV", raw_csv, "experiment_results.csv", "text/csv")
 
+    # ── AI Assessment ──
+    st.markdown("### 🧠 AI-Powered Assessment")
+    st.caption(
+        "Send experiment results and the Access Decision Matrix to an LLM for "
+        "a comprehensive analysis — key findings, highlights, and detailed explanations."
+    )
+
+    assess_col1, assess_col2 = st.columns([2, 1])
+    with assess_col1:
+        assess_key = st.text_input(
+            "OpenAI API Key for Assessment",
+            type="password",
+            placeholder="sk-...",
+            key="assess_api_key",
+            help="Used only for this assessment call. Not stored."
+        )
+    with assess_col2:
+        assess_model = st.selectbox(
+            "Model", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+            key="assess_model",
+            help="Recommended: gpt-4o for best analysis quality."
+        )
+
+    assess_clicked = st.button("🔬 Generate AI Assessment", type="secondary",
+                                use_container_width=True)
+
+    if assess_clicked:
+        if not assess_key:
+            st.error("Please enter an API key for the assessment.")
+        else:
+            _run_ai_assessment(metrics_list, results_dict, mode, inf_mode,
+                               llm_model, assess_key, assess_model)
+
+    # Show cached assessment if available
+    if "ai_assessment" in st.session_state and not assess_clicked:
+        with st.expander("📝 Last AI Assessment", expanded=True):
+            st.markdown(st.session_state["ai_assessment"])
+
+
+def _build_assessment_prompt(metrics_list: List[ExperimentMetrics],
+                              results_dict: Dict[str, List[RunResult]],
+                              mode: str, inf_mode: str,
+                              llm_model: str) -> str:
+    """Build a comprehensive prompt with all experiment data for AI assessment."""
+
+    # Metrics summary
+    metrics_text = "## Experiment Metrics\n\n"
+    metrics_text += "| Config | Total | F1 | Precision | Recall | SecFail | ALLOW | DENY | DEC | TP | TN | FP | FN | LLM Fail |\n"
+    metrics_text += "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+    for m in metrics_list:
+        metrics_text += (
+            f"| {m.name} | {m.total} | {m.f1:.4f} | {m.precision:.4f} | "
+            f"{m.recall:.4f} | {m.security_failure_rate:.4f} | {m.allow_count} | "
+            f"{m.deny_count} | {m.deception_count} | {m.true_positive} | "
+            f"{m.true_negative} | {m.false_positive} | {m.false_negative} | "
+            f"{m.llm_failures} |\n"
+        )
+
+    # Denial attribution
+    metrics_text += "\n## Denial Source Attribution\n\n"
+    metrics_text += "| Config | RBAC | ABAC | TS-PHOL | Identity | Transport |\n"
+    metrics_text += "|---|---|---|---|---|---|\n"
+    for m in metrics_list:
+        metrics_text += (
+            f"| {m.name} | {m.rbac_denials} | {m.abac_denials} | "
+            f"{m.tsphol_denials} | {m.identity_denials} | {m.transport_denials} |\n"
+        )
+
+    # Per-persona breakdown for each config
+    persona_text = "\n## Per-Persona Breakdown\n\n"
+    for config_name, results in results_dict.items():
+        persona_groups = {}
+        for r in results:
+            persona_groups.setdefault(r.persona, []).append(r)
+        persona_text += f"\n### {config_name}\n"
+        persona_text += "| Persona | Total | ALLOW | DENY | DEC | LLM Fail |\n"
+        persona_text += "|---|---|---|---|---|---|\n"
+        for persona, pr in sorted(persona_groups.items()):
+            allow = sum(1 for r in pr if r.final_decision == "ALLOW")
+            deny = sum(1 for r in pr if r.final_decision == "DENY")
+            dec = sum(1 for r in pr if r.final_decision == "DECEPTION_ROUTED")
+            fail = sum(1 for r in pr if r.llm_failed)
+            persona_text += f"| {persona} | {len(pr)} | {allow} | {deny} | {dec} | {fail} |\n"
+
+    # Per-domain breakdown for E1
+    domain_text = "\n## Per-Domain Breakdown (E1)\n\n"
+    e1_results = results_dict.get("E1", [])
+    if e1_results:
+        domain_breakdown = compute_domain_breakdown(e1_results)
+        domain_text += "| Domain | Total | F1 | TP | TN | FP | FN |\n"
+        domain_text += "|---|---|---|---|---|---|---|\n"
+        for domain, stats in sorted(domain_breakdown.items()):
+            domain_text += (
+                f"| {domain} | {stats['total']} | {stats['f1']:.4f} | "
+                f"{stats['TP']} | {stats['TN']} | {stats['FP']} | {stats['FN']} |\n"
+            )
+
+    # Ablation comparison
+    ablation_text = "\n## Ablation Comparison\n\n"
+    metrics_by_name = {m.name: m for m in metrics_list}
+    e1 = metrics_by_name.get("E1")
+    e3 = metrics_by_name.get("E3")
+    e4 = metrics_by_name.get("E4")
+    if e1 and e3 and e4:
+        ablation_text += "| Metric | E3 (RBAC-only) | E4 (RBAC+ABAC) | E1 (Full) |\n"
+        ablation_text += "|---|---|---|---|\n"
+        for label, attr in [("ALLOW", "allow_count"), ("DENY", "deny_count"),
+                             ("DECEPTION", "deception_count"), ("F1", "f1"),
+                             ("Precision", "precision"), ("Recall", "recall"),
+                             ("SecFail", "security_failure_rate"),
+                             ("RBAC Denials", "rbac_denials"),
+                             ("ABAC Denials", "abac_denials"),
+                             ("TSPHOL Denials", "tsphol_denials")]:
+            v3 = getattr(e3, attr)
+            v4 = getattr(e4, attr)
+            v1 = getattr(e1, attr)
+            if isinstance(v3, float):
+                ablation_text += f"| {label} | {v3:.4f} | {v4:.4f} | {v1:.4f} |\n"
+            else:
+                ablation_text += f"| {label} | {v3} | {v4} | {v1} |\n"
+
+        ablation_text += f"\nABAC incremental value (E3→E4): {e3.allow_count - e4.allow_count} fewer unsafe ALLOWs\n"
+        ablation_text += f"TS-PHOL incremental value (E4→E1): {e4.allow_count - e1.allow_count} fewer ALLOWs + {e1.deception_count} deception routes\n"
+
+    # Access Decision Matrix summary
+    matrix_text = "\n## Access Decision Matrix Summary\n\n"
+    matrix_data = _load_matrix()
+    if matrix_data:
+        rows = matrix_data.get("rows", [])
+        total_rows = len(rows)
+        if total_rows > 0:
+            decisions = Counter(r.get("final_decision", "UNKNOWN") for r in rows)
+            matrix_text += f"Total matrix rows: {total_rows} (personas × tasks)\n\n"
+            matrix_text += "| Decision | Count | % |\n|---|---|---|\n"
+            for dec, cnt in decisions.most_common():
+                matrix_text += f"| {dec} | {cnt} | {cnt/total_rows*100:.1f}% |\n"
+
+            # Per-persona summary from matrix
+            persona_decisions = defaultdict(Counter)
+            for r in rows:
+                persona_decisions[r.get("persona", "?")][r.get("final_decision", "?")] += 1
+            matrix_text += "\n### Matrix Per-Persona\n"
+            matrix_text += "| Persona | ALLOW | DENY | DECEPTION |\n|---|---|---|---|\n"
+            for persona, counts in sorted(persona_decisions.items()):
+                matrix_text += (
+                    f"| {persona} | {counts.get('ALLOW',0)} | "
+                    f"{counts.get('DENY',0)} | {counts.get('DECEPTION_ROUTED',0)} |\n"
+                )
+
+            # Denial attribution from matrix
+            denial_sources = Counter()
+            for r in rows:
+                src = r.get("denial_source")
+                if src:
+                    denial_sources[src] += 1
+            if denial_sources:
+                matrix_text += "\n### Matrix Denial Attribution\n"
+                matrix_text += "| Source | Count |\n|---|---|\n"
+                for src, cnt in denial_sources.most_common():
+                    matrix_text += f"| {src} | {cnt} |\n"
+
+    # Experiment config context
+    config_text = "\n## Experiment Configurations\n\n"
+    config_text += "| ID | Task Filter | RBAC | ABAC | TS-PHOL | Purpose |\n"
+    config_text += "|---|---|---|---|---|---|\n"
+    from app.services.experiment_config import EXPERIMENTS as ALL_EXPS
+    for cfg in ALL_EXPS:
+        config_text += (
+            f"| {cfg.name} | {cfg.match_tag_filter or 'all'} | "
+            f"{cfg.rbac_fn} | {cfg.abac_fn} | {cfg.tsphol_fn} | "
+            f"{cfg.description[:80]} |\n"
+        )
+
+    prompt = f"""You are an expert researcher analyzing experiment results from PALADIN — a layered governance framework for LLM-based agentic tool selection.
+
+PALADIN enforces access control through three composable layers:
+1. **RBAC** (Role-Based Access Control): Identity-based tool permissions per persona
+2. **ABAC** (Attribute-Based Access Control): Contextual rules (time-of-day, risk level, trust score, clearance)
+3. **TS-PHOL** (Typed Security Policy Higher-Order Logic): Formal logic rules for domain alignment, capability coverage, confidence thresholds, and deception routing
+
+The experiments use the ASTRA dataset (Agentic Security Tool Recommendation Assessment) with 6 SPIFFE-authenticated personas.
+
+**Inference mode used:** {inf_mode}{f' ({llm_model})' if llm_model else ''}
+**Evaluation mode:** {mode}
+
+---
+
+{config_text}
+
+{metrics_text}
+
+{persona_text}
+
+{domain_text}
+
+{ablation_text}
+
+{matrix_text}
+
+---
+
+Please provide a comprehensive assessment covering:
+
+1. **Executive Summary** — The most important findings in 3-4 sentences.
+
+2. **Ablation Analysis** — What does each layer contribute? Quantify the incremental value with specific numbers. Is the layered approach justified?
+
+3. **Security Analysis** — Where are the remaining gaps? What does the security failure rate tell us? Are there domains or personas with concerning patterns?
+
+4. **Per-Persona Insights** — Which personas have the most/least restrictive governance? Are there any surprising patterns?
+
+5. **Per-Domain Insights** — Which domains see the most denials? Any cross-domain leakage concerns?
+
+6. **Deception Routing Analysis** — When and why does the system route to deception instead of hard-deny? Is this behavior appropriate?
+
+7. **Comparison: Simulation vs Real LLM** — If this was a real LLM run, what changed compared to simulation expectations? If simulation, what would we expect to change with a real LLM?
+
+8. **Key Highlights for a Research Paper** — What are the most compelling data points and narratives for publication?
+
+9. **Recommendations** — Specific actionable improvements to the governance framework.
+
+10. **Limitations & Caveats** — What should readers be cautious about when interpreting these results?
+
+Format your response in well-structured Markdown with clear headers and bullet points. Use specific numbers from the data — do not generalize.
+"""
+    return prompt
+
+
+def _run_ai_assessment(metrics_list, results_dict, mode, inf_mode,
+                        llm_model, api_key, assess_model):
+    """Call the LLM with full experiment context and display the assessment."""
+    from app.services.llm_provider import LLMProvider
+
+    with st.spinner("🧠 Generating comprehensive assessment... (this may take 30-60 seconds)"):
+        prompt = _build_assessment_prompt(
+            metrics_list, results_dict, mode, inf_mode, llm_model
+        )
+
+        try:
+            llm = LLMProvider(api_key=api_key, model=assess_model)
+            if not llm.is_configured():
+                st.error("LLM not configured — check API key.")
+                return
+
+            # Use a non-JSON response format for the assessment
+            response = llm.client.chat.completions.create(
+                model=assess_model,
+                messages=[
+                    {"role": "system", "content": "You are an expert AI security researcher providing detailed experiment analysis. Respond in well-formatted Markdown."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=4096,
+            )
+            assessment = response.choices[0].message.content
+
+            st.session_state["ai_assessment"] = assessment
+
+            with st.expander("📝 AI Assessment", expanded=True):
+                st.markdown(assessment)
+
+            # Download button for the assessment
+            st.download_button(
+                "📥 Download Assessment (Markdown)",
+                assessment,
+                "paladin_assessment.md",
+                "text/markdown",
+            )
+
+        except Exception as e:
+            st.error(f"Assessment failed: {e}")
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Tab 2 — Access Decision Matrix Explorer

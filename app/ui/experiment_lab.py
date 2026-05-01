@@ -127,7 +127,7 @@ def _render_experiment_runner(tasks, personas):
 
     # ── Inference mode selection ──
     st.markdown("### ⚙️ Inference Settings")
-    inf_col1, inf_col2, inf_col3 = st.columns([2, 2, 2])
+    inf_col1, inf_col2 = st.columns([2, 2])
     with inf_col1:
         inference_mode = st.radio(
             "Inference Mode",
@@ -138,24 +138,17 @@ def _render_experiment_runner(tasks, personas):
         )
         use_real_llm = inference_mode.startswith("🤖")
 
-    api_key = None
+    api_key = os.environ.get("OPENAI_API_KEY", "")
     llm_model = "gpt-4o"
     if use_real_llm:
         with inf_col2:
-            api_key = st.text_input(
-                "OpenAI API Key",
-                type="password",
-                placeholder="sk-...",
-                help="Your OpenAI API key. Not stored — used only for this run."
-            )
-        with inf_col3:
             llm_model = st.selectbox(
                 "Model",
                 ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
                 help="Model used for tool selection inference."
             )
         if not api_key:
-            st.warning("⚠️ Enter your OpenAI API key to run real LLM experiments.")
+            st.warning("⚠️ Please provide your OpenAI API key in the **sidebar Settings** to run real LLM experiments.")
 
     # ── Run controls ──
     col_sel, col_mode, col_btn = st.columns([2, 2, 1])
@@ -469,28 +462,19 @@ def _display_results(data: dict):
         "a comprehensive analysis — key findings, highlights, and detailed explanations."
     )
 
-    assess_col1, assess_col2 = st.columns([2, 1])
-    with assess_col1:
-        assess_key = st.text_input(
-            "OpenAI API Key for Assessment",
-            type="password",
-            placeholder="sk-...",
-            key="assess_api_key",
-            help="Used only for this assessment call. Not stored."
-        )
-    with assess_col2:
-        assess_model = st.selectbox(
-            "Model", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-            key="assess_model",
-            help="Recommended: gpt-4o for best analysis quality."
-        )
+    assess_key = os.environ.get("OPENAI_API_KEY", "")
+    assess_model = st.selectbox(
+        "Assessment Model", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        key="assess_model",
+        help="Recommended: gpt-4o for best analysis quality. Uses the API key from sidebar Settings."
+    )
 
     assess_clicked = st.button("🔬 Generate AI Assessment", type="secondary",
                                 use_container_width=True)
 
     if assess_clicked:
         if not assess_key:
-            st.error("Please enter an API key for the assessment.")
+            st.error("Please provide your OpenAI API key in the **sidebar Settings**.")
         else:
             _run_ai_assessment(metrics_list, results_dict, mode, inf_mode,
                                llm_model, assess_key, assess_model)

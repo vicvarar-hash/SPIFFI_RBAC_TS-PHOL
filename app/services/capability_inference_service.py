@@ -114,7 +114,7 @@ class CapabilityInferenceService:
                 })
                             
         # 4L/4T: Abstract Capability Filtering (Centralized authority)
-        abstract_caps = DomainCapabilityOntology.ABSTRACT_CAPABILITIES
+        abstract_caps = DomainCapabilityOntology.get_abstract_capabilities()
         
         final_required = {cap for cap in required_set if cap not in abstract_caps}
         final_optional = {cap for cap in optional_set if cap not in abstract_caps}

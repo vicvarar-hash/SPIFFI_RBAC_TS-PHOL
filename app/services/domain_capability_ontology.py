@@ -1,134 +1,55 @@
 from typing import List, Dict, Set
+import json
+import os
 
 # Strong Task Capability Ontology (Iteration 4Q)
-# Defines required capability sets for specific intent/domain combinations
+# Now loaded from policies/domain_capability_ontology.json for editability
 
-DOMAIN_CAPABILITIES = {
-    "Hummingbot": {
-        "MarketAnalysis": {
-            "hard": ["MarketDataAnalysis"],
-            "soft": ["ExchangeInteraction", "PriceAnalysis", "TrendAnalysis", "MarketDepthAnalysis"],
-            "required": ["MarketDataAnalysis", "ExchangeInteraction"],
-            "optional": ["PriceAnalysis", "TrendAnalysis", "MarketDepthAnalysis"]
-        },
-        "StrategyExecution": {
-            "hard": ["StrategyExecution"],
-            "soft": ["BalanceCheck", "ExchangeInteraction", "PositionMonitoring"],
-            "required": ["OrderCreation", "BalanceCheck", "ExchangeInteraction"],
-            "optional": ["PositionMonitoring"]
-        }
-    },
-    "Wikipedia": {
-        "InformationDiscovery": {
-            "hard": ["KnowledgeSearch"],
-            "soft": ["TopicSummarization", "ContentSynthesis", "ContextualSynthesis"],
-            "required": ["KnowledgeSearch"],
-            "optional": ["TopicSummarization", "ContentSynthesis", "ContextualSynthesis"]
-        },
-        "ReferenceExploration": {
-            "hard": ["KnowledgeSearch"],
-            "soft": ["SourceVerification", "ReferenceReview"],
-            "required": ["KnowledgeSearch", "SourceVerification"],
-            "optional": ["ReferenceReview"]
-        }
-    },
-    "Atlassian": {
-        "IssueReview": {
-            "hard": ["IssueRead"],
-            "soft": ["HistoryReview", "CommentInspection", "IssueCreation"],
-            "required": ["IssueRead", "HistoryReview"],
-            "optional": ["CommentInspection", "IssueCreation"]
-        },
-        "TaskManagement": {
-            "hard": ["IssueRead", "IssueUpdate"],
-            "soft": ["WorkflowTransition", "BacklogPrioritization"],
-            "required": ["IssueUpdate", "IssueRead", "WorkflowTransition"],
-            "optional": ["BacklogPrioritization"]
-        },
-        "IssueCreation": {
-            "hard": ["IssueCreation"],
-            "soft": ["AtlassianWrite"],
-            "required": ["IssueCreation", "AtlassianWrite"],
-            "optional": []
-        }
-    },
-    "Grafana": {
-        "AlertAudit": {
-            "hard": ["AlertRuleReview"],
-            "soft": ["DatasourceReview", "OncallUserInspection", "VariableReview"],
-            "required": ["AlertRuleReview", "DatasourceReview"],
-            "optional": ["OncallUserInspection", "VariableReview"]
-        },
-        "IncidentCorrelation": {
-            "hard": ["MetricsQuery"],
-            "soft": ["LogAnalysis", "IncidentCorrelation", "DashboardInspection"],
-            "required": ["LogAnalysis", "MetricsQuery", "IncidentCorrelation"],
-            "optional": ["DashboardInspection"]
-        },
-        "ObservabilityReview": {
-            "hard": ["MetricsQuery"],
-            "soft": ["DatasourceReview", "DashboardInspection", "AlertRuleReview", "LogQuery"],
-            "required": ["MetricsQuery"],
-            "optional": ["DatasourceReview", "DashboardInspection", "AlertRuleReview"]
-        }
-    },
-    "MongoDB": {
-        "DataHealth": {
-            "hard": ["CollectionScan"],
-            "soft": ["IndexReview", "PerformanceAudit"],
-            "required": ["CollectionScan", "IndexReview"],
-            "optional": ["PerformanceAudit"]
-        },
-        "SecurityAudit": {
-            "hard": ["CollectionScan"],
-            "soft": ["QueryAnalysis", "IndexReview"],
-            "required": ["UserInspection", "AccessReview"],
-            "optional": ["QueryAnalysis"]
-        }
-    },
-    "Stripe": {
-        "PaymentProcessing": {
-            "hard": ["FinancialWrite"],
-            "soft": ["FinancialRead"],
-            "required": ["FinancialWrite"],
-            "optional": ["FinancialRead"]
-        },
-        "FinancialReview": {
-            "hard": ["FinancialRead"],
-            "soft": ["SubscriptionUpdate"],
-            "required": ["FinancialRead"],
-            "optional": ["SubscriptionUpdate"]
-        }
-    },
-    "Azure": {
-        "CloudManagement": {
-            "hard": ["CloudResourceRead"],
-            "soft": ["CloudResourceWrite", "CloudMonitoring"],
-            "required": ["CloudResourceRead"],
-            "optional": ["CloudResourceWrite", "CloudMonitoring"]
-        },
-        "InfrastructureAudit": {
-            "hard": ["CloudResourceRead"],
-            "soft": ["CloudMonitoring"],
-            "required": ["CloudResourceRead"],
-            "optional": ["CloudMonitoring"]
-        }
-    },
-    "Notion": {
-        "ContentManagement": {
-            "hard": ["NotionRead"],
-            "soft": ["NotionWrite"],
-            "required": ["NotionRead"],
-            "optional": ["NotionWrite"]
-        },
-        "KnowledgeBase": {
-            "hard": ["NotionRead"],
-            "soft": [],
-            "required": ["NotionRead"],
-            "optional": []
-        }
-    }
-}
+_ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "policies", "domain_capability_ontology.json")
+
+def _load_ontology():
+    """Load ontology from JSON file."""
+    path = os.path.normpath(_ONTOLOGY_PATH)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"domain_capabilities": {}, "abstract_capabilities": [], "capability_implications": {}, "domain_fallbacks": {}}
+
+def _save_ontology(data: dict) -> bool:
+    """Save ontology to JSON file."""
+    path = os.path.normpath(_ONTOLOGY_PATH)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=False)
+        return True
+    except Exception:
+        return False
+
+_ontology_cache = None
+
+def _get_ontology():
+    global _ontology_cache
+    if _ontology_cache is None:
+        _ontology_cache = _load_ontology()
+    return _ontology_cache
+
+def reload_ontology():
+    """Force reload from disk (after edits)."""
+    global _ontology_cache
+    _ontology_cache = _load_ontology()
+    return _ontology_cache
+
+def get_domain_capabilities() -> dict:
+    return _get_ontology().get("domain_capabilities", {})
+
+def save_domain_capabilities(caps: dict) -> bool:
+    """Save updated domain capabilities to the ontology JSON file."""
+    ontology = _get_ontology().copy()
+    ontology["domain_capabilities"] = caps
+    return _save_ontology(ontology)
+
+# Module-level reference for backward compatibility
+DOMAIN_CAPABILITIES = get_domain_capabilities()
 
 class DomainCapabilityOntology:
     @staticmethod
@@ -137,7 +58,8 @@ class DomainCapabilityOntology:
         Retrieves the standard capability set for a given domain and intent.
         Returns: {"required": [...], "optional": [...]}
         """
-        domain_intents = DOMAIN_CAPABILITIES.get(domain, {})
+        caps = get_domain_capabilities()
+        domain_intents = caps.get(domain, {})
         data = domain_intents.get(intent)
         if isinstance(data, dict):
             return data
@@ -149,27 +71,11 @@ class DomainCapabilityOntology:
         Fallback mechanism for unknown intents within a known domain.
         Returns: {"required": [...], "optional": [], "hard": [...], "soft": [...]}
         """
-        req = []
-        if domain == "Hummingbot":
-            req = ["MarketDataAnalysis"]
-        elif domain == "Atlassian":
-            req = ["IssueRead"]
-        elif domain == "Wikipedia":
-            req = ["KnowledgeSearch"]
-        elif domain == "Grafana":
-            req = ["MetricsQuery"]
-        elif domain == "Stripe":
-            req = ["FinancialRead"]
-        elif domain == "Azure":
-            req = ["CloudResourceRead"]
-        elif domain == "Notion":
-            req = ["NotionRead"]
-        elif domain == "MongoDB":
-            req = ["CollectionScan"]
-        else:
-            req = ["GenericRead"]
-            
-        return {"required": req, "optional": [], "hard": req, "soft": []}
+        ontology = _get_ontology()
+        fallbacks = ontology.get("domain_fallbacks", {})
+        if domain in fallbacks:
+            return fallbacks[domain]
+        return {"required": ["GenericRead"], "optional": [], "hard": ["GenericRead"], "soft": []}
 
     @staticmethod
     def get_hard_capabilities(domain: str, intent: str) -> Set[str]:
@@ -177,70 +83,25 @@ class DomainCapabilityOntology:
         Returns the set of hard (mission-critical) capabilities for a domain/intent.
         Missing a hard capability = DENY. Missing a soft capability = audit warning.
         """
-        domain_intents = DOMAIN_CAPABILITIES.get(domain, {})
+        caps = get_domain_capabilities()
+        domain_intents = caps.get(domain, {})
         data = domain_intents.get(intent)
         if isinstance(data, dict) and "hard" in data:
             return set(data["hard"])
-        # Fallback: if no hard/soft distinction, treat all required as hard
         if isinstance(data, dict):
             return set(data.get("required", []))
-        # Domain fallback
         fallback = DomainCapabilityOntology.infer_minimum_capabilities(domain)
         return set(fallback.get("hard", fallback.get("required", [])))
 
-    # 4T: Canonical set of abstract/grouping capabilities to hide from UI
-    # 6C Refinement: Ensure tool-level capabilities like MarketDataAnalysis stay visible
-    ABSTRACT_CAPABILITIES = {
-        "AtlassianRead", "AtlassianWrite", 
-        "ObservabilityRead", "ObservabilityWrite",
-        "GenericRead", "GenericWrite",
-        "FinanceRead", "FinanceWrite", 
-        "DevOpsRead", "DevOpsWrite",
-        "EquityRead", "EquityWrite",
-        "HummingbotRead", "HummingbotWrite",
-        "InformationDiscovery", "ReferenceExploration",
-        "AlertAudit", "IncidentCorrelation",
-        "DataHealth", "SecurityAudit",
-        "IssueReview", "TaskManagement"
-    }
+    @staticmethod
+    def get_abstract_capabilities() -> Set[str]:
+        ontology = _get_ontology()
+        return set(ontology.get("abstract_capabilities", []))
 
-    CAPABILITY_IMPLICATIONS = {
-        # Atlassian
-        "IssueUpdate": ["IssueRead", "IssueReview"],
-        "IssueCreation": ["IssueRead", "AtlassianWrite"],
-        "IssueSearch": ["IssueRead"],
-        "WorkflowTransition": ["IssueRead", "IssueUpdate"],
-        "HistoryReview": ["IssueRead"],
-        # Hummingbot/Trading
-        "StrategyExecution": ["StrategyReview", "MarketDataAnalysis", "BalanceCheck"],
-        "OrderCreation": ["MarketDataRetrieval", "ExchangeInteraction"],
-        "PlaceOrder": ["StrategyExecution"],
-        "CancelOrder": ["StrategyExecution"],
-        "MarketDataAnalysis": ["MarketDataRetrieval"],
-        # Finance/Stripe
-        "FinancialWrite": ["FinancialRead"],
-        "SubscriptionUpdate": ["FinancialRead", "FinancialWrite"],
-        "UpdateSubscription": ["FinancialRead", "FinancialWrite"],
-        # Grafana/Observability
-        "ObservabilityRead": ["AlertRuleReview", "DatasourceReview", "MetricsQuery"],
-        "LogAnalysis": ["LogQuery"],
-        "DashboardInspection": ["DatasourceReview"],
-        "IncidentCorrelation": ["AlertRuleReview", "MetricsQuery"],
-        "IncidentAnnotation": ["IncidentCorrelation", "InvestigationLookup"],
-        "InvestigationLookup": ["AlertRuleReview"],
-        "IncidentCreation": ["IncidentCorrelation"],
-        "OncallScheduleReview": ["OncallUserInspection"],
-        "ProfilingAnalysis": ["MetricsQuery"],
-        # Azure/Cloud
-        "CloudResourceWrite": ["CloudResourceRead"],
-        "CloudMonitoring": ["CloudResourceRead"],
-        # Notion
-        "NotionWrite": ["NotionRead"],
-        # MongoDB
-        "QueryAnalysis": ["CollectionScan"],
-        "IndexReview": ["CollectionScan"],
-        "PerformanceAudit": ["CollectionScan"],
-    }
+    @staticmethod
+    def get_capability_implications() -> Dict[str, List[str]]:
+        ontology = _get_ontology()
+        return ontology.get("capability_implications", {})
 
     @staticmethod
     def expand_capabilities(caps: Set[str]) -> Set[str]:
@@ -248,13 +109,13 @@ class DomainCapabilityOntology:
         Performs Capability Subsumption:
         Computes the complete semantic closure of capabilities based on hierarchical implication rules.
         """
+        implications = DomainCapabilityOntology.get_capability_implications()
         expanded = set(caps)
-        # Simple iterative transitive closure (in case of nested implications)
         changed = True
         while changed:
             changed = False
             for cap in list(expanded):
-                for implied in DomainCapabilityOntology.CAPABILITY_IMPLICATIONS.get(cap, []):
+                for implied in implications.get(cap, []):
                     if implied not in expanded:
                         expanded.add(implied)
                         changed = True
@@ -265,4 +126,22 @@ class DomainCapabilityOntology:
         """
         Filters for visible concrete capabilities (excludes groupings).
         """
-        return capability not in DomainCapabilityOntology.ABSTRACT_CAPABILITIES
+        return capability not in DomainCapabilityOntology.get_abstract_capabilities()
+
+    @staticmethod
+    def save_domain_capabilities(domain_capabilities: dict) -> bool:
+        """Save updated domain capabilities back to the ontology JSON."""
+        ontology = _get_ontology()
+        ontology["domain_capabilities"] = domain_capabilities
+        if _save_ontology(ontology):
+            reload_ontology()
+            return True
+        return False
+
+    @staticmethod
+    def save_full_ontology(ontology: dict) -> bool:
+        """Save the entire ontology dict."""
+        if _save_ontology(ontology):
+            reload_ontology()
+            return True
+        return False

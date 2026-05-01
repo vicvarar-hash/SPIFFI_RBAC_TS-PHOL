@@ -181,15 +181,27 @@ def cleanup_engine(engine: DecisionEngine):
 WRITE_KEYWORDS = {"create", "update", "delete", "transition", "place", "add", "set", "remove"}
 
 
-def run_single(engine: DecisionEngine, persona_key: str, task: dict,
+def run_single(engine: DecisionEngine, persona_key: str, task,
                task_idx: int, config: ExperimentConfig, mode: str = "selection") -> RunResult:
-    """Run one (persona, task) pair through the decision engine."""
+    """Run one (persona, task) pair through the decision engine.
+    
+    Accepts either a raw dict (from JSON) or an AstraTask pydantic model.
+    """
     persona = PERSONAS[persona_key]
     spiffe_id = persona["spiffe_id"]
-    tools = task["input"]["tools"]
-    mcps = task["input"]["mcp_servers"]
-    task_text = task["input"]["task"]
-    match_tag = task.get("match_tag", "null")
+
+    # Normalize task shape — support both raw dicts and AstraTask objects
+    if isinstance(task, dict):
+        tools = task["input"]["tools"]
+        mcps = task["input"]["mcp_servers"]
+        task_text = task["input"]["task"]
+        match_tag = task.get("match_tag", "null")
+    else:
+        # AstraTask pydantic model
+        tools = task.candidate_tools
+        mcps = task.candidate_mcp
+        task_text = task.task
+        match_tag = getattr(task, "match_tag", "null")
 
     task_domain = normalize_mcp_name(mcps[0]) if mcps else "unknown"
     domain_authorized = task_domain in LEGITIMATE_PAIRINGS.get(persona_key, set())
@@ -199,18 +211,7 @@ def run_single(engine: DecisionEngine, persona_key: str, task: dict,
     confidence = llm_out["confidence"]
     mcp_filter = mcps[0] if mcps else "All"
 
-    if config.bypass_pre_llm:
-        pre_llm = {
-            "passed": True, "decision": "ALLOW", "reason": "Pre-LLM bypassed",
-            "denial_source": None, "trace": ["[SIM] Pre-LLM gate bypassed"],
-            "context": {},
-            "evaluation_states": {
-                "identity": "ALLOW", "transport": "ALLOW",
-                "rbac": "NOT_EVALUATED", "abac": "NOT_EVALUATED", "tsphol": "NOT_EVALUATED",
-            },
-        }
-    else:
-        pre_llm = engine.pre_llm_check(spiffe_id, mcps, tools)
+    pre_llm = engine.pre_llm_check(spiffe_id, mcps, tools)
 
     result = engine.evaluate(
         pre_llm_result=pre_llm,
@@ -333,12 +334,23 @@ def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
 
     try:
         results: List[RunResult] = []
-        active_personas = [k for k in PERSONAS if k != "security_engine"]
-        total_evals = len(active_personas) * len(tasks)
+        active_personas = list(PERSONAS.keys())
+
+        # Apply match_tag filter if configured
+        if config.match_tag_filter:
+            filtered_tasks = []
+            for t in tasks:
+                tag = t.get("match_tag", "null") if isinstance(t, dict) else getattr(t, "match_tag", "null")
+                if tag == config.match_tag_filter:
+                    filtered_tasks.append(t)
+        else:
+            filtered_tasks = tasks
+
+        total_evals = len(active_personas) * len(filtered_tasks)
         done = 0
 
         for persona_key in active_personas:
-            for task_idx, task in enumerate(tasks):
+            for task_idx, task in enumerate(filtered_tasks):
                 result = run_single(engine, persona_key, task, task_idx, config, mode=mode)
                 results.append(result)
                 done += 1

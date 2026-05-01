@@ -303,7 +303,7 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
         st.divider()
         
         # Phase 3: Logic
-        _render_phase_3(decision, comparison, mode=mode_tag)
+        _render_phase_3(decision, comparison, mode=mode_tag, inference=inference)
         
         # Details & Auditor
         with st.expander("📄 Raw Model Outputs & Details", expanded=False):
@@ -334,7 +334,7 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             st.session_state[state_key] = None
         
         if st.button("🚀 Generate Logic Post-Mortem & Strategic Advice", key=f"btn_{state_key}"):
-            with st.spinner("LLoM Auditor analyzing execution trace..."):
+            with st.spinner("LLM Auditor analyzing execution trace..."):
                 assessment = auditor.generate_assessment(
                     task=task.task,
                     metadata=ctx,
@@ -458,9 +458,9 @@ def _render_phase_1(decision: DecisionResult, caller_display_name: str, mode: st
 def _render_phase_2(result: Any, mode: str, task: Any = None):
     """
     PHASE 2: LLM INFERENCE (GENERATION LAYER)
-    Displays the LLoM logic hypotheses and alignment scores.
+    Displays the LLM logic hypotheses and alignment scores.
     """
-    st.markdown("### 🧠 Phase II: LLoM Generation (Inference)")
+    st.markdown("### 🧠 Phase II: LLM Generation (Inference)")
     with st.container(border=True):
         if mode == "selection":
             st.subheader("Logic Hypothesis (Tools Selection)")
@@ -469,14 +469,9 @@ def _render_phase_2(result: Any, mode: str, task: Any = None):
             st.write("**Predicted Tools:**")
             st.json(result.selected_tools)
             
-            c1, c2 = st.columns(2)
+            c1, _ = st.columns(2)
             c1.metric("Model Confidence", f"{result.confidence:.0%}")
-            c2.metric("Capability Coverage", f"{result.capability_coverage_score:.0%}")
             
-            if result.missing_capabilities:
-                st.warning(f"⚠️ **Missing Capabilities:** {', '.join(result.missing_capabilities)}")
-            else:
-                st.success("✅ **Sufficient Capability Coverage Hypothesized**")
             st.markdown(f"**Model Justification:** {result.justification}")
             
         else:
@@ -507,13 +502,64 @@ def _render_phase_2(result: Any, mode: str, task: Any = None):
                 with st.expander("📊 Alignment Breakdown (Weighted Reasoning)"):
                     st.json(components)
 
-def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "validation"):
+def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "validation", inference: Any = None):
     """
     PHASE 3: VERIFIED LOGIC TRACE (POST-LLM)
     Displays the final grounding, TS-PHOL audit, and verified decision.
     """
     st.markdown("### 🚦 Phase III: Verified Logic Trace (Post-LLM)")
     with st.container(border=True):
+        # Capability Coverage Assessment (post-LLM, computed from tool audit)
+        if mode == "selection" and inference is not None:
+            st.markdown("#### C.2 Capability Coverage Assessment")
+            st.caption(
+                "This is a **post-LLM verification step** — not part of the model's inference. "
+                "After the LLM selects tools, the system independently audits whether those tools "
+                "provide the capabilities required by the task."
+            )
+
+            # Read coverage from the decision engine's evaluation (authoritative source)
+            ctx = decision.context or {}
+            required_list = ctx.get("task_required_capabilities", [])
+            missing = ctx.get("missing_capabilities", [])
+            has_list = ctx.get("has_capabilities", [])
+
+            if required_list:
+                satisfied_count = len([c for c in required_list if c in has_list])
+                score = satisfied_count / len(required_list)
+            else:
+                satisfied_count = 0
+                score = 1.0  # No requirements = full coverage
+
+            c1, c2 = st.columns(2)
+            c1.metric("Capability Coverage", f"{score:.0%}")
+            c2.metric("Satisfied / Required", f"{satisfied_count} / {len(required_list)}" if required_list else "N/A")
+
+            if missing:
+                st.warning(f"⚠️ **Missing Required Capabilities:** {', '.join(f'`{c}`' for c in missing)}")
+                st.caption(
+                    "These capabilities are required by the task's domain and intent but were not "
+                    "provided by any of the selected tools. Missing **hard** capabilities trigger a "
+                    "coverage violation (potential deny); missing **soft** capabilities produce an audit warning."
+                )
+            else:
+                st.success("✅ **Full Capability Coverage** — all required capabilities are satisfied by the selected tools.")
+
+            with st.expander("ℹ️ How is this calculated?"):
+                st.markdown(
+                    "**Formula:** `coverage = satisfied_capabilities / total_required_capabilities`\n\n"
+                    "1. The system determines **required capabilities** from the domain/intent ontology "
+                    "(see Policy Studio → Capability Ontology).\n"
+                    "2. Each selected tool is audited to extract the capabilities it provides.\n"
+                    "3. The score is the ratio of requirements that are met. "
+                    "A score of **1.0 (100%)** means every required capability has at least one tool covering it.\n\n"
+                    "**Implications:**\n"
+                    "- **🔴 Hard capability missing** → `CapabilityCoverageViolation` → may result in **DENY**\n"
+                    "- **🟡 Soft capability missing** → lowers score, produces **audit warning** only\n"
+                    "- Score feeds into the TS-PHOL rule evaluation downstream"
+                )
+            st.divider()
+
         st.markdown("#### D. Fact Extraction & Audit")
         audit_data = decision.context.get("tool_audit", [])
         intent = decision.context.get("intent_decomposition", {})

@@ -70,17 +70,15 @@ LEGITIMATE_PAIRINGS: Dict[str, Set[str]] = {
     "research_agent":     {"wikipedia-mcp", "paper-search", "notion"},
     "automation_gateway": {"grafana", "atlassian", "azure", "mongodb", "stripe",
                            "notion", "hummingbot-mcp", "wikipedia-mcp", "paper-search"},
-    "security_engine":    set(),
+    "security_engine":    {"grafana", "atlassian", "azure", "mongodb", "stripe",
+                           "notion", "hummingbot-mcp", "wikipedia-mcp", "paper-search"},
 }
 
 EXPERIMENT_GROUPS: Dict[str, str] = {
-    "A": "Full Pipeline Ablation — what happens when we remove each security layer?",
-    "B": "TS-PHOL vs ABAC — does TS-PHOL as final authority beat ABAC alone?",
-    "C": "TS-PHOL Sensitivity — effect of strictness on formal rules",
-    "D": "ABAC Sensitivity — security vs usability tradeoff of tighter ABAC",
-    "E": "Leave-One-Rule-Out — which individual TS-PHOL rules matter?",
-    "F": "Confidence Sweep — how does LLM confidence threshold affect outcomes?",
-    "G": "Cross-Layer — best TS-PHOL + ABAC combinations",
+    "E1": "Correct tasks × full pipeline — baseline governance accuracy",
+    "E2": "Wrong tasks × full pipeline — governance catches bad bundles",
+    "E3": "Correct tasks × RBAC-only — shows what RBAC alone can/cannot do",
+    "E4": "Correct tasks × RBAC+ABAC — shows incremental ABAC value over RBAC",
 }
 
 
@@ -95,12 +93,13 @@ BACKUP_DIR = os.path.join(POLICY_DIR, "_backup")
 def _load_from_backup_or_current(filename: str, loader: str = "yaml") -> dict:
     backup = os.path.join(BACKUP_DIR, filename)
     current = os.path.join(POLICY_DIR, filename)
-    src = backup if os.path.exists(backup) else current
+    # Prefer current (production) policies; fall back to backup only if current doesn't exist
+    src = current if os.path.exists(current) else backup
     if loader == "json":
-        with open(src) as f:
+        with open(src, encoding="utf-8") as f:
             return json.load(f)
     else:
-        with open(src) as f:
+        with open(src, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
 
@@ -351,12 +350,12 @@ class ExperimentConfig:
     name: str
     group: str
     description: str
-    bypass_pre_llm: bool = False
     registry_fn: str = "production"
     allowlist_fn: str = "production"
     rbac_fn: str = "production"
     abac_fn: str = "production"
     tsphol_fn: str = "production"
+    match_tag_filter: Optional[str] = None  # "correct", "wrong", or None for all
 
     def get_policies(self) -> Dict[str, dict]:
         """Generate all policy dicts for this configuration."""
@@ -370,47 +369,27 @@ class ExperimentConfig:
 
 
 EXPERIMENTS: List[ExperimentConfig] = [
-    # Group A: Full Pipeline Ablation
-    ExperimentConfig("A0", "A", "Baseline (production RBAC, transport-limited)"),
-    ExperimentConfig("A0b", "A", "Baseline (all reachable, complete RBAC)", allowlist_fn="all_allowed", rbac_fn="complete"),
-    ExperimentConfig("A0c", "A", "Baseline (all reachable, production RBAC)", allowlist_fn="all_allowed"),
-    ExperimentConfig("A1", "A", "No identity/transport gate", bypass_pre_llm=True, rbac_fn="complete"),
-    ExperimentConfig("A2", "A", "No identity + No RBAC", bypass_pre_llm=True, rbac_fn="open"),
-    ExperimentConfig("A3", "A", "TS-PHOL only", bypass_pre_llm=True, rbac_fn="open", abac_fn="open"),
-    ExperimentConfig("A4", "A", "RBAC only (complete)", bypass_pre_llm=True, rbac_fn="complete", abac_fn="open", tsphol_fn="open"),
-    ExperimentConfig("A4b", "A", "RBAC only (production)", bypass_pre_llm=True, abac_fn="open", tsphol_fn="open"),
-    ExperimentConfig("A5", "A", "ABAC only", bypass_pre_llm=True, rbac_fn="open", tsphol_fn="abac_passthrough"),
-    ExperimentConfig("A6", "A", "No security (all open)", bypass_pre_llm=True, rbac_fn="open", abac_fn="open", tsphol_fn="open"),
-    # Group B: TS-PHOL vs ABAC
-    ExperimentConfig("B1", "B", "Full pipeline (TS-PHOL authority)", allowlist_fn="all_allowed", rbac_fn="complete"),
-    ExperimentConfig("B2", "B", "ABAC as de-facto authority (TS-PHOL off)", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="abac_passthrough"),
-    ExperimentConfig("B3", "B", "TS-PHOL without ABAC input", allowlist_fn="all_allowed", rbac_fn="complete", abac_fn="open"),
-    # Group C: TS-PHOL Sensitivity
-    ExperimentConfig("C1", "C", "TS-PHOL Relaxed", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="relaxed"),
-    ExperimentConfig("C2", "C", "TS-PHOL Production (baseline)", allowlist_fn="all_allowed", rbac_fn="complete"),
-    ExperimentConfig("C3", "C", "TS-PHOL Strict", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="strict"),
-    ExperimentConfig("C4", "C", "TS-PHOL Minimal (3 rules)", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="minimal"),
-    # Group D: ABAC Sensitivity
-    ExperimentConfig("D1", "D", "ABAC Open", allowlist_fn="all_allowed", rbac_fn="complete", abac_fn="open"),
-    ExperimentConfig("D2", "D", "ABAC Production (baseline)", allowlist_fn="all_allowed", rbac_fn="complete"),
-    ExperimentConfig("D3", "D", "ABAC Strict", allowlist_fn="all_allowed", rbac_fn="complete", abac_fn="strict"),
-    ExperimentConfig("D4", "D", "ABAC Extreme", allowlist_fn="all_allowed", rbac_fn="complete", abac_fn="extreme"),
-    # Group E: Leave-One-Rule-Out
-    ExperimentConfig("E1", "E", "No low_confidence_write_prevention", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="no_confidence_write"),
-    ExperimentConfig("E2", "E", "No high_risk_write_confidence", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="no_high_risk_conf"),
-    ExperimentConfig("E3", "E", "No hard_capability_violation", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="no_hard_cap"),
-    ExperimentConfig("E4", "E", "No destructive_write_prevention", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="no_destructive"),
-    ExperimentConfig("E5", "E", "No domain_mismatch", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="no_domain_mismatch"),
-    ExperimentConfig("E6", "E", "No ABAC propagation rule", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="no_abac_prop"),
-    # Group F: Confidence Sweep
-    ExperimentConfig("F1", "F", "Confidence sweep 0.50/0.60", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="conf_050_060"),
-    ExperimentConfig("F2", "F", "Confidence sweep 0.60/0.70", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="conf_060_070"),
-    ExperimentConfig("F3", "F", "Confidence sweep 0.70/0.80", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="conf_070_080"),
-    ExperimentConfig("F4", "F", "Confidence sweep 0.80/0.90", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="conf_080_090"),
-    ExperimentConfig("F5", "F", "Confidence sweep 0.90/0.95", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="conf_090_095"),
-    # Group G: Best Combined
-    ExperimentConfig("G1", "G", "Minimal TS-PHOL + production ABAC", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="minimal"),
-    ExperimentConfig("G2", "G", "Relaxed TS-PHOL + strict ABAC", allowlist_fn="all_allowed", rbac_fn="complete", tsphol_fn="relaxed", abac_fn="strict"),
+    # E1: Full pipeline on correct tasks — baseline governance accuracy
+    ExperimentConfig("E1", "E1",
+                     "Correct tasks × full pipeline — baseline governance accuracy",
+                     match_tag_filter="correct"),
+
+    # E2: Full pipeline on wrong tasks — catches bad bundles
+    ExperimentConfig("E2", "E2",
+                     "Wrong tasks × full pipeline — governance catches bad bundles",
+                     match_tag_filter="wrong"),
+
+    # E3: RBAC-only ablation — open ABAC + open TS-PHOL
+    ExperimentConfig("E3", "E3",
+                     "Correct tasks × RBAC-only — ablation showing RBAC alone",
+                     match_tag_filter="correct",
+                     abac_fn="open", tsphol_fn="open"),
+
+    # E4: RBAC+ABAC ablation — TS-PHOL only propagates ABAC denial (no other rules)
+    ExperimentConfig("E4", "E4",
+                     "Correct tasks × RBAC+ABAC — ablation showing incremental ABAC value",
+                     match_tag_filter="correct",
+                     tsphol_fn="abac_passthrough"),
 ]
 
 EXPERIMENT_MAP: Dict[str, ExperimentConfig] = {e.name: e for e in EXPERIMENTS}
@@ -420,22 +399,31 @@ EXPERIMENT_MAP: Dict[str, ExperimentConfig] = {e.name: e for e in EXPERIMENTS}
 # LLM output simulation
 # ═══════════════════════════════════════════════════════════════════════
 
-def simulate_llm_output(task: dict, mode: str = "selection", seed_extra: str = "") -> dict:
+def simulate_llm_output(task, mode: str = "selection", seed_extra: str = "") -> dict:
     """Deterministic LLM simulation — no API calls, seeded by task content."""
-    tools = task["input"]["tools"]
-    mcps = task["input"]["mcp_servers"]
+    # Support both raw dicts and AstraTask objects
+    if isinstance(task, dict):
+        tools = task["input"]["tools"]
+        mcps = task["input"]["mcp_servers"]
+        task_text = task["input"]["task"]
+        match_tag = task.get("match_tag", "null")
+    else:
+        tools = task.candidate_tools
+        mcps = task.candidate_mcp
+        task_text = task.task
+        match_tag = getattr(task, "match_tag", "null")
 
     # Task-intrinsic confidence (no label leakage)
     tool_count_signal = max(0.0, 1.0 - len(tools) * 0.05)
     unique_mcps = len(set(mcps)) if mcps else 1
     mcp_consistency = 1.0 if unique_mcps == 1 else 0.7
-    task_len = len(task["input"]["task"])
+    task_len = len(task_text)
     specificity = min(1.0, task_len / 200.0)
 
     raw_signal = 0.4 * tool_count_signal + 0.3 * mcp_consistency + 0.3 * specificity
     base_confidence = 0.55 + 0.40 * raw_signal
 
-    seed_str = task["input"]["task"][:100] + seed_extra
+    seed_str = task_text[:100] + seed_extra
     seed_val = int(hashlib.sha256(seed_str.encode()).hexdigest()[:8], 16)
     rng = _random_mod.Random(seed_val)
     noise = rng.gauss(0, 0.06)
@@ -444,14 +432,13 @@ def simulate_llm_output(task: dict, mode: str = "selection", seed_extra: str = "
     base_out = {
         "selected_tools": tools,
         "selected_mcps": mcps,
-        "justification": f"Simulated {mode} for task: {task['input']['task'][:80]}...",
+        "justification": f"Simulated {mode} for task: {task_text[:80]}...",
         "confidence": confidence,
         "id_source": "Simulation",
         "expected_domain": normalize_mcp_name(mcps[0]) if mcps else "uncertain",
     }
 
     if mode == "validation":
-        match_tag = task.get("match_tag", "null")
         is_correct = match_tag == "correct"
         # Validation-specific fields
         base_out["is_valid"] = is_correct if confidence > 0.6 else False

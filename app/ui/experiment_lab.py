@@ -1,16 +1,19 @@
 """
-Experiment Lab — batch experiment execution UI.
+Experiment Lab — batch experiment execution and access decision matrix explorer.
 
-Allows users to select experiment configurations, choose selection or
-validation mode, run batch evaluations, and view results with metrics,
-breakdowns, and comparisons.
+Two main sections:
+1. Experiment Runner — execute E1/E2 configurations and view results
+2. Access Decision Matrix — explore pre-computed ground truth governance decisions
 """
 
+import os
+import json
+import hashlib
 import streamlit as st
 import pandas as pd
-import json
 from dataclasses import asdict
 from typing import List, Dict
+from collections import Counter, defaultdict
 
 from app.services.experiment_config import (
     EXPERIMENTS, EXPERIMENT_MAP, EXPERIMENT_GROUPS,
@@ -21,80 +24,138 @@ from app.services.experiment_runner import (
     ExperimentMetrics, RunResult,
 )
 
+MATRIX_PATH = os.path.join("datasets", "access_decision_matrix.json")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Cache helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+@st.cache_data
+def _load_matrix():
+    """Load the access decision matrix from disk (cached)."""
+    if not os.path.exists(MATRIX_PATH):
+        return None
+    with open(MATRIX_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _current_policy_hashes() -> Dict[str, str]:
+    """Compute current policy file hashes for staleness detection."""
+    policy_files = ["rbac.yaml", "abac_rules.yaml", "tsphol_rules.yaml",
+                    "domain_capability_ontology.json"]
+    hashes = {}
+    for pf in policy_files:
+        path = os.path.join("policies", pf)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                hashes[pf] = hashlib.sha256(f.read()).hexdigest()[:12]
+    return hashes
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Main entry point
+# ═══════════════════════════════════════════════════════════════════════
 
 def render_experiment_lab(tasks, personas):
     st.title("🧪 Experiment Lab")
     st.markdown(
-        "Run batch experiments across all personas and tasks using different "
-        "security configurations. Results are deterministic (simulated LLM, no API key required)."
+        "Run governance experiments and explore the pre-computed Access Decision Matrix "
+        "that maps every *(persona × task)* combination through the full policy pipeline."
     )
 
-    # ── Sidebar-like config area ──
-    col_cfg, col_results = st.columns([1, 3])
+    tab_runner, tab_matrix = st.tabs([
+        "🚀 Experiment Runner",
+        "📊 Access Decision Matrix",
+    ])
 
-    with col_cfg:
-        st.subheader("Configuration")
+    with tab_runner:
+        _render_experiment_runner(tasks, personas)
 
-        # Group selector
-        group_options = ["All Groups"] + [f"Group {g}: {d[:40]}" for g, d in EXPERIMENT_GROUPS.items()]
-        selected_group_display = st.selectbox("Experiment Group", group_options)
+    with tab_matrix:
+        _render_matrix_explorer()
 
-        if selected_group_display == "All Groups":
-            available_configs = EXPERIMENTS
-        else:
-            group_letter = selected_group_display.split(":")[0].replace("Group ", "").strip()
-            available_configs = [e for e in EXPERIMENTS if e.group == group_letter]
 
-        # Config selector
-        config_options = ["Run All"] + [f"{e.name}: {e.description}" for e in available_configs]
-        selected_config_display = st.selectbox("Configuration", config_options)
+# ═══════════════════════════════════════════════════════════════════════
+# Tab 1 — Experiment Runner
+# ═══════════════════════════════════════════════════════════════════════
 
-        if selected_config_display == "Run All":
-            configs_to_run = available_configs
-        else:
-            config_name = selected_config_display.split(":")[0].strip()
-            configs_to_run = [EXPERIMENT_MAP[config_name]]
+def _render_experiment_runner(tasks, personas):
+    st.markdown("### Experiment Configurations")
+    st.markdown(
+        "Each experiment runs all **6 personas** through the governance pipeline "
+        "on a filtered task set. E1–E2 test the full pipeline; E3–E4 are **ablation** "
+        "experiments that selectively disable layers to measure incremental value."
+    )
 
-        # Mode selector
-        mode = st.radio("Experiment Mode", ["Selection (LLM-ResM)", "Validation"], horizontal=True)
+    # ── Experiment cards — 2×2 grid ──
+    col_top1, col_top2 = st.columns(2)
+    col_bot1, col_bot2 = st.columns(2)
+    card_cols = [col_top1, col_top2, col_bot1, col_bot2]
+
+    for col, cfg in zip(card_cols, EXPERIMENTS):
+        with col:
+            tag = cfg.match_tag_filter or "all"
+            tag_count = sum(
+                1 for t in tasks
+                if (getattr(t, "match_tag", None) or "null") == tag
+            ) if cfg.match_tag_filter else len(tasks)
+            total_evals = len(PERSONAS) * tag_count
+
+            # Highlight ablation experiments
+            is_ablation = cfg.abac_fn != "production" or cfg.tsphol_fn != "production"
+            label = f"#### {cfg.name} {'🔬' if is_ablation else '🛡️'}"
+            st.markdown(label)
+            st.markdown(cfg.description)
+
+            # Show which layers are active/disabled
+            layers = []
+            layers.append(f"RBAC: `{cfg.rbac_fn}`")
+            abac_label = f"~~ABAC~~ `off`" if cfg.abac_fn == "open" else f"ABAC: `{cfg.abac_fn}`"
+            tsphol_label = f"~~TS-PHOL~~ `off`" if cfg.tsphol_fn in ("open", "abac_passthrough") else f"TS-PHOL: `{cfg.tsphol_fn}`"
+            layers.append(abac_label)
+            layers.append(tsphol_label)
+
+            st.caption(
+                f"**Filter:** `{tag}` · **Tasks:** {tag_count:,} · "
+                f"**Evals:** {total_evals:,}"
+            )
+            st.caption(" · ".join(layers))
+
+    st.markdown("---")
+
+    # ── Run controls ──
+    col_sel, col_mode, col_btn = st.columns([2, 2, 1])
+    with col_sel:
+        run_choice = st.selectbox(
+            "Select Experiment",
+            ["Run All (E1–E4)", "Run E1 + E2 (Full Pipeline)", "Run E3 + E4 (Ablation)"]
+            + [f"{e.name}: {e.description[:50]}" for e in EXPERIMENTS],
+        )
+    with col_mode:
+        mode = st.radio("Mode", ["Selection (LLM-ResM)", "Validation"], horizontal=True)
         mode_str = "selection" if mode.startswith("Selection") else "validation"
+    with col_btn:
+        st.write("")  # spacing
+        run_clicked = st.button("🚀 Run", type="primary", use_container_width=True)
 
-        st.markdown("---")
+    if run_choice == "Run All (E1–E4)":
+        configs_to_run = list(EXPERIMENTS)
+    elif run_choice == "Run E1 + E2 (Full Pipeline)":
+        configs_to_run = [e for e in EXPERIMENTS if e.name in ("E1", "E2")]
+    elif run_choice == "Run E3 + E4 (Ablation)":
+        configs_to_run = [e for e in EXPERIMENTS if e.name in ("E3", "E4")]
+    else:
+        cname = run_choice.split(":")[0].strip()
+        configs_to_run = [EXPERIMENT_MAP[cname]]
 
-        # Show config details
-        if len(configs_to_run) == 1:
-            cfg = configs_to_run[0]
-            st.markdown(f"**{cfg.name}**: {cfg.description}")
-            policies = cfg.get_policies()
-            with st.expander("Policy Settings", expanded=False):
-                st.markdown(f"- **Pre-LLM bypass**: {cfg.bypass_pre_llm}")
-                st.markdown(f"- **Registry**: {cfg.registry_fn}")
-                st.markdown(f"- **Allowlist**: {cfg.allowlist_fn}")
-                st.markdown(f"- **RBAC**: {cfg.rbac_fn}")
-                st.markdown(f"- **ABAC**: {cfg.abac_fn} ({len(policies['abac'].get('rules', []))} rules)")
-                st.markdown(f"- **TS-PHOL**: {cfg.tsphol_fn} ({len(policies['tsphol'].get('rules', []))} rules)")
-        else:
-            st.info(f"Will run **{len(configs_to_run)}** configurations")
-
-        # Task/persona counts
-        active_personas = [k for k in PERSONAS if k != "security_engine"]
-        total_evals = len(active_personas) * len(tasks) * len(configs_to_run)
-        st.metric("Total Evaluations", f"{total_evals:,}")
-        st.caption(f"{len(active_personas)} personas × {len(tasks):,} tasks × {len(configs_to_run)} configs")
-
-        # Run button
-        run_clicked = st.button("🚀 Run Experiment", type="primary", use_container_width=True)
-
-    with col_results:
-        st.subheader("Results")
-
-        if run_clicked:
-            _run_and_display(configs_to_run, tasks, personas, mode_str)
-        elif "experiment_results" in st.session_state:
-            _display_results(st.session_state["experiment_results"])
-        else:
-            st.info("Select a configuration and click **Run Experiment** to begin.")
-            _show_experiment_overview()
+    # ── Results area ──
+    if run_clicked:
+        _run_and_display(configs_to_run, tasks, personas, mode_str)
+    elif "experiment_results" in st.session_state:
+        _display_results(st.session_state["experiment_results"])
+    else:
+        st.info("Select a configuration and click **Run** to begin.")
 
 
 def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
@@ -108,7 +169,7 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
 
     total_configs = len(configs)
     for cfg_idx, config in enumerate(configs):
-        status_text.text(f"Running {config.name}: {config.description}...")
+        status_text.text(f"Running {config.name}: {config.description[:60]}...")
 
         def progress_cb(pct):
             overall = (cfg_idx + pct) / total_configs
@@ -122,13 +183,11 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
     progress_bar.progress(1.0, text="Complete!")
     status_text.text(f"✅ Completed {total_configs} experiment(s) in {mode} mode")
 
-    # Store in session state
     st.session_state["experiment_results"] = {
         "metrics": all_metrics,
         "results": all_results,
         "mode": mode,
     }
-
     _display_results(st.session_state["experiment_results"])
 
 
@@ -142,13 +201,12 @@ def _display_results(data: dict):
         st.warning("No results to display.")
         return
 
-    # ── Summary metrics table ──
+    # ── Summary metrics ──
     st.markdown("### 📊 Summary Metrics")
     rows = []
     for m in metrics_list:
         rows.append({
             "Config": m.name,
-            "Description": m.description[:45],
             "Total": m.total,
             "F₁": f"{m.f1:.4f}",
             "Precision": f"{m.precision:.4f}",
@@ -161,111 +219,117 @@ def _display_results(data: dict):
             "FP": m.false_positive,
             "FN": m.false_negative,
         })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    # ── Denial source ──
+    st.markdown("### 🔒 Denial Source Attribution")
+    denial_rows = []
+    for m in metrics_list:
+        denial_rows.append({
+            "Config": m.name,
+            "Identity": m.identity_denials,
+            "Transport": m.transport_denials,
+            "RBAC": m.rbac_denials,
+            "ABAC": m.abac_denials,
+            "TS-PHOL": m.tsphol_denials,
+        })
+    st.dataframe(pd.DataFrame(denial_rows), use_container_width=True, hide_index=True)
 
-    # ── Denial source breakdown ──
-    if len(metrics_list) > 0:
-        st.markdown("### 🔒 Denial Source Attribution")
-        denial_rows = []
-        for m in metrics_list:
-            denial_rows.append({
-                "Config": m.name,
-                "Identity": m.identity_denials,
-                "Transport": m.transport_denials,
-                "RBAC": m.rbac_denials,
-                "ABAC": m.abac_denials,
-                "TS-PHOL": m.tsphol_denials,
-                "Other": m.other_denials,
-            })
-        df_denial = pd.DataFrame(denial_rows)
-        st.dataframe(df_denial, use_container_width=True, hide_index=True)
-
-    # ── Per-config detail view ──
-    if len(results_dict) > 0:
+    # ── Detail view ──
+    if results_dict:
         st.markdown("### 🔍 Detail View")
-        selected_detail = st.selectbox(
-            "Select configuration for detailed breakdown",
-            list(results_dict.keys()),
-        )
-
+        selected_detail = st.selectbox("Configuration", list(results_dict.keys()))
         if selected_detail and selected_detail in results_dict:
             detail_results = results_dict[selected_detail]
-
-            tab_domain, tab_persona, tab_raw = st.tabs(
-                ["Per-Domain Breakdown", "Per-Persona Breakdown", "Raw Results"]
+            tab_persona, tab_domain, tab_raw = st.tabs(
+                ["Per-Persona", "Per-Domain", "Raw Results"]
             )
-
-            with tab_domain:
-                breakdown = compute_domain_breakdown(detail_results)
-                domain_rows = []
-                for domain, stats in breakdown.items():
-                    domain_rows.append({
-                        "Domain": domain,
-                        "Total": stats["total"],
-                        "TP": stats["TP"],
-                        "TN": stats["TN"],
-                        "FP": stats["FP"],
-                        "FN": stats["FN"],
-                        "F₁": f"{stats['f1']:.4f}",
-                        "Precision": f"{stats['precision']:.4f}",
-                        "Recall": f"{stats['recall']:.4f}",
-                    })
-                st.dataframe(pd.DataFrame(domain_rows), use_container_width=True, hide_index=True)
 
             with tab_persona:
                 persona_groups = {}
                 for r in detail_results:
                     persona_groups.setdefault(r.persona, []).append(r)
-
-                persona_rows = []
-                for persona, p_results in sorted(persona_groups.items()):
-                    tp = sum(1 for r in p_results if not r.is_legitimate and r.final_decision in ("DENY", "DECEPTION_ROUTED"))
-                    tn = sum(1 for r in p_results if r.is_legitimate and r.final_decision == "ALLOW")
-                    fp = sum(1 for r in p_results if r.is_legitimate and r.final_decision in ("DENY", "DECEPTION_ROUTED"))
-                    fn = sum(1 for r in p_results if not r.is_legitimate and r.final_decision == "ALLOW")
+                prows = []
+                for persona, pr in sorted(persona_groups.items()):
+                    tp = sum(1 for r in pr if not r.is_legitimate and r.final_decision in ("DENY", "DECEPTION_ROUTED"))
+                    tn = sum(1 for r in pr if r.is_legitimate and r.final_decision == "ALLOW")
+                    fp = sum(1 for r in pr if r.is_legitimate and r.final_decision in ("DENY", "DECEPTION_ROUTED"))
+                    fn = sum(1 for r in pr if not r.is_legitimate and r.final_decision == "ALLOW")
                     p = tp / (tp + fp) if (tp + fp) > 0 else 0.0
                     rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
                     f1 = 2 * p * rec / (p + rec) if (p + rec) > 0 else 0.0
-                    persona_rows.append({
+                    prows.append({
                         "Persona": PERSONAS.get(persona, {}).get("display_name", persona),
-                        "Total": len(p_results),
-                        "F₁": f"{f1:.4f}",
-                        "Precision": f"{p:.4f}",
-                        "Recall": f"{rec:.4f}",
+                        "Total": len(pr), "F₁": f"{f1:.4f}",
                         "TP": tp, "TN": tn, "FP": fp, "FN": fn,
                     })
-                st.dataframe(pd.DataFrame(persona_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(prows), use_container_width=True, hide_index=True)
+
+            with tab_domain:
+                breakdown = compute_domain_breakdown(detail_results)
+                drows = []
+                for domain, stats in breakdown.items():
+                    drows.append({
+                        "Domain": domain, "Total": stats["total"],
+                        "F₁": f"{stats['f1']:.4f}",
+                        "TP": stats["TP"], "TN": stats["TN"],
+                        "FP": stats["FP"], "FN": stats["FN"],
+                    })
+                st.dataframe(pd.DataFrame(drows), use_container_width=True, hide_index=True)
 
             with tab_raw:
                 raw_rows = [asdict(r) for r in detail_results[:500]]
-                df_raw = pd.DataFrame(raw_rows)
-                st.dataframe(df_raw, use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(raw_rows), use_container_width=True, hide_index=True)
                 st.caption(f"Showing first 500 of {len(detail_results)} results")
 
-    # ── Comparison view ──
+    # ── Comparison ──
     if len(metrics_list) >= 2:
-        st.markdown("### ⚖️ Configuration Comparison")
-        compare_options = [m.name for m in metrics_list]
-        selected_compare = st.multiselect("Select configs to compare", compare_options,
-                                           default=compare_options[:min(4, len(compare_options))])
+        st.markdown("### ⚖️ Experiment Comparison")
 
-        if len(selected_compare) >= 2:
-            compare_data = []
-            for m in metrics_list:
-                if m.name in selected_compare:
-                    compare_data.append({
-                        "Config": m.name,
-                        "F₁": m.f1,
-                        "Precision": m.precision,
-                        "Recall": m.recall,
-                        "SecFail": m.security_failure_rate,
-                    })
-            df_compare = pd.DataFrame(compare_data).set_index("Config")
-            st.bar_chart(df_compare)
+        compare_data = []
+        for m in metrics_list:
+            compare_data.append({
+                "Config": m.name,
+                "F₁": m.f1,
+                "Precision": m.precision,
+                "Recall": m.recall,
+                "Security Failure Rate": m.security_failure_rate,
+            })
+        df_compare = pd.DataFrame(compare_data).set_index("Config")
+        st.bar_chart(df_compare)
 
-    # ── CSV export ──
+        # Ablation delta table (E1 vs E3, E1 vs E4)
+        metrics_by_name = {m.name: m for m in metrics_list}
+        e1 = metrics_by_name.get("E1")
+        ablation_pairs = [
+            ("E3", "RBAC-only (no ABAC, no TS-PHOL)"),
+            ("E4", "RBAC+ABAC (no TS-PHOL)"),
+        ]
+        has_ablation = e1 and any(n in metrics_by_name for n, _ in ablation_pairs)
+        if has_ablation:
+            st.markdown("##### 🔬 Ablation: Incremental Layer Value")
+            st.caption(
+                "Compares each ablation experiment against E1 (full pipeline) on correct tasks. "
+                "Δ shows the difference — negative security failure rate is better."
+            )
+            delta_rows = []
+            for abl_name, abl_desc in ablation_pairs:
+                abl = metrics_by_name.get(abl_name)
+                if not abl:
+                    continue
+                delta_rows.append({
+                    "Comparison": f"E1 vs {abl_name}",
+                    "Ablation": abl_desc,
+                    "E1 ALLOW": e1.allow_count,
+                    f"{abl_name} ALLOW": abl.allow_count,
+                    "Δ ALLOW": abl.allow_count - e1.allow_count,
+                    "E1 SecFail": f"{e1.security_failure_rate:.4f}",
+                    f"{abl_name} SecFail": f"{abl.security_failure_rate:.4f}",
+                    "Δ SecFail": f"{abl.security_failure_rate - e1.security_failure_rate:+.4f}",
+                })
+            st.dataframe(pd.DataFrame(delta_rows), use_container_width=True, hide_index=True)
+
+    # ── Export ──
     st.markdown("### 💾 Export")
     col_exp1, col_exp2 = st.columns(2)
     with col_exp1:
@@ -274,29 +338,432 @@ def _display_results(data: dict):
     with col_exp2:
         if results_dict:
             all_raw = []
-            for config_name, results in results_dict.items():
-                all_raw.extend(asdict(r) for r in results)
+            for cn, rl in results_dict.items():
+                all_raw.extend(asdict(r) for r in rl)
             raw_csv = pd.DataFrame(all_raw).to_csv(index=False)
-            st.download_button("Download Raw Results CSV", raw_csv, "experiment_results.csv", "text/csv")
+            st.download_button("Download Raw CSV", raw_csv, "experiment_results.csv", "text/csv")
 
 
-def _show_experiment_overview():
-    """Show overview of available experiment groups."""
-    st.markdown("### Available Experiment Groups")
+# ═══════════════════════════════════════════════════════════════════════
+# Tab 2 — Access Decision Matrix Explorer
+# ═══════════════════════════════════════════════════════════════════════
 
-    for group, desc in EXPERIMENT_GROUPS.items():
-        configs = [e for e in EXPERIMENTS if e.group == group]
-        with st.expander(f"**Group {group}**: {desc}", expanded=False):
-            for cfg in configs:
-                st.markdown(f"- **{cfg.name}**: {cfg.description}")
-                details = []
-                if cfg.bypass_pre_llm:
-                    details.append("bypass pre-LLM")
-                if cfg.rbac_fn != "production":
-                    details.append(f"RBAC={cfg.rbac_fn}")
-                if cfg.abac_fn != "production":
-                    details.append(f"ABAC={cfg.abac_fn}")
-                if cfg.tsphol_fn != "production":
-                    details.append(f"TS-PHOL={cfg.tsphol_fn}")
-                if details:
-                    st.caption("  " + " · ".join(details))
+def _render_matrix_explorer():
+    data = _load_matrix()
+    if data is None:
+        st.warning(
+            "Access Decision Matrix not found. Run `python scripts/generate_access_matrix.py` "
+            "to generate it."
+        )
+        return
+
+    metadata = data["metadata"]
+    summary = data["summary"]
+    matrix = data["matrix"]
+
+    # ── Staleness check ──
+    stored_hashes = metadata.get("policy_versions", {})
+    current_hashes = _current_policy_hashes()
+    is_stale = stored_hashes != current_hashes
+    if is_stale:
+        st.warning(
+            "⚠️ **Stale Matrix** — Policy files have changed since this matrix was generated. "
+            "Re-run `python scripts/generate_access_matrix.py` to update.",
+            icon="⚠️",
+        )
+
+    # ── Header info ──
+    st.markdown("### Selection-Mode Production Baseline")
+    st.caption(
+        "This matrix was generated by running every *(persona × task)* combination through "
+        "the full governance pipeline with production policies in **selection mode**. "
+        "It serves as the ground truth for validating experiment results."
+    )
+
+    # ── KPI row ──
+    total = summary["total"]
+    allow = summary.get("final_ALLOW", 0)
+    deny = summary.get("final_DENY", 0)
+    deception = summary.get("final_DECEPTION_ROUTED", 0)
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Total Rows", f"{total:,}")
+    k2.metric("ALLOW", f"{allow:,}", f"{allow*100/total:.1f}%")
+    k3.metric("DENY", f"{deny:,}", f"{deny*100/total:.1f}%")
+    k4.metric("DECEPTION", f"{deception:,}", f"{deception*100/total:.1f}%")
+    k5.metric("Personas × Tasks", f"{metadata['personas']} × {metadata['tasks']:,}")
+
+    st.markdown("---")
+
+    # ── Sub-tabs for different views ──
+    sub_waterfall, sub_heatmap, sub_persona, sub_browse = st.tabs([
+        "🔽 Governance Waterfall",
+        "🗺️ Persona × Layer Heatmap",
+        "👤 Per-Persona Deep Dive",
+        "🔍 Browse & Filter",
+    ])
+
+    # ── Governance Waterfall ──
+    with sub_waterfall:
+        _render_waterfall(matrix)
+
+    # ── Persona × Layer Heatmap ──
+    with sub_heatmap:
+        _render_heatmap(matrix)
+
+    # ── Per-Persona Deep Dive ──
+    with sub_persona:
+        _render_persona_dive(matrix)
+
+    # ── Browse & Filter ──
+    with sub_browse:
+        _render_browse(matrix)
+
+    # ── Policy Fingerprints ──
+    st.markdown("---")
+    with st.expander("📋 Policy Fingerprints", expanded=False):
+        st.caption(
+            "Partial SHA-256 hashes of the policy files used to generate this matrix. "
+            "If current hashes differ, the matrix is stale."
+        )
+        fp_rows = []
+        for pf, h in stored_hashes.items():
+            curr = current_hashes.get(pf, "—")
+            match = "✅" if h == curr else "❌"
+            fp_rows.append({"File": pf, "Matrix Hash": h, "Current Hash": curr, "Match": match})
+        st.dataframe(pd.DataFrame(fp_rows), use_container_width=True, hide_index=True)
+        st.caption(f"Dataset: `{metadata.get('dataset', 'N/A')}`")
+
+
+def _render_waterfall(matrix: list):
+    """Governance layer waterfall showing how tasks flow through each gate."""
+    st.markdown("#### Governance Layer Waterfall")
+    st.caption(
+        "Shows how evaluations flow through each governance layer. "
+        "Tasks are blocked at the first DENY and do not reach subsequent layers."
+    )
+
+    # ── Optional persona filter ──
+    persona_filter = st.selectbox(
+        "Filter by Persona",
+        ["All Personas"] + [PERSONAS[k]["display_name"] for k in sorted(PERSONAS)],
+        key="waterfall_persona",
+    )
+
+    if persona_filter != "All Personas":
+        pkey = next(k for k, v in PERSONAS.items() if v["display_name"] == persona_filter)
+        rows = [r for r in matrix if r["persona"] == pkey]
+    else:
+        rows = matrix
+
+    total = len(rows)
+    layers = [
+        ("Identity", "expected_identity"),
+        ("Transport", "expected_transport"),
+        ("RBAC", "expected_rbac"),
+        ("ABAC", "expected_abac"),
+        ("TS-PHOL", "expected_tsphol"),
+    ]
+
+    waterfall_data = []
+    surviving = total
+    for layer_name, key in layers:
+        passed = sum(1 for r in rows if r[key] == "ALLOW")
+        blocked = sum(1 for r in rows if r[key] == "DENY")
+        not_eval = sum(1 for r in rows if r[key] == "NOT_EVALUATED")
+        waterfall_data.append({
+            "Layer": layer_name,
+            "Passed ✅": passed,
+            "Blocked Here 🛑": blocked,
+            "Not Evaluated ⏭️": not_eval,
+        })
+        surviving -= blocked
+
+    st.dataframe(pd.DataFrame(waterfall_data), use_container_width=True, hide_index=True)
+
+    # Funnel bar chart
+    funnel_data = []
+    remaining = total
+    funnel_data.append({"Stage": "Entered", "Count": remaining})
+    for layer_name, key in layers:
+        blocked = sum(1 for r in rows if r[key] == "DENY")
+        remaining -= blocked
+        funnel_data.append({"Stage": f"After {layer_name}", "Count": remaining})
+    df_funnel = pd.DataFrame(funnel_data).set_index("Stage")
+    st.bar_chart(df_funnel)
+
+    # Denial source attribution (first_deny_layer)
+    st.markdown("##### First Deny Layer Attribution")
+    deny_counter = Counter(r["first_deny_layer"] for r in rows if r["first_deny_layer"])
+    if deny_counter:
+        dc_rows = [{"Layer": k, "Count": v, "% of Total": f"{v*100/total:.1f}%"}
+                   for k, v in deny_counter.most_common()]
+        st.dataframe(pd.DataFrame(dc_rows), use_container_width=True, hide_index=True)
+
+    # Defense-in-depth (all_deny_layers)
+    st.markdown("##### Defense-in-Depth (All Layers That Would Deny)")
+    all_deny = Counter()
+    for r in rows:
+        for dl in r.get("all_deny_layers", []):
+            all_deny[dl] += 1
+    if all_deny:
+        ad_rows = [{"Layer": k, "Would Deny": v} for k, v in all_deny.most_common()]
+        st.dataframe(pd.DataFrame(ad_rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "Even if a task is blocked early (e.g., by RBAC), later layers may have also "
+            "denied it. This shows the total defense-in-depth coverage."
+        )
+
+
+def _render_heatmap(matrix: list):
+    """Persona × governance layer heatmap."""
+    st.markdown("#### Persona × Governance Outcome")
+    st.caption(
+        "Each cell shows `Passed / Blocked / Not Evaluated` for that persona at each layer."
+    )
+
+    layers = [
+        ("Identity", "expected_identity"),
+        ("Transport", "expected_transport"),
+        ("RBAC", "expected_rbac"),
+        ("ABAC", "expected_abac"),
+        ("TS-PHOL", "expected_tsphol"),
+        ("Final", "expected_final"),
+    ]
+
+    heatmap_rows = []
+    for pkey in sorted(PERSONAS):
+        pdata = PERSONAS[pkey]
+        prows = [r for r in matrix if r["persona"] == pkey]
+        total = len(prows)
+        row = {"Persona": pdata["display_name"]}
+        for lname, lkey in layers:
+            if lname == "Final":
+                allow = sum(1 for r in prows if r[lkey] == "ALLOW")
+                deny = sum(1 for r in prows if r[lkey] == "DENY")
+                dec = sum(1 for r in prows if r[lkey] == "DECEPTION_ROUTED")
+                row[lname] = f"✅{allow} 🛑{deny} 🪤{dec}"
+            else:
+                passed = sum(1 for r in prows if r[lkey] == "ALLOW")
+                blocked = sum(1 for r in prows if r[lkey] == "DENY")
+                not_eval = sum(1 for r in prows if r[lkey] == "NOT_EVALUATED")
+                row[lname] = f"✅{passed} 🛑{blocked} ⏭️{not_eval}"
+        heatmap_rows.append(row)
+
+    st.dataframe(pd.DataFrame(heatmap_rows), use_container_width=True, hide_index=True)
+
+    # Numeric summary for bar chart
+    st.markdown("##### Final Decision Distribution by Persona")
+    bar_rows = []
+    for pkey in sorted(PERSONAS):
+        prows = [r for r in matrix if r["persona"] == pkey]
+        bar_rows.append({
+            "Persona": PERSONAS[pkey]["display_name"],
+            "ALLOW": sum(1 for r in prows if r["expected_final"] == "ALLOW"),
+            "DENY": sum(1 for r in prows if r["expected_final"] == "DENY"),
+            "DECEPTION": sum(1 for r in prows if r["expected_final"] == "DECEPTION_ROUTED"),
+        })
+    df_bar = pd.DataFrame(bar_rows).set_index("Persona")
+    st.bar_chart(df_bar)
+
+
+def _render_persona_dive(matrix: list):
+    """Deep dive into a single persona's governance outcomes."""
+    st.markdown("#### Per-Persona Deep Dive")
+
+    persona_sel = st.selectbox(
+        "Select Persona",
+        [PERSONAS[k]["display_name"] for k in sorted(PERSONAS)],
+        key="persona_dive_sel",
+    )
+    pkey = next(k for k, v in PERSONAS.items() if v["display_name"] == persona_sel)
+    prows = [r for r in matrix if r["persona"] == pkey]
+    total = len(prows)
+
+    # Domain breakdown
+    st.markdown("##### Domain Breakdown")
+    domain_groups = defaultdict(list)
+    for r in prows:
+        domain_groups[r["task_domain"]].append(r)
+
+    domain_rows = []
+    for domain in sorted(domain_groups):
+        dr = domain_groups[domain]
+        allow = sum(1 for r in dr if r["expected_final"] == "ALLOW")
+        deny = sum(1 for r in dr if r["expected_final"] == "DENY")
+        dec = sum(1 for r in dr if r["expected_final"] == "DECEPTION_ROUTED")
+        authorized = domain in LEGITIMATE_PAIRINGS.get(pkey, set())
+        domain_rows.append({
+            "Domain": domain,
+            "Authorized": "✅" if authorized else "❌",
+            "Tasks": len(dr),
+            "ALLOW": allow,
+            "DENY": deny,
+            "DECEPTION": dec,
+            "Allow Rate": f"{allow*100/len(dr):.0f}%" if dr else "—",
+        })
+    st.dataframe(pd.DataFrame(domain_rows), use_container_width=True, hide_index=True)
+
+    # RBAC-pass / ABAC-fail zone
+    abac_only = [r for r in prows if r["expected_rbac"] == "ALLOW" and r["expected_abac"] == "DENY"]
+    if abac_only:
+        st.markdown("##### RBAC-Pass / ABAC-Fail Zone")
+        st.caption(f"{len(abac_only)} tasks passed RBAC but were blocked by ABAC.")
+        abac_domains = Counter(r["task_domain"] for r in abac_only)
+        abac_rules = Counter(r["abac_matched_rule"] for r in abac_only)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write("**By Domain:**")
+            st.dataframe(
+                pd.DataFrame([{"Domain": k, "Count": v} for k, v in abac_domains.most_common()]),
+                use_container_width=True, hide_index=True,
+            )
+        with c2:
+            st.write("**By ABAC Rule:**")
+            st.dataframe(
+                pd.DataFrame([{"Rule": k, "Count": v} for k, v in abac_rules.most_common()]),
+                use_container_width=True, hide_index=True,
+            )
+
+    # TS-PHOL-only catches
+    tsphol_only = [r for r in prows
+                   if r["expected_rbac"] == "ALLOW" and r["expected_abac"] == "ALLOW"
+                   and r.get("tsphol_status", "ALLOW") != "ALLOW"]
+    if tsphol_only:
+        st.markdown("##### TS-PHOL Additional Catches")
+        st.caption(f"{len(tsphol_only)} tasks passed RBAC+ABAC but were caught by TS-PHOL rules.")
+
+    # Capability coverage summary
+    st.markdown("##### Capability Coverage")
+    cov_values = [r["capability_coverage"] for r in prows if r["expected_final"] == "ALLOW"]
+    if cov_values:
+        avg_cov = sum(cov_values) / len(cov_values)
+        full_cov = sum(1 for v in cov_values if v >= 1.0)
+        st.caption(
+            f"Among {len(cov_values)} ALLOW decisions: "
+            f"avg coverage = **{avg_cov:.1%}**, full coverage = **{full_cov}** "
+            f"({full_cov*100/len(cov_values):.0f}%)"
+        )
+
+    # Match tag breakdown
+    st.markdown("##### By Match Tag")
+    tag_rows = []
+    for tag in ["correct", "wrong", "null"]:
+        tr = [r for r in prows if r["match_tag"] == tag]
+        if tr:
+            allow = sum(1 for r in tr if r["expected_final"] == "ALLOW")
+            tag_rows.append({
+                "Tag": tag,
+                "Tasks": len(tr),
+                "ALLOW": allow,
+                "DENY": len(tr) - allow,
+                "Allow Rate": f"{allow*100/len(tr):.0f}%",
+            })
+    st.dataframe(pd.DataFrame(tag_rows), use_container_width=True, hide_index=True)
+
+
+def _render_browse(matrix: list):
+    """Filterable data browser for the matrix."""
+    st.markdown("#### Browse & Filter")
+
+    # ── Filters ──
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
+        f_persona = st.selectbox("Persona", ["All"] + sorted(PERSONAS.keys()), key="browse_persona")
+    with fc2:
+        all_domains = sorted(set(r["task_domain"] for r in matrix))
+        f_domain = st.selectbox("Domain", ["All"] + all_domains, key="browse_domain")
+    with fc3:
+        f_tag = st.selectbox("Match Tag", ["All", "correct", "wrong", "null"], key="browse_tag")
+    with fc4:
+        f_decision = st.selectbox("Final Decision", ["All", "ALLOW", "DENY", "DECEPTION_ROUTED"],
+                                  key="browse_decision")
+
+    filtered = matrix
+    if f_persona != "All":
+        filtered = [r for r in filtered if r["persona"] == f_persona]
+    if f_domain != "All":
+        filtered = [r for r in filtered if r["task_domain"] == f_domain]
+    if f_tag != "All":
+        filtered = [r for r in filtered if r["match_tag"] == f_tag]
+    if f_decision != "All":
+        filtered = [r for r in filtered if r["expected_final"] == f_decision]
+
+    st.caption(f"Showing **{len(filtered):,}** of {len(matrix):,} rows")
+
+    # Summary of filtered set
+    if filtered:
+        fc_allow = sum(1 for r in filtered if r["expected_final"] == "ALLOW")
+        fc_deny = sum(1 for r in filtered if r["expected_final"] == "DENY")
+        fc_dec = sum(1 for r in filtered if r["expected_final"] == "DECEPTION_ROUTED")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("ALLOW", fc_allow)
+        m2.metric("DENY", fc_deny)
+        m3.metric("DECEPTION", fc_dec)
+
+    # Data table (compact view)
+    display_rows = []
+    for r in filtered[:500]:
+        display_rows.append({
+            "Persona": r["persona"],
+            "Task": r["task_idx"],
+            "Domain": r["task_domain"],
+            "Tag": r["match_tag"],
+            "Write?": "✍️" if r["has_write"] else "",
+            "Identity": r["expected_identity"],
+            "Transport": r["expected_transport"],
+            "RBAC": r["expected_rbac"],
+            "ABAC": r["expected_abac"],
+            "TS-PHOL": r["expected_tsphol"],
+            "Final": r["expected_final"],
+            "Deny Layer": r["first_deny_layer"] or "—",
+            "Cap Coverage": f"{r['capability_coverage']:.0%}",
+        })
+
+    if display_rows:
+        st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+        if len(filtered) > 500:
+            st.caption(f"Showing first 500 of {len(filtered):,} rows")
+
+    # Row detail expander
+    if filtered:
+        st.markdown("##### Row Detail Inspector")
+        row_idx = st.number_input(
+            "Select row index to inspect", min_value=0,
+            max_value=min(499, len(filtered) - 1), value=0, key="browse_row_idx",
+        )
+        selected_row = filtered[row_idx]
+
+        with st.expander(
+            f"Row {row_idx}: {selected_row['persona']} × task {selected_row['task_idx']} "
+            f"→ {selected_row['expected_final']}",
+            expanded=True,
+        ):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write("**Per-Tool RBAC Decisions:**")
+                if selected_row.get("tool_decisions"):
+                    td_rows = []
+                    for td in selected_row["tool_decisions"]:
+                        td_rows.append({
+                            "Tool": td["tool"],
+                            "MCP": td["mcp"],
+                            "RBAC": td["rbac"],
+                            "Rule": td["rbac_rule"],
+                        })
+                    st.dataframe(pd.DataFrame(td_rows), use_container_width=True, hide_index=True)
+
+            with c2:
+                st.write("**Capabilities:**")
+                st.write(f"Required: `{selected_row.get('required_capabilities', [])}`")
+                st.write(f"Has: `{selected_row.get('has_capabilities', [])}`")
+                missing = selected_row.get("missing_capabilities", [])
+                if missing:
+                    st.write(f"Missing: `{missing}`")
+                st.write(f"Coverage: **{selected_row['capability_coverage']:.0%}**")
+
+            st.write("**All Deny Layers:**", selected_row.get("all_deny_layers", []))
+            if selected_row.get("abac_matched_rule"):
+                st.write(f"**ABAC Rule:** `{selected_row['abac_matched_rule']}`")
+            if selected_row.get("tsphol_triggered_rules", 0) > 0:
+                st.write(f"**TS-PHOL Triggered:** {selected_row['tsphol_triggered_rules']} rule(s)")

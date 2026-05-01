@@ -67,6 +67,8 @@ class PredictionService:
             validation_errors = issue_meta.get("details", [])
             if not selections:
                 validation_errors.append("Model returned 0 pairs.")
+            elif len(selections) != 3:
+                validation_errors.append(f"Expected 3 tool selections, got {len(selections)}.")
             
             for s in selections:
                 selected_mcp.append(s.get("mcp", "Unknown"))
@@ -120,9 +122,9 @@ class PredictionService:
 
     def _build_system_prompt(self) -> str:
         prompt = """
-        You are the 'Generation Layer' of an authoritative Automated Reasoning pipeline. Your role is to act as a Large Logic Model (LLoM) that proposes logic hypotheses to solve a user task.
+        You are the 'Generation Layer' of an authoritative Automated Reasoning pipeline. Your role is to act as a Large Logic Model (LLM) that proposes logic hypotheses to solve a user task.
         
-        Your task is to select the appropriate tools and their corresponding MCP servers. This selection is CAPABILITY-AWARE. You must prioritize tools that coverage the required capabilities found in the 'Domain Action Space'.
+        Your task is to select the appropriate tools and their corresponding MCP servers. This selection is CAPABILITY-AWARE. You must prioritize tools that cover the required capabilities found in the 'Domain Action Space'.
         
         Return your answer ONLY in structured JSON format with the following fields:
         {
@@ -131,7 +133,8 @@ class PredictionService:
           "justification": "Why you chose these specific logic hypotheses, focusing on capability coverage.",
           "selections": [
             {"tool": "tool_name1", "mcp": "mcp_name1"},
-            {"tool": "tool_name2", "mcp": "mcp_name2"}
+            {"tool": "tool_name2", "mcp": "mcp_name2"},
+            {"tool": "tool_name3", "mcp": "mcp_name3"}
           ],
           "mission_metrics": {
             "capability_coverage": 1.0,
@@ -151,11 +154,12 @@ class PredictionService:
         RULES:
         1. Select ONLY from the provided MCP catalog and their listed tools.
         2. Do NOT invent new tool names or MCP names.
-        3. Aim for SUFFICIENCY. A bundle is valid if it covers the REQUIRED capabilities.
+        3. You MUST select EXACTLY 3 tools. No more, no less.
         4. ALL tools MUST come from the EXACT SAME MCP server for this specific task execution context.
-        5. 'mission_metrics.capability_coverage' must be a float between 0.0 and 1.0.
-        6. List EACH tool-mcp pair separately in the 'selections' list.
-        7. Confidence and scores must be ACTUAL computed numbers (e.g. 0.92). DO NOT use placeholders.
+        5. Aim for SUFFICIENCY. A bundle is valid if it covers the REQUIRED capabilities.
+        6. 'mission_metrics.capability_coverage' must be a float between 0.0 and 1.0.
+        7. List EACH tool-mcp pair separately in the 'selections' list.
+        8. Confidence and scores must be ACTUAL computed numbers (e.g. 0.92). DO NOT use placeholders.
         """
         return prompt
 
@@ -179,7 +183,7 @@ class PredictionService:
         
         User Task: {task.task}
         
-        Please select the tool-mcp pairs from a single MCP server that maximize capability coverage for this task.
+        Select EXACTLY 3 tool-mcp pairs from a single MCP server that maximize capability coverage for this task.
         """
         return user_prompt
 

@@ -16,16 +16,17 @@ def render_policy_studio():
     st.title("🛡️ Policy Studio")
     st.markdown("Configure identity, access control, and reasoning policies for the agentic system.")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "1. MCP Attributes",
-        "2. SPIFFE Registry", 
-        "3. Transport Allowlist", 
-        "4. RBAC (Identity-Based)", 
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+        "1. SPIFFE Registry",
+        "2. Transport Allowlist",
+        "3. MCP Attributes",
+        "4. RBAC (Identity-Based)",
         "5. ABAC (Attribute-Based)",
-        "6. TS-PHOL Rules",
-        "7. Domain Catalog",
+        "6. Domain Catalog",
+        "7. Capability Ontology",
         "8. Heuristic Logic",
-        "9. Experiment Policies"
+        "9. TS-PHOL Rules",
+        "10. Experiments"
     ])
 
     registry_svc = SpiffeRegistryService()
@@ -34,38 +35,39 @@ def render_policy_studio():
     abac_svc = ABACRuleService()
     tsphol_svc = TSPHOLRuleService()
     attribute_svc = MCPAttributeService()
-    
     cap_inf_svc = CapabilityInferenceService()
-    
     workload_svc = SpiffeWorkloadService()
 
     with tab1:
-        _render_mcp_attributes(attribute_svc)
-
-    with tab2:
         _render_spiffe_registry(registry_svc, workload_svc)
 
-    with tab3:
+    with tab2:
         _render_transport_allowlist(allowlist_svc)
+
+    with tab3:
+        _render_mcp_attributes(attribute_svc)
 
     with tab4:
         _render_rbac(rbac_svc, registry_svc)
-        
+
     with tab5:
         _render_abac_baseline(abac_svc)
-        
+
     with tab6:
-        _render_tsphol(tsphol_svc)
-        
-    with tab7:
         _render_domain_catalog(cap_inf_svc)
-        
+
+    with tab7:
+        _render_capability_ontology()
+
     with tab8:
         from app.services.heuristic_service import HeuristicService
         h_svc = HeuristicService()
         _render_heuristic_logic(h_svc)
 
     with tab9:
+        _render_tsphol(tsphol_svc)
+
+    with tab10:
         _render_experiment_policies()
 
 
@@ -108,7 +110,6 @@ def _render_experiment_policies():
     with col1:
         st.markdown(f"**Name**: {config.name}")
         st.markdown(f"**Group**: {config.group} — {EXPERIMENT_GROUPS[config.group]}")
-        st.markdown(f"**Pre-LLM Bypass**: {'Yes' if config.bypass_pre_llm else 'No'}")
     with col2:
         st.markdown(f"**Registry**: `{config.registry_fn}`")
         st.markdown(f"**Allowlist**: `{config.allowlist_fn}`")
@@ -645,3 +646,119 @@ def _render_heuristic_logic(svc: Any):
                 "default": f_default
             }
             if svc.save_policy(policy): st.success("Saved."); st.rerun()
+
+
+def _render_capability_ontology():
+    from app.services.domain_capability_ontology import (
+        DOMAIN_CAPABILITIES, DomainCapabilityOntology,
+        get_domain_capabilities, save_domain_capabilities, reload_ontology
+    )
+
+    st.header("🧬 Capability Ontology")
+    st.markdown(
+        "Defines **hard/soft capability requirements** per domain intent. "
+        "This drives the two-tier coverage logic in the decision engine."
+    )
+    st.info(
+        "🔴 **Hard** = mission-critical — missing triggers a **violation/deny**.  \n"
+        "🟡 **Soft** = advisory — missing lowers coverage score but only produces an **audit warning**."
+    )
+
+    caps = get_domain_capabilities()
+    domains = sorted(caps.keys())
+    selected_domain = st.selectbox("Select Domain", domains, key="ontology_domain")
+
+    intents = caps.get(selected_domain, {})
+
+    # --- Add New Intent ---
+    with st.expander("➕ Add New Intent", expanded=False):
+        new_intent = st.text_input("Intent Name", key="new_intent_name", placeholder="e.g., SecurityAudit")
+        col1, col2 = st.columns(2)
+        with col1:
+            new_hard = st.text_input("Hard Capabilities (comma-separated)", key="new_hard_caps")
+            new_required = st.text_input("Required Capabilities (comma-separated)", key="new_req_caps")
+        with col2:
+            new_soft = st.text_input("Soft Capabilities (comma-separated)", key="new_soft_caps")
+            new_optional = st.text_input("Optional Capabilities (comma-separated)", key="new_opt_caps")
+
+        if st.button("💾 Save New Intent", key="save_new_intent"):
+            if new_intent.strip():
+                parse = lambda s: [x.strip() for x in s.split(",") if x.strip()]
+                caps.setdefault(selected_domain, {})[new_intent.strip()] = {
+                    "hard": parse(new_hard),
+                    "soft": parse(new_soft),
+                    "required": parse(new_required),
+                    "optional": parse(new_optional)
+                }
+                save_domain_capabilities(caps)
+                reload_ontology()
+                st.success(f"✅ Intent '{new_intent.strip()}' added to {selected_domain}")
+                st.rerun()
+            else:
+                st.error("Intent name cannot be empty.")
+
+    if not intents:
+        st.warning("No intents defined for this domain.")
+        return
+
+    # --- Display & Edit Existing Intents ---
+    for intent_name, intent_caps in intents.items():
+        with st.expander(f"🎯 Intent: **{intent_name}**", expanded=True):
+            hard_set = set(intent_caps.get("hard", []))
+            soft_set = set(intent_caps.get("soft", []))
+            required_set = set(intent_caps.get("required", []))
+            optional_set = set(intent_caps.get("optional", []))
+
+            all_caps_list = sorted(hard_set | soft_set | required_set | optional_set)
+            concrete_caps = [
+                c for c in all_caps_list if DomainCapabilityOntology.is_concrete(c)
+            ]
+
+            if concrete_caps:
+                header = "| Capability | Criticality | Obligation |"
+                separator = "|:---|:---:|:---:|"
+                rows = []
+                for cap in concrete_caps:
+                    crit = "🔴 Hard" if cap in hard_set else "🟡 Soft"
+                    oblig = "**Required**" if cap in required_set else "Optional"
+                    rows.append(f"| `{cap}` | {crit} | {oblig} |")
+                st.markdown("\n".join([header, separator] + rows))
+
+            # Edit form
+            edit_key = f"edit_{selected_domain}_{intent_name}"
+            col_e1, col_e2, col_e3 = st.columns([3, 3, 1])
+            with col_e1:
+                edited_hard = st.text_input(
+                    "Hard", value=", ".join(intent_caps.get("hard", [])), key=f"{edit_key}_hard"
+                )
+                edited_required = st.text_input(
+                    "Required", value=", ".join(intent_caps.get("required", [])), key=f"{edit_key}_req"
+                )
+            with col_e2:
+                edited_soft = st.text_input(
+                    "Soft", value=", ".join(intent_caps.get("soft", [])), key=f"{edit_key}_soft"
+                )
+                edited_optional = st.text_input(
+                    "Optional", value=", ".join(intent_caps.get("optional", [])), key=f"{edit_key}_opt"
+                )
+            with col_e3:
+                st.write("")
+                st.write("")
+                if st.button("💾", key=f"{edit_key}_save", help="Save changes"):
+                    parse = lambda s: [x.strip() for x in s.split(",") if x.strip()]
+                    caps[selected_domain][intent_name] = {
+                        "hard": parse(edited_hard),
+                        "soft": parse(edited_soft),
+                        "required": parse(edited_required),
+                        "optional": parse(edited_optional)
+                    }
+                    save_domain_capabilities(caps)
+                    reload_ontology()
+                    st.success(f"✅ Updated '{intent_name}'")
+                    st.rerun()
+                if st.button("🗑️", key=f"{edit_key}_del", help="Delete intent"):
+                    del caps[selected_domain][intent_name]
+                    save_domain_capabilities(caps)
+                    reload_ontology()
+                    st.success(f"🗑️ Deleted '{intent_name}'")
+                    st.rerun()

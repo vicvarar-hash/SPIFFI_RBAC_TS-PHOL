@@ -1,0 +1,266 @@
+{
+  "atlassian": {
+    "read": [
+      "confluence_get_comments",
+      "confluence_get_labels",
+      "confluence_get_page",
+      "confluence_get_page_children",
+      "confluence_search",
+      "jira_batch_get_changelogs",
+      "jira_download_attachments",
+      "jira_get_agile_boards",
+      "jira_get_board_issues",
+      "jira_get_issue",
+      "jira_get_link_types",
+      "jira_get_project_issues",
+      "jira_get_project_versions",
+      "jira_get_sprint_issues",
+      "jira_get_sprints_from_board",
+      "jira_get_user_profile",
+      "jira_get_worklog",
+      "jira_search",
+      "jira_search_fields"
+    ],
+    "benign_write": [
+      "confluence_add_comment",
+      "confluence_add_label",
+      "jira_add_comment",
+      "jira_add_worklog",
+      "jira_create_issue_link",
+      "jira_get_transitions",
+      "jira_link_to_epic",
+      "jira_transition_issue"
+    ],
+    "privileged_write": [
+      "confluence_create_page",
+      "confluence_update_page",
+      "jira_batch_create_issues",
+      "jira_create_issue",
+      "jira_create_sprint",
+      "jira_update_issue",
+      "jira_update_sprint"
+    ],
+    "destructive_write": [
+      "confluence_delete_page",
+      "jira_delete_issue",
+      "jira_remove_issue_link"
+    ]
+  },
+  "azure": {
+    "read": [
+      "azmcp-appconfig-account-list",
+      "azmcp-appconfig-kv-list",
+      "azmcp-appconfig-kv-lock",
+      "azmcp-appconfig-kv-set",
+      "azmcp-appconfig-kv-show",
+      "azmcp-appconfig-kv-unlock",
+      "azmcp-cosmos-account-list",
+      "azmcp-cosmos-database-container-item-query",
+      "azmcp-cosmos-database-container-list",
+      "azmcp-cosmos-database-list",
+      "azmcp-extension-az",
+      "azmcp-extension-azd",
+      "azmcp-group-list",
+      "azmcp-monitor-log-query",
+      "azmcp-monitor-table-list",
+      "azmcp-monitor-workspace-list",
+      "azmcp-search-index-describe",
+      "azmcp-search-index-list",
+      "azmcp-search-index-query",
+      "azmcp-search-service-list",
+      "azmcp-storage-account-list",
+      "azmcp-storage-blob-container-details",
+      "azmcp-storage-blob-container-list",
+      "azmcp-storage-blob-list",
+      "azmcp-storage-table-list",
+      "azmcp-subscription-list"
+    ],
+    "benign_write": [],
+    "privileged_write": [],
+    "destructive_write": [
+      "azmcp-appconfig-kv-delete"
+    ]
+  },
+  "grafana": {
+    "read": [
+      "fetch_pyroscope_profile",
+      "find_error_pattern_logs",
+      "find_slow_requests",
+      "generate_deeplink",
+      "get_alert_rule_by_uid",
+      "get_assertions",
+      "get_current_oncall_users",
+      "get_dashboard_by_uid",
+      "get_dashboard_panel_queries",
+      "get_dashboard_property",
+      "get_dashboard_summary",
+      "get_datasource_by_name",
+      "get_datasource_by_uid",
+      "get_incident",
+      "get_oncall_shift",
+      "get_sift_analysis",
+      "get_sift_investigation",
+      "list_alert_rules",
+      "list_contact_points",
+      "list_datasources",
+      "list_incidents",
+      "list_loki_label_names",
+      "list_loki_label_values",
+      "list_oncall_schedules",
+      "list_oncall_teams",
+      "list_oncall_users",
+      "list_prometheus_label_names",
+      "list_prometheus_label_values",
+      "list_prometheus_metric_metadata",
+      "list_prometheus_metric_names",
+      "list_pyroscope_label_names",
+      "list_pyroscope_label_values",
+      "list_pyroscope_profile_types",
+      "list_sift_investigations",
+      "list_teams",
+      "list_users_by_org",
+      "query_loki_logs",
+      "query_loki_stats",
+      "query_prometheus",
+      "search_dashboards"
+    ],
+    "benign_write": [
+      "add_activity_to_incident"
+    ],
+    "privileged_write": [
+      "create_incident",
+      "update_dashboard"
+    ],
+    "destructive_write": []
+  },
+  "hummingbot-mcp": {
+    "read": [
+      "explore_controllers",
+      "get_active_bots_status",
+      "get_candles",
+      "get_funding_rate",
+      "get_order_book",
+      "get_orders",
+      "get_portfolio_balances",
+      "get_positions",
+      "get_prices"
+    ],
+    "benign_write": [],
+    "privileged_write": [
+      "deploy_bot_with_controllers",
+      "modify_controllers",
+      "place_order",
+      "set_account_position_mode_and_leverage",
+      "setup_connector"
+    ],
+    "destructive_write": [
+      "stop_bot_or_controllers"
+    ]
+  },
+  "mongodb": {
+    "read": [
+      "aggregate",
+      "collection-indexes",
+      "collection-schema",
+      "collection-storage-size",
+      "connect",
+      "count",
+      "db-stats",
+      "explain",
+      "export",
+      "find",
+      "list-collections",
+      "list-databases",
+      "mongodb-logs"
+    ],
+    "benign_write": [],
+    "privileged_write": [
+      "create-collection",
+      "create-index",
+      "insert-many",
+      "rename-collection",
+      "update-many"
+    ],
+    "destructive_write": [
+      "delete-many",
+      "drop-collection",
+      "drop-database"
+    ]
+  },
+  "notion": {
+    "read": [
+      "API-get-block-children",
+      "API-get-self",
+      "API-get-user",
+      "API-get-users",
+      "API-retrieve-a-block",
+      "API-retrieve-a-comment",
+      "API-retrieve-a-database",
+      "API-retrieve-a-page",
+      "API-retrieve-a-page-property"
+    ],
+    "benign_write": [],
+    "privileged_write": [
+      "API-create-a-comment",
+      "API-create-a-database",
+      "API-patch-block-children",
+      "API-patch-page",
+      "API-post-database-query",
+      "API-post-page",
+      "API-post-search",
+      "API-update-a-block",
+      "API-update-a-database"
+    ],
+    "destructive_write": [
+      "API-delete-a-block"
+    ]
+  },
+  "stripe": {
+    "read": [
+      "finalize_invoice",
+      "list_coupons",
+      "list_customers",
+      "list_invoices",
+      "list_payment_intents",
+      "list_prices",
+      "list_products",
+      "list_subscriptions",
+      "retrieve_balance",
+      "search_stripe_documentation"
+    ],
+    "benign_write": [],
+    "privileged_write": [
+      "create_coupon",
+      "create_customer",
+      "create_invoice",
+      "create_invoice_item",
+      "create_payment_link",
+      "create_price",
+      "create_product",
+      "list_disputes",
+      "update_dispute",
+      "update_subscription"
+    ],
+    "destructive_write": [
+      "cancel_subscription",
+      "create_refund"
+    ]
+  },
+  "wikipedia-mcp": {
+    "read": [
+      "extract_key_facts",
+      "get_article",
+      "get_coordinates",
+      "get_links",
+      "get_related_topics",
+      "get_sections",
+      "get_summary",
+      "search_wikipedia",
+      "summarize_article_for_query",
+      "summarize_article_section"
+    ],
+    "benign_write": [],
+    "privileged_write": [],
+    "destructive_write": []
+  }
+}

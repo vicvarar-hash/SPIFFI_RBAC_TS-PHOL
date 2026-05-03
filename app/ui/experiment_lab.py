@@ -1,9 +1,10 @@
 """
-Experiment Lab — batch experiment execution and access decision matrix explorer.
+Experiment Lab — batch experiment execution, OPA baseline comparison, and access decision matrix explorer.
 
-Two main sections:
-1. Experiment Runner — execute E1/E2 configurations and view results
-2. Access Decision Matrix — explore pre-computed ground truth governance decisions
+Three main sections:
+1. Experiment Runner — execute E1–E4 configurations and view results
+2. OPA Baseline Comparison — replay any saved log through OPA-equivalent evaluation
+3. Access Decision Matrix — explore pre-computed ground truth governance decisions
 """
 
 import os
@@ -148,13 +149,17 @@ def render_experiment_lab(tasks, personas):
         "that maps every *(persona × task)* combination through the full policy pipeline."
     )
 
-    tab_runner, tab_matrix = st.tabs([
+    tab_runner, tab_opa, tab_matrix = st.tabs([
         "🚀 Experiment Runner",
+        "🆚 OPA Baseline Comparison",
         "📊 Access Decision Matrix",
     ])
 
     with tab_runner:
         _render_experiment_runner(tasks, personas)
+
+    with tab_opa:
+        _render_opa_comparison()
 
     with tab_matrix:
         _render_matrix_explorer()
@@ -566,9 +571,6 @@ def _display_results(data: dict):
             if delta_rows:
                 st.dataframe(pd.DataFrame(delta_rows), use_container_width=True, hide_index=True)
 
-    # ── OPA Baseline Comparison ──
-    _render_opa_comparison(data)
-
     # ── Export ──
     st.markdown("### 💾 Export")
     col_exp1, col_exp2 = st.columns(2)
@@ -857,9 +859,14 @@ def _run_ai_assessment(metrics_list, results_dict, mode, inf_mode,
 # OPA Baseline Comparison
 # ═══════════════════════════════════════════════════════════════════════
 
-def _render_opa_comparison(data: dict):
-    """Render the OPA baseline comparison section."""
+def _render_opa_comparison():
+    """Render the OPA baseline comparison tab — standalone, works on any saved log."""
     st.markdown("### 🆚 OPA Baseline Comparison")
+    st.markdown(
+        "Compare PALADIN's layered governance against **OPA (Open Policy Agent)** — "
+        "the industry-standard flat policy engine. Select any saved experiment log below; "
+        "no new experiment run required."
+    )
 
     with st.expander("ℹ️ What is this?", expanded=False):
         st.markdown("""

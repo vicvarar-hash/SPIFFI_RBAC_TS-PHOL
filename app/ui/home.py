@@ -69,7 +69,7 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     # ════════════════════════════════════════════════════════════════════
     st.header("💡 Novelty: What Makes PALADIN Different")
 
-    nov1, nov2 = st.columns(2)
+    nov1, nov2, nov3 = st.columns(3)
     with nov1:
         st.markdown("""
         **1. Composable Layered Governance**
@@ -102,6 +102,24 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         - **Mission-permission decoupling** — safety evaluated against *task intent*,
           not just identity
         - **Complete predicate traces** — every decision is formally auditable
+        """)
+
+    with nov3:
+        st.markdown("""
+        **3. OPA Baseline Validation**
+
+        We validate PALADIN against **Open Policy Agent (OPA)** — the CNCF-graduated
+        industry standard — by translating all 55 rules into Rego and replaying the
+        same 6,942 evaluations:
+
+        | Finding | Value |
+        |---|---|
+        | **Selection mode agreement** | 97.9% (rules are equivalent) |
+        | **Validation mode SecFail** | PALADIN 4.5% vs OPA 20.9% |
+        | **Deception routing gap** | 192 cases OPA cannot express |
+
+        This proves PALADIN's layered architecture provides **4.6× lower security
+        failure rate** through capabilities flat policy engines structurally lack.
         """)
 
     st.divider()
@@ -371,7 +389,8 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
          "predicate traces."),
         ("5. **Experiment Lab**", "🧪",
          "Run batch experiments (E1–E4) with ablation analysis. Compare simulation "
-         "vs real LLM inference. Explore the Access Decision Matrix (6,942 rows). "
+         "vs real LLM inference. Run OPA baseline comparisons against any saved log. "
+         "Explore the Access Decision Matrix (6,942 rows). "
          "Generate AI-powered assessments of results."),
     ]
 

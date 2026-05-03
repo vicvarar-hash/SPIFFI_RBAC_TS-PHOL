@@ -108,18 +108,16 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         st.markdown("""
         **3. OPA Baseline Validation**
 
-        We validate PALADIN against **Open Policy Agent (OPA)** — the CNCF-graduated
-        industry standard — by translating all 55 rules into Rego and replaying the
-        same 6,942 evaluations:
+        PALADIN is validated against **Open Policy Agent (OPA)** — the CNCF-graduated
+        industry standard — by translating all rules into Rego and replaying
+        the same evaluations through a flat policy engine:
 
-        | Finding | Value |
-        |---|---|
-        | **Selection mode agreement** | 97.9% (rules are equivalent) |
-        | **Validation mode SecFail** | PALADIN 4.5% vs OPA 20.9% |
-        | **Deception routing gap** | 192 cases OPA cannot express |
+        - **Rule equivalence** — high agreement on RBAC/ABAC confirms correct implementation
+        - **Layered advantage** — PALADIN's TS-PHOL predicates catch threats OPA's flat model misses
+        - **Deception routing gap** — OPA's binary ALLOW/DENY cannot express honeypot containment
 
-        This proves PALADIN's layered architecture provides **4.6× lower security
-        failure rate** through capabilities flat policy engines structurally lack.
+        Run the comparison yourself in the **🆚 OPA Baseline Comparison** tab
+        of the Experiment Lab — no new experiment required.
         """)
 
     st.divider()

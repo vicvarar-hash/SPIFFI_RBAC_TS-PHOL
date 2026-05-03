@@ -868,23 +868,61 @@ def _render_opa_comparison():
         "no new experiment run required."
     )
 
-    with st.expander("ℹ️ What is this?", expanded=False):
+    with st.expander("ℹ️ What is this? — Methodology & Scientific Rationale", expanded=False):
         st.markdown("""
-This compares PALADIN's **layered governance** against **OPA (Open Policy Agent)** — the industry standard flat policy engine.
+#### Why OPA as Baseline?
 
-The same RBAC, ABAC, and TS-PHOL rules are translated to OPA-equivalent semantics and evaluated against the same inputs:
+**Open Policy Agent (OPA)** is a [CNCF-graduated](https://www.openpolicyagent.org/) general-purpose policy engine adopted by organizations including Netflix, Goldman Sachs, and the US Department of Defense. It uses **Rego**, a declarative policy language, to express access control rules evaluated against structured input. OPA is the de facto standard for cloud-native authorization and is the most widely cited policy engine in academic security literature.
+
+We chose OPA as our baseline for three reasons:
+
+1. **Ecological validity** — OPA represents the strongest real-world alternative. Comparing against a weaker system would not stress-test PALADIN's claims.
+2. **Structural equivalence** — OPA can express the same RBAC and ABAC rules as PALADIN (role-based tool access, attribute-based deny conditions), making the comparison fair at those layers.
+3. **Architectural ceiling** — OPA's flat, binary policy model (ALLOW/DENY) defines the ceiling of what traditional policy engines can achieve, making it the natural foil for PALADIN's layered, tri-state architecture.
+
+#### How We Translated the Policies
+
+All 32 RBAC rules, 13 ABAC rules, and 10 TS-PHOL rules were translated into formal **Rego** (see `policies/rego/`). The translations preserve:
+
+- **RBAC**: Per-persona tool-allowed sets with SPIFFE identity matching → `rbac.rego`
+- **ABAC**: Attribute-based deny conditions (trust score, clearance, time-of-day, write operations) → `abac.rego`
+- **TS-PHOL**: Priority-ordered deny predicates (capability coverage, alignment thresholds, risk budgets) → `tsphol.rego`
+
+The Python OPA-equivalent engine (`opa_engine.py`) implements the same semantics as the Rego files, ensuring deterministic reproducibility without requiring an OPA binary installation.
+
+#### Experimental Alignment
+
+This comparison replays **the exact same experiment logs** through OPA-equivalent evaluation — same personas, same tasks, same LLM-selected tools, same row order. This ensures:
+
+| Control | How It's Ensured |
+|---|---|
+| **Same inputs** | Inputs reconstructed from saved log rows + static configuration |
+| **Same rules** | Rego translations verified against PALADIN source (32 RBAC + 13 ABAC + 10 TS-PHOL) |
+| **Same ground truth** | Identical task tags (`correct`/`wrong`) and expected tool bundles |
+| **No re-inference** | Zero LLM API calls — evaluation is purely deterministic |
+| **Single independent variable** | Only the policy engine architecture differs (layered vs flat) |
+
+#### Two OPA Evaluation Modes
 
 | Mode | Description |
 |---|---|
-| **OPA-Flat** | All rules evaluated simultaneously, any deny wins. No layering, no short-circuit. |
-| **OPA-Layered** | Sequential RBAC → ABAC → TS-PHOL with short-circuit, but **binary ALLOW/DENY only**. |
-| **PALADIN** | Layered short-circuit + **DECEPTION_ROUTED** third outcome (OPA cannot express this). |
+| **OPA-Flat** | All rules evaluated simultaneously — any deny wins. This is the standard OPA pattern: no layering, no short-circuit, no ordering between rule sets. |
+| **OPA-Layered** | Rules evaluated sequentially as RBAC → ABAC → TS-PHOL with short-circuit semantics, but restricted to **binary ALLOW/DENY** only. This isolates the effect of PALADIN's deception routing. |
+| **PALADIN** | Layered short-circuit evaluation with **DECEPTION_ROUTED** as a third enforcement outcome — a capability OPA's policy model cannot express. |
 
-**Key architectural gaps in OPA:**
-- ❌ No deception routing (tri-state enforcement)
-- ❌ No native per-layer ablation
-- ❌ No typed predicate system with priority ordering
-- ⚠️ Flat evaluation sees all denial sources simultaneously (no short-circuit attribution)
+#### What OPA Cannot Express
+
+OPA's policy model has fundamental architectural limitations when applied to agentic LLM governance:
+
+| Capability | PALADIN | OPA |
+|---|---|---|
+| **Deception routing** | ✅ Converts high-risk denials into honeypot containment (DECEPTION_ROUTED) | ❌ Binary ALLOW/DENY only — cannot contain threats without alerting the attacker |
+| **Per-layer attribution** | ✅ Short-circuit tells you exactly which layer denied | ⚠️ Flat mode fires all rules — you see all denial sources but not which one would have acted first |
+| **Subtractive ablation** | ✅ Disable any layer natively to measure its contribution | ❌ Requires rewriting Rego files for each ablation variant |
+| **Typed predicate logic** | ✅ TS-PHOL predicates with formal types and priority ordering | ❌ Rego functions are untyped; priority requires manual else-chains |
+| **LLM inference context** | ✅ Alignment scores, capability coverage, risk budgets computed from LLM output | ❌ Operates on static attributes only — no runtime inference context |
+
+These gaps are not implementation limitations — they are **structural properties** of OPA's flat policy model. This comparison quantifies the security cost of those structural gaps.
 """)
 
     # Find saved log files to compare against

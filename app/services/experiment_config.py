@@ -75,10 +75,10 @@ LEGITIMATE_PAIRINGS: Dict[str, Set[str]] = {
 }
 
 EXPERIMENT_GROUPS: Dict[str, str] = {
-    "E1": "Correct tasks × full pipeline — baseline governance accuracy",
-    "E2": "Wrong tasks × full pipeline — governance catches bad bundles",
-    "E3": "Correct tasks × RBAC-only — shows what RBAC alone can/cannot do",
-    "E4": "Correct tasks × RBAC+ABAC — shows incremental ABAC value over RBAC",
+    "E1": "All tasks × full pipeline (RBAC + ABAC + TS-PHOL) — baseline",
+    "E2": "All tasks × ABAC + TS-PHOL only (no RBAC) — isolates RBAC contribution",
+    "E3": "All tasks × TS-PHOL only (no RBAC, no ABAC) — isolates TS-PHOL capability",
+    "E4": "All tasks × no pipeline — control group (everything ALLOWed)",
 }
 
 
@@ -216,15 +216,6 @@ def tsphol_open() -> dict:
     return {"rules": []}
 
 
-def tsphol_abac_passthrough() -> dict:
-    return {"rules": [
-        {"rule_name": "abac_failure_denial",
-         "description": "Propagate ABAC denial into TS-PHOL decision",
-         "if": [{"predicate": "ABACDenied", "equals": True}],
-         "then": "DENY", "derive": "ABACFailure", "priority": 115},
-    ]}
-
-
 def tsphol_minimal() -> dict:
     return {"rules": [
         {"rule_name": "destructive_write_prevention", "description": "Deny destructive ops without read",
@@ -324,14 +315,13 @@ POLICY_GENERATORS: Dict[str, Dict[str, Callable]] = {
     "abac":      {"production": abac_production, "open": abac_open, "strict": abac_strict, "extreme": abac_extreme},
     "tsphol": {
         "production": tsphol_production, "open": tsphol_open,
-        "abac_passthrough": tsphol_abac_passthrough, "minimal": tsphol_minimal,
+        "minimal": tsphol_minimal,
         "strict": tsphol_strict, "relaxed": tsphol_relaxed,
         "no_confidence_write":  lambda: _tsphol_without_rule("low_confidence_write_prevention"),
         "no_high_risk_conf":    lambda: _tsphol_without_rule("high_risk_write_confidence_safeguard"),
         "no_hard_cap":          lambda: _tsphol_without_rule("hard_capability_violation"),
         "no_destructive":       lambda: _tsphol_without_rule("destructive_write_prevention"),
         "no_domain_mismatch":   lambda: _tsphol_without_rule("task_bundle_domain_mismatch"),
-        "no_abac_prop":         lambda: _tsphol_without_rule("abac_failure_denial"),
         "conf_050_060": lambda: _tsphol_confidence_sweep(0.50, 0.60),
         "conf_060_070": lambda: _tsphol_confidence_sweep(0.60, 0.70),
         "conf_070_080": lambda: _tsphol_confidence_sweep(0.70, 0.80),
@@ -369,27 +359,24 @@ class ExperimentConfig:
 
 
 EXPERIMENTS: List[ExperimentConfig] = [
-    # E1: Full pipeline on correct tasks — baseline governance accuracy
+    # E1: Full pipeline — baseline governance (all layers active)
     ExperimentConfig("E1", "E1",
-                     "Correct tasks × full pipeline — baseline governance accuracy",
-                     match_tag_filter="correct"),
+                     "All tasks × full pipeline (RBAC + ABAC + TS-PHOL) — baseline"),
 
-    # E2: Full pipeline on wrong tasks — catches bad bundles
+    # E2: No RBAC — isolates RBAC's contribution (subtractive ablation step 1)
     ExperimentConfig("E2", "E2",
-                     "Wrong tasks × full pipeline — governance catches bad bundles",
-                     match_tag_filter="wrong"),
+                     "All tasks × ABAC + TS-PHOL only — isolates RBAC contribution",
+                     rbac_fn="open"),
 
-    # E3: RBAC-only ablation — open ABAC + open TS-PHOL
+    # E3: TS-PHOL only — isolates TS-PHOL's solo capability (subtractive step 2)
     ExperimentConfig("E3", "E3",
-                     "Correct tasks × RBAC-only — ablation showing RBAC alone",
-                     match_tag_filter="correct",
-                     abac_fn="open", tsphol_fn="open"),
+                     "All tasks × TS-PHOL only — isolates TS-PHOL capability",
+                     rbac_fn="open", abac_fn="open"),
 
-    # E4: RBAC+ABAC ablation — TS-PHOL only propagates ABAC denial (no other rules)
+    # E4: No pipeline — control group, everything ALLOWed
     ExperimentConfig("E4", "E4",
-                     "Correct tasks × RBAC+ABAC — ablation showing incremental ABAC value",
-                     match_tag_filter="correct",
-                     tsphol_fn="abac_passthrough"),
+                     "All tasks × no pipeline — control group (no governance)",
+                     rbac_fn="open", abac_fn="open", tsphol_fn="open"),
 ]
 
 EXPERIMENT_MAP: Dict[str, ExperimentConfig] = {e.name: e for e in EXPERIMENTS}

@@ -9,6 +9,8 @@ Two main sections:
 import os
 import json
 import hashlib
+import logging
+from datetime import datetime
 import streamlit as st
 import pandas as pd
 from dataclasses import asdict
@@ -24,13 +26,94 @@ from app.services.experiment_runner import (
     _task_fingerprint,
     ExperimentMetrics, RunResult,
 )
+from app.services.opa_comparison import run_opa_comparison
 
 MATRIX_PATH = os.path.join("datasets", "access_decision_matrix.json")
+LOG_DIR = os.path.join("datasets", "experiment_logs")
+
+logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Experiment log persistence
+# ═══════════════════════════════════════════════════════════════════════
+
+def _save_experiment_log(all_metrics: List, all_results: Dict,
+                         mode: str, inference_mode: str,
+                         llm_model: str = None) -> str:
+    """Save full experiment results to a timestamped JSON log file.
+
+    Returns the path to the saved log file.
+    """
+    os.makedirs(LOG_DIR, exist_ok=True)
+    import re
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_mode = re.sub(r'[^\w\-]', '_', inference_mode)
+    model_tag = f"_{re.sub(r'[^\w\-]', '_', llm_model)}" if llm_model else ""
+    filename = f"run_{ts}_{safe_mode}{model_tag}.json"
+    filepath = os.path.join(LOG_DIR, filename)
+
+    log_data = {
+        "timestamp": datetime.now().isoformat(),
+        "inference_mode": inference_mode,
+        "llm_model": llm_model,
+        "evaluation_mode": mode,
+        "experiments": {},
+    }
+
+    for m in all_metrics:
+        exp_name = m.name
+        results = all_results.get(exp_name, [])
+
+        # Serialize every row
+        rows = []
+        for r in results:
+            rows.append(asdict(r))
+
+        log_data["experiments"][exp_name] = {
+            "metrics": m.to_dict(),
+            "config": {
+                "description": m.description,
+            },
+            "total_rows": len(rows),
+            "rows": rows,
+        }
+
+    # Also store config details from the experiment definitions
+    from app.services.experiment_config import EXPERIMENT_MAP
+    for exp_name in log_data["experiments"]:
+        cfg = EXPERIMENT_MAP.get(exp_name)
+        if cfg:
+            log_data["experiments"][exp_name]["config"].update({
+                "rbac_fn": cfg.rbac_fn,
+                "abac_fn": cfg.abac_fn,
+                "tsphol_fn": cfg.tsphol_fn,
+                "match_tag_filter": cfg.match_tag_filter,
+            })
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, indent=2, default=str)
+
+    logger.info("Experiment log saved to %s", filepath)
+    return filepath
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # Cache helpers
 # ═══════════════════════════════════════════════════════════════════════
+
+def _regenerate_matrix():
+    """Regenerate the Access Decision Matrix from the UI with progress tracking."""
+    from scripts.generate_access_matrix import generate_matrix
+    with st.spinner("🔄 Regenerating Access Decision Matrix... This may take a few minutes."):
+        try:
+            result = generate_matrix()
+            total = result["metadata"]["total_rows"]
+            st.success(f"✅ Matrix regenerated: **{total:,}** rows written to `{MATRIX_PATH}`")
+            # Clear the cached version so it reloads
+            _load_matrix.clear()
+        except Exception as e:
+            st.error(f"❌ Matrix generation failed: {e}")
 
 @st.cache_data
 def _load_matrix():
@@ -84,9 +167,9 @@ def render_experiment_lab(tasks, personas):
 def _render_experiment_runner(tasks, personas):
     st.markdown("### Experiment Configurations")
     st.markdown(
-        "Each experiment runs all **6 personas** through the governance pipeline "
-        "on a filtered task set. E1–E2 test the full pipeline; E3–E4 are **ablation** "
-        "experiments that selectively disable layers to measure incremental value."
+        "Each experiment runs all **6 personas** across **all tasks** through the governance pipeline. "
+        "E1 is the full baseline; E2–E4 perform **subtractive ablation** — removing one layer at a time "
+        "from the top to measure each layer's marginal contribution."
     )
 
     # ── Experiment cards — 2×2 grid ──
@@ -96,30 +179,35 @@ def _render_experiment_runner(tasks, personas):
 
     for col, cfg in zip(card_cols, EXPERIMENTS):
         with col:
-            tag = cfg.match_tag_filter or "all"
-            tag_count = sum(
-                1 for t in tasks
-                if (getattr(t, "match_tag", None) or "null") == tag
-            ) if cfg.match_tag_filter else len(tasks)
-            total_evals = len(PERSONAS) * tag_count
+            total_evals = len(PERSONAS) * len(tasks)
 
-            # Highlight ablation experiments
-            is_ablation = cfg.abac_fn != "production" or cfg.tsphol_fn != "production"
-            label = f"#### {cfg.name} {'🔬' if is_ablation else '🛡️'}"
-            st.markdown(label)
+            # Highlight: full pipeline vs ablation vs control
+            active_layers = []
+            if cfg.rbac_fn != "open":
+                active_layers.append("RBAC")
+            if cfg.abac_fn != "open":
+                active_layers.append("ABAC")
+            if cfg.tsphol_fn != "open":
+                active_layers.append("TS-PHOL")
+
+            if len(active_layers) == 3:
+                icon = "🛡️"
+            elif len(active_layers) == 0:
+                icon = "⚪"
+            else:
+                icon = "🔬"
+
+            st.markdown(f"#### {cfg.name} {icon}")
             st.markdown(cfg.description)
 
             # Show which layers are active/disabled
             layers = []
-            layers.append(f"RBAC: `{cfg.rbac_fn}`")
-            abac_label = f"~~ABAC~~ `off`" if cfg.abac_fn == "open" else f"ABAC: `{cfg.abac_fn}`"
-            tsphol_label = f"~~TS-PHOL~~ `off`" if cfg.tsphol_fn in ("open", "abac_passthrough") else f"TS-PHOL: `{cfg.tsphol_fn}`"
-            layers.append(abac_label)
-            layers.append(tsphol_label)
+            layers.append(f"RBAC: {'`on`' if cfg.rbac_fn != 'open' else '~~off~~'}")
+            layers.append(f"ABAC: {'`on`' if cfg.abac_fn != 'open' else '~~off~~'}")
+            layers.append(f"TS-PHOL: {'`on`' if cfg.tsphol_fn != 'open' else '~~off~~'}")
 
             st.caption(
-                f"**Filter:** `{tag}` · **Tasks:** {tag_count:,} · "
-                f"**Evals:** {total_evals:,}"
+                f"**Tasks:** {len(tasks):,} · **Evals:** {total_evals:,}"
             )
             st.caption(" · ".join(layers))
 
@@ -155,8 +243,8 @@ def _render_experiment_runner(tasks, personas):
     with col_sel:
         run_choice = st.selectbox(
             "Select Experiment",
-            ["Run All (E1–E4)", "Run E1 + E2 (Full Pipeline)", "Run E3 + E4 (Ablation)"]
-            + [f"{e.name}: {e.description[:50]}" for e in EXPERIMENTS],
+            ["Run All (E1–E4)", "Run E1 (Full Pipeline)", "Run E2–E4 (Ablation)"]
+            + [f"{e.name}: {e.description[:60]}" for e in EXPERIMENTS],
         )
     with col_mode:
         mode = st.radio("Mode", ["Selection (LLM-ResM)", "Validation"], horizontal=True)
@@ -167,10 +255,10 @@ def _render_experiment_runner(tasks, personas):
 
     if run_choice == "Run All (E1–E4)":
         configs_to_run = list(EXPERIMENTS)
-    elif run_choice == "Run E1 + E2 (Full Pipeline)":
-        configs_to_run = [e for e in EXPERIMENTS if e.name in ("E1", "E2")]
-    elif run_choice == "Run E3 + E4 (Ablation)":
-        configs_to_run = [e for e in EXPERIMENTS if e.name in ("E3", "E4")]
+    elif run_choice == "Run E1 (Full Pipeline)":
+        configs_to_run = [e for e in EXPERIMENTS if e.name == "E1"]
+    elif run_choice == "Run E2–E4 (Ablation)":
+        configs_to_run = [e for e in EXPERIMENTS if e.name in ("E2", "E3", "E4")]
     else:
         cname = run_choice.split(":")[0].strip()
         configs_to_run = [EXPERIMENT_MAP[cname]]
@@ -289,6 +377,18 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
         "inference_mode": "llm" if use_real_llm else "simulation",
         "llm_model": llm_model if use_real_llm else None,
     }
+
+    # Persist full log to disk
+    try:
+        log_path = _save_experiment_log(
+            all_metrics, all_results, mode,
+            inference_mode="llm" if use_real_llm else "simulation",
+            llm_model=llm_model if use_real_llm else None,
+        )
+        st.success(f"📄 Results log saved to `{log_path}`")
+    except Exception as e:
+        st.warning(f"⚠️ Could not save log: {e}")
+
     _display_results(st.session_state["experiment_results"])
 
 
@@ -321,6 +421,8 @@ def _display_results(data: dict):
             "Precision": f"{m.precision:.4f}",
             "Recall": f"{m.recall:.4f}",
             "SecFail": f"{m.security_failure_rate:.4f}",
+            "Tool Acc": f"{m.tool_accuracy:.4f}",
+            "Jaccard": f"{m.tool_jaccard_avg:.4f}",
             "ALLOW": m.allow_count,
             "DENY": m.deny_count,
             "TP": m.true_positive,
@@ -333,14 +435,31 @@ def _display_results(data: dict):
         rows.append(row)
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+    # ── Metric glossary ──
+    with st.expander("📖 Metric Glossary", expanded=False):
+        st.markdown("""
+| Metric | Description |
+|---|---|
+| **F₁** | Harmonic mean of Precision and Recall — overall governance effectiveness (0–1, higher is better) |
+| **Precision** | Of all requests denied, what fraction were truly illegitimate? High precision = few false alarms |
+| **Recall** | Of all illegitimate requests, what fraction were caught? High recall = few missed threats |
+| **SecFail** | Security Failure Rate — fraction of illegitimate requests that were **not** caught (1 − Recall). Lower is better |
+| **Tool Acc** | LLM Tool Selection Accuracy — fraction of tasks where the LLM selected the **exact same** tools as the groundtruth |
+| **Jaccard** | Average Jaccard similarity between LLM-selected and groundtruth tool sets (partial credit for overlapping selections) |
+| **ALLOW** | Total requests permitted through the governance pipeline |
+| **DENY** | Total requests blocked by any governance layer |
+| **TP** | True Positive — illegitimate request correctly denied |
+| **TN** | True Negative — legitimate request correctly allowed |
+| **FP** | False Positive — legitimate request incorrectly denied (over-restriction) |
+| **FN** | False Negative — illegitimate request incorrectly allowed (security gap) |
+""")
+
     # ── Denial source ──
     st.markdown("### 🔒 Denial Source Attribution")
     denial_rows = []
     for m in metrics_list:
         denial_rows.append({
             "Config": m.name,
-            "Identity": m.identity_denials,
-            "Transport": m.transport_denials,
             "RBAC": m.rbac_denials,
             "ABAC": m.abac_denials,
             "TS-PHOL": m.tsphol_denials,
@@ -406,40 +525,49 @@ def _display_results(data: dict):
                 "Precision": m.precision,
                 "Recall": m.recall,
                 "Security Failure Rate": m.security_failure_rate,
+                "Tool Accuracy": m.tool_accuracy,
+                "Tool Jaccard Avg": m.tool_jaccard_avg,
             })
         df_compare = pd.DataFrame(compare_data).set_index("Config")
         st.bar_chart(df_compare)
 
-        # Ablation delta table (E1 vs E3, E1 vs E4)
+        # Ablation delta table — subtractive chain: E4 → E3 → E2 → E1
         metrics_by_name = {m.name: m for m in metrics_list}
         e1 = metrics_by_name.get("E1")
-        ablation_pairs = [
-            ("E3", "RBAC-only (no ABAC, no TS-PHOL)"),
-            ("E4", "RBAC+ABAC (no TS-PHOL)"),
+        e4 = metrics_by_name.get("E4")
+        ablation_chain = [
+            ("E4", "E3", "TS-PHOL added (E4→E3)"),
+            ("E3", "E2", "ABAC added (E3→E2)"),
+            ("E2", "E1", "RBAC added (E2→E1)"),
         ]
-        has_ablation = e1 and any(n in metrics_by_name for n, _ in ablation_pairs)
+        has_ablation = e1 and e4
         if has_ablation:
-            st.markdown("##### 🔬 Ablation: Incremental Layer Value")
+            st.markdown("##### 🔬 Subtractive Ablation: Layer-by-Layer Value")
             st.caption(
-                "Compares each ablation experiment against E1 (full pipeline) on correct tasks. "
-                "Δ shows the difference — negative security failure rate is better."
+                "Starting from **E4 (no governance)** and adding layers one at a time. "
+                "Each row shows the marginal contribution of adding that layer. "
+                "Δ ALLOW < 0 means the layer blocked additional unsafe requests."
             )
             delta_rows = []
-            for abl_name, abl_desc in ablation_pairs:
-                abl = metrics_by_name.get(abl_name)
-                if not abl:
+            for from_name, to_name, desc in ablation_chain:
+                from_m = metrics_by_name.get(from_name)
+                to_m = metrics_by_name.get(to_name)
+                if not from_m or not to_m:
                     continue
                 delta_rows.append({
-                    "Comparison": f"E1 vs {abl_name}",
-                    "Ablation": abl_desc,
-                    "E1 ALLOW": e1.allow_count,
-                    f"{abl_name} ALLOW": abl.allow_count,
-                    "Δ ALLOW": abl.allow_count - e1.allow_count,
-                    "E1 SecFail": f"{e1.security_failure_rate:.4f}",
-                    f"{abl_name} SecFail": f"{abl.security_failure_rate:.4f}",
-                    "Δ SecFail": f"{abl.security_failure_rate - e1.security_failure_rate:+.4f}",
+                    "Layer Added": desc,
+                    f"{from_name} ALLOW": from_m.allow_count,
+                    f"{to_name} ALLOW": to_m.allow_count,
+                    "Δ ALLOW": to_m.allow_count - from_m.allow_count,
+                    f"{from_name} SecFail": f"{from_m.security_failure_rate:.4f}",
+                    f"{to_name} SecFail": f"{to_m.security_failure_rate:.4f}",
+                    "Δ SecFail": f"{to_m.security_failure_rate - from_m.security_failure_rate:+.4f}",
                 })
-            st.dataframe(pd.DataFrame(delta_rows), use_container_width=True, hide_index=True)
+            if delta_rows:
+                st.dataframe(pd.DataFrame(delta_rows), use_container_width=True, hide_index=True)
+
+    # ── OPA Baseline Comparison ──
+    _render_opa_comparison(data)
 
     # ── Export ──
     st.markdown("### 💾 Export")
@@ -493,12 +621,13 @@ def _build_assessment_prompt(metrics_list: List[ExperimentMetrics],
 
     # Metrics summary
     metrics_text = "## Experiment Metrics\n\n"
-    metrics_text += "| Config | Total | F1 | Precision | Recall | SecFail | ALLOW | DENY | DEC | TP | TN | FP | FN | LLM Fail |\n"
-    metrics_text += "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+    metrics_text += "| Config | Total | F1 | Precision | Recall | SecFail | Tool Acc | Jaccard | ALLOW | DENY | DEC | TP | TN | FP | FN | LLM Fail |\n"
+    metrics_text += "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
     for m in metrics_list:
         metrics_text += (
             f"| {m.name} | {m.total} | {m.f1:.4f} | {m.precision:.4f} | "
-            f"{m.recall:.4f} | {m.security_failure_rate:.4f} | {m.allow_count} | "
+            f"{m.recall:.4f} | {m.security_failure_rate:.4f} | "
+            f"{m.tool_accuracy:.4f} | {m.tool_jaccard_avg:.4f} | {m.allow_count} | "
             f"{m.deny_count} | {m.deception_count} | {m.true_positive} | "
             f"{m.true_negative} | {m.false_positive} | {m.false_negative} | "
             f"{m.llm_failures} |\n"
@@ -506,12 +635,12 @@ def _build_assessment_prompt(metrics_list: List[ExperimentMetrics],
 
     # Denial attribution
     metrics_text += "\n## Denial Source Attribution\n\n"
-    metrics_text += "| Config | RBAC | ABAC | TS-PHOL | Identity | Transport |\n"
-    metrics_text += "|---|---|---|---|---|---|\n"
+    metrics_text += "| Config | RBAC | ABAC | TS-PHOL |\n"
+    metrics_text += "|---|---|---|---|\n"
     for m in metrics_list:
         metrics_text += (
             f"| {m.name} | {m.rbac_denials} | {m.abac_denials} | "
-            f"{m.tsphol_denials} | {m.identity_denials} | {m.transport_denials} |\n"
+            f"{m.tsphol_denials} |\n"
         )
 
     # Per-persona breakdown for each config
@@ -543,32 +672,38 @@ def _build_assessment_prompt(metrics_list: List[ExperimentMetrics],
                 f"{stats['TP']} | {stats['TN']} | {stats['FP']} | {stats['FN']} |\n"
             )
 
-    # Ablation comparison
-    ablation_text = "\n## Ablation Comparison\n\n"
+    # Ablation comparison — subtractive chain
+    ablation_text = "\n## Subtractive Ablation Comparison\n\n"
     metrics_by_name = {m.name: m for m in metrics_list}
     e1 = metrics_by_name.get("E1")
+    e2 = metrics_by_name.get("E2")
     e3 = metrics_by_name.get("E3")
     e4 = metrics_by_name.get("E4")
-    if e1 and e3 and e4:
-        ablation_text += "| Metric | E3 (RBAC-only) | E4 (RBAC+ABAC) | E1 (Full) |\n"
-        ablation_text += "|---|---|---|---|\n"
+    if e1 and e4:
+        ablation_text += "| Metric | E4 (None) | E3 (TS-PHOL) | E2 (ABAC+TS-PHOL) | E1 (Full) |\n"
+        ablation_text += "|---|---|---|---|---|\n"
+        exps = [e4, e3, e2, e1]
         for label, attr in [("ALLOW", "allow_count"), ("DENY", "deny_count"),
                              ("DECEPTION", "deception_count"), ("F1", "f1"),
                              ("Precision", "precision"), ("Recall", "recall"),
                              ("SecFail", "security_failure_rate"),
+                             ("Tool Accuracy", "tool_accuracy"),
+                             ("Tool Jaccard Avg", "tool_jaccard_avg"),
                              ("RBAC Denials", "rbac_denials"),
                              ("ABAC Denials", "abac_denials"),
                              ("TSPHOL Denials", "tsphol_denials")]:
-            v3 = getattr(e3, attr)
-            v4 = getattr(e4, attr)
-            v1 = getattr(e1, attr)
-            if isinstance(v3, float):
-                ablation_text += f"| {label} | {v3:.4f} | {v4:.4f} | {v1:.4f} |\n"
-            else:
-                ablation_text += f"| {label} | {v3} | {v4} | {v1} |\n"
+            vals = []
+            for e in exps:
+                v = getattr(e, attr) if e else "N/A"
+                vals.append(f"{v:.4f}" if isinstance(v, float) else str(v))
+            ablation_text += f"| {label} | {' | '.join(vals)} |\n"
 
-        ablation_text += f"\nABAC incremental value (E3→E4): {e3.allow_count - e4.allow_count} fewer unsafe ALLOWs\n"
-        ablation_text += f"TS-PHOL incremental value (E4→E1): {e4.allow_count - e1.allow_count} fewer ALLOWs + {e1.deception_count} deception routes\n"
+        if e3 and e4:
+            ablation_text += f"\nTS-PHOL contribution (E4→E3): {e4.allow_count - e3.allow_count} fewer unsafe ALLOWs\n"
+        if e2 and e3:
+            ablation_text += f"ABAC contribution (E3→E2): {e3.allow_count - e2.allow_count} fewer unsafe ALLOWs\n"
+        if e1 and e2:
+            ablation_text += f"RBAC contribution (E2→E1): {e2.allow_count - e1.allow_count} fewer unsafe ALLOWs\n"
 
     # Access Decision Matrix summary
     matrix_text = "\n## Access Decision Matrix Summary\n\n"
@@ -719,15 +854,221 @@ def _run_ai_assessment(metrics_list, results_dict, mode, inf_mode,
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# OPA Baseline Comparison
+# ═══════════════════════════════════════════════════════════════════════
+
+def _render_opa_comparison(data: dict):
+    """Render the OPA baseline comparison section."""
+    st.markdown("### 🆚 OPA Baseline Comparison")
+
+    with st.expander("ℹ️ What is this?", expanded=False):
+        st.markdown("""
+This compares PALADIN's **layered governance** against **OPA (Open Policy Agent)** — the industry standard flat policy engine.
+
+The same RBAC, ABAC, and TS-PHOL rules are translated to OPA-equivalent semantics and evaluated against the same inputs:
+
+| Mode | Description |
+|---|---|
+| **OPA-Flat** | All rules evaluated simultaneously, any deny wins. No layering, no short-circuit. |
+| **OPA-Layered** | Sequential RBAC → ABAC → TS-PHOL with short-circuit, but **binary ALLOW/DENY only**. |
+| **PALADIN** | Layered short-circuit + **DECEPTION_ROUTED** third outcome (OPA cannot express this). |
+
+**Key architectural gaps in OPA:**
+- ❌ No deception routing (tri-state enforcement)
+- ❌ No native per-layer ablation
+- ❌ No typed predicate system with priority ordering
+- ⚠️ Flat evaluation sees all denial sources simultaneously (no short-circuit attribution)
+""")
+
+    # Find saved log files to compare against
+    log_dir = os.path.join("datasets", "experiment_logs")
+    if not os.path.isdir(log_dir):
+        st.info("No experiment logs found. Run an experiment first.")
+        return
+
+    log_files = sorted(
+        [f for f in os.listdir(log_dir) if f.endswith(".json")],
+        reverse=True,
+    )
+    if not log_files:
+        st.info("No experiment logs found. Run an experiment first.")
+        return
+
+    col_log, col_exp, col_btn = st.columns([3, 1, 1])
+    with col_log:
+        selected_log = st.selectbox(
+            "Experiment Log", log_files,
+            key="opa_log_select",
+            help="Select a saved experiment log to compare against OPA."
+        )
+    with col_exp:
+        exp_choice = st.selectbox("Experiment", ["E1", "E2", "E3", "E4"], key="opa_exp_select")
+    with col_btn:
+        st.write("")
+        opa_clicked = st.button("🚀 Run OPA Comparison", type="primary",
+                                 use_container_width=True, key="opa_run_btn")
+
+    if opa_clicked:
+        log_path = os.path.join(log_dir, selected_log)
+        progress = st.progress(0, text="Running OPA comparison...")
+
+        def opa_progress(info):
+            pct = info["current"] / info["total"] if info["total"] else 0
+            progress.progress(pct, text=f"OPA evaluation: {info['current']}/{info['total']}")
+
+        try:
+            metrics, details = run_opa_comparison(
+                log_path, experiment=exp_choice, progress_callback=opa_progress,
+            )
+            progress.progress(1.0, text="Complete!")
+            st.session_state["opa_comparison"] = {"metrics": metrics, "details": details, "exp": exp_choice}
+        except Exception as e:
+            st.error(f"OPA comparison failed: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            return
+
+    if "opa_comparison" not in st.session_state:
+        return
+
+    comp = st.session_state["opa_comparison"]
+    m = comp["metrics"]
+    exp_label = comp["exp"]
+
+    st.success(f"✅ OPA comparison complete — **{m.total:,}** evaluations ({exp_label})")
+
+    # ── Side-by-side metrics ──
+    st.markdown("#### 📊 PALADIN vs OPA — Head-to-Head")
+    comparison_rows = [
+        {
+            "Engine": f"PALADIN ({exp_label})",
+            "F₁": f"{m.paladin_f1:.4f}",
+            "SecFail": f"{m.paladin_secfail:.4f}",
+            "ALLOW": m.paladin_allow,
+            "DENY": m.paladin_deny,
+            "DECEPTION": m.paladin_deception,
+            "TP": m.paladin_tp,
+            "TN": m.paladin_tn,
+            "FP": m.paladin_fp,
+            "FN": m.paladin_fn,
+        },
+        {
+            "Engine": "OPA-Flat",
+            "F₁": f"{m.opa_flat_f1:.4f}",
+            "SecFail": f"{m.opa_flat_secfail:.4f}",
+            "ALLOW": m.opa_flat_allow,
+            "DENY": m.opa_flat_deny,
+            "DECEPTION": "N/A ❌",
+            "TP": m.opa_flat_tp,
+            "TN": m.opa_flat_tn,
+            "FP": m.opa_flat_fp,
+            "FN": m.opa_flat_fn,
+        },
+        {
+            "Engine": "OPA-Layered",
+            "F₁": f"{m.opa_layered_f1:.4f}",
+            "SecFail": f"{m.opa_layered_secfail:.4f}",
+            "ALLOW": m.opa_layered_allow,
+            "DENY": m.opa_layered_deny,
+            "DECEPTION": "N/A ❌",
+            "TP": m.opa_layered_tp,
+            "TN": m.opa_layered_tn,
+            "FP": m.opa_layered_fp,
+            "FN": m.opa_layered_fn,
+        },
+    ]
+    st.dataframe(pd.DataFrame(comparison_rows), use_container_width=True, hide_index=True)
+
+    # ── Agreement analysis ──
+    st.markdown("#### 🤝 Decision Agreement")
+    col_a1, col_a2, col_a3 = st.columns(3)
+    with col_a1:
+        st.metric("OPA-Flat Agreement", f"{m.agreement_rate_flat:.1%}",
+                   help="Fraction of rows where PALADIN and OPA-Flat made the same ALLOW/DENY decision")
+    with col_a2:
+        st.metric("OPA-Layered Agreement", f"{m.agreement_rate_layered:.1%}",
+                   help="Fraction of rows where PALADIN and OPA-Layered agree")
+    with col_a3:
+        st.metric("Deception Gap", f"{m.deception_gap:,}",
+                   help="Rows where PALADIN deception-routed (OPA cannot express this)")
+
+    if m.paladin_only_deny > 0 or m.opa_only_deny > 0:
+        st.markdown("##### Disagreement Breakdown")
+        dis_col1, dis_col2 = st.columns(2)
+        with dis_col1:
+            st.metric("PALADIN denies, OPA-Flat allows", m.paladin_only_deny,
+                       help="Cases where PALADIN's layered engine catches threats OPA misses")
+        with dis_col2:
+            st.metric("OPA-Flat denies, PALADIN allows", m.opa_only_deny,
+                       help="Cases where OPA-Flat is stricter (sees all denial sources)")
+
+    # ── OPA-Flat denial source visibility ──
+    if m.opa_flat_deny > 0:
+        st.markdown("#### 🔍 OPA-Flat Denial Source Visibility")
+        st.caption(
+            "In flat mode, OPA sees ALL denial sources simultaneously — "
+            "unlike PALADIN which short-circuits at the first denying layer."
+        )
+        flat_src_rows = [{
+            "RBAC Denials": m.opa_flat_rbac_denials,
+            "ABAC Denials": m.opa_flat_abac_denials,
+            "TS-PHOL Denials": m.opa_flat_tsphol_denials,
+            "Total Denied Rows": m.opa_flat_deny,
+        }]
+        st.dataframe(pd.DataFrame(flat_src_rows), use_container_width=True, hide_index=True)
+
+    # ── Deception routing callout ──
+    if m.deception_gap > 0:
+        st.markdown("#### 🔀 Deception Routing Gap")
+        st.warning(f"""
+**{m.deception_gap:,} evaluations** were deception-routed by PALADIN (sandboxed to honeypot).
+
+OPA can only express binary ALLOW/DENY — it cannot:
+- Contain threats via deception without alerting the attacker
+- Distinguish "hard deny" from "observe and contain"
+- Provide the intelligence-gathering advantage of honeypot routing
+
+This represents a **fundamental architectural capability gap** in flat policy engines.
+""")
+
+    # ── Architectural comparison ──
+    st.markdown("#### 📐 Architectural Comparison")
+    arch_rows = [
+        {"Capability": "Layered short-circuit evaluation", "PALADIN": "✅", "OPA": "❌ (flat)"},
+        {"Capability": "Deception routing (tri-state)", "PALADIN": "✅", "OPA": "❌"},
+        {"Capability": "Per-layer ablation testing", "PALADIN": "✅ (native)", "OPA": "❌ (requires rewrite)"},
+        {"Capability": "Per-layer denial attribution", "PALADIN": "✅", "OPA": "⚠️ (flat: all sources visible)"},
+        {"Capability": "Typed predicate system", "PALADIN": "✅ (TS-PHOL)", "OPA": "❌"},
+        {"Capability": "Priority-ordered rule evaluation", "PALADIN": "✅", "OPA": "⚠️ (manual else chains)"},
+        {"Capability": "Industry adoption", "PALADIN": "Research", "OPA": "✅ (CNCF graduated)"},
+        {"Capability": "Policy language", "PALADIN": "YAML + Python", "OPA": "Rego"},
+    ]
+    st.dataframe(pd.DataFrame(arch_rows), use_container_width=True, hide_index=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Tab 2 — Access Decision Matrix Explorer
 # ═══════════════════════════════════════════════════════════════════════
 
 def _render_matrix_explorer():
+    # ── Regeneration button ──
+    regen_col1, regen_col2 = st.columns([3, 1])
+    with regen_col1:
+        st.markdown("### 📊 Access Decision Matrix")
+    with regen_col2:
+        regen_clicked = st.button("🔄 Regenerate Matrix", type="secondary",
+                                   help="Re-run all persona × task evaluations through the full governance pipeline.",
+                                   use_container_width=True)
+
+    if regen_clicked:
+        _regenerate_matrix()
+        st.rerun()
+
     data = _load_matrix()
     if data is None:
         st.warning(
-            "Access Decision Matrix not found. Run `python scripts/generate_access_matrix.py` "
-            "to generate it."
+            "Access Decision Matrix not found. Click **🔄 Regenerate Matrix** above "
+            "or run `python scripts/generate_access_matrix.py`."
         )
         return
 
@@ -742,7 +1083,7 @@ def _render_matrix_explorer():
     if is_stale:
         st.warning(
             "⚠️ **Stale Matrix** — Policy files have changed since this matrix was generated. "
-            "Re-run `python scripts/generate_access_matrix.py` to update.",
+            "Click **🔄 Regenerate Matrix** above to update.",
             icon="⚠️",
         )
 
@@ -832,8 +1173,6 @@ def _render_waterfall(matrix: list):
 
     total = len(rows)
     layers = [
-        ("Identity", "expected_identity"),
-        ("Transport", "expected_transport"),
         ("RBAC", "expected_rbac"),
         ("ABAC", "expected_abac"),
         ("TS-PHOL", "expected_tsphol"),
@@ -897,8 +1236,6 @@ def _render_heatmap(matrix: list):
     )
 
     layers = [
-        ("Identity", "expected_identity"),
-        ("Transport", "expected_transport"),
         ("RBAC", "expected_rbac"),
         ("ABAC", "expected_abac"),
         ("TS-PHOL", "expected_tsphol"),
@@ -1084,8 +1421,6 @@ def _render_browse(matrix: list):
             "Domain": r["task_domain"],
             "Tag": r["match_tag"],
             "Write?": "✍️" if r["has_write"] else "",
-            "Identity": r["expected_identity"],
-            "Transport": r["expected_transport"],
             "RBAC": r["expected_rbac"],
             "ABAC": r["expected_abac"],
             "TS-PHOL": r["expected_tsphol"],

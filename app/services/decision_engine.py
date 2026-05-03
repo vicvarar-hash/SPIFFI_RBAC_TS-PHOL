@@ -30,7 +30,8 @@ class DecisionEngine:
                  rbac_svc: RBACService,
                  tsphol_svc: TSPHOLRuleService,
                  attribute_svc: MCPAttributeService,
-                 personas: List[MCPPersona]):
+                 personas: List[MCPPersona],
+                 abac_rule_svc: "ABACRuleService | None" = None):
         self.registry_svc = registry_svc
         self.allowlist_svc = allowlist_svc
         self.rbac_svc = rbac_svc
@@ -41,7 +42,7 @@ class DecisionEngine:
         # Initialize new engines
         self.intent_engine = IntentEngine()
         self.capability_mapper = CapabilityMapper()
-        self.abac_engine = ABACEngine()
+        self.abac_engine = ABACEngine(rule_svc=abac_rule_svc) if abac_rule_svc else ABACEngine()
         self.tsphol_interpreter = TSPHOLInterpreter()
         self.tool_classifier = ToolClassifier()
 
@@ -233,7 +234,14 @@ class DecisionEngine:
         abac_result = self.abac_engine.evaluate(abac_attrs)
         evaluation_states["abac"] = abac_result["decision"]
         eval_context["abac_baseline"] = abac_result
-        trace.append(f"[Phase III] ABAC baseline evaluated: {abac_result['decision']} (matched: {abac_result['matched_rule']})")
+        trace.append(f"[Phase III] ABAC evaluated: {abac_result['decision']} (matched: {abac_result['matched_rule']})")
+
+        # ABAC enforces its own denials — short-circuit like RBAC
+        if abac_result["decision"] == "DENY":
+            trace.append(f"[Phase III] ABAC Check: DENY — {abac_result.get('failure_reason', 'attribute rule violation')}. ❌")
+            return self._finalize(caller_spiffe_id, evaluation_states, "DENY",
+                                  abac_result.get("failure_reason", "ABAC attribute-based denial"),
+                                  "ABAC", trace, eval_context, True, True, llm_outputs, None)
 
         # --- Step 6: TS-PHOL Policy-Driven Reasoning (Iteration 4E) ---
         evaluation_states["tsphol"] = "DENY"
@@ -424,23 +432,11 @@ class DecisionEngine:
         # 4S: Synthesis - TS-PHOL IS THE FINAL AUTHORITY
         evaluation_states["tsphol"] = final_status
         reason = "TS-PHOL approved access" if final_status == "ALLOW" else "TS-PHOL formal logical denial"
-        # ABAC is now a formal part of the flow
-        eval_context["abac_baseline"]["advisory"] = False
         
-        # Determine denial source with proper ABAC attribution
+        # TS-PHOL denial attribution (ABAC denials are handled upstream now)
         denial_source = None
         if final_status == "DENY":
-            # Find the rule that triggered the DENY (triggered=True, passed=False)
-            deny_rules = [r for r in logic_trace if r.get("triggered") and not r.get("passed")]
-            if deny_rules:
-                trigger_name = deny_rules[-1].get("rule", "")
-                if "abac_failure" in trigger_name:
-                    denial_source = "ABAC"
-                    reason = eval_context.get("abac_baseline", {}).get("failure_reason", reason)
-                else:
-                    denial_source = "TS-PHOL"
-            else:
-                denial_source = "TS-PHOL"
+            denial_source = "TS-PHOL"
         
         trace.append(f"[Phase III] TS-PHOL evaluated {len(tsphol_rules)} declarative rules. FINAL STATUS: {final_status}")
         trace.append(f"[Phase III] Authority Check: TS-PHOL overrides context. Decision: {final_status}")

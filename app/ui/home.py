@@ -252,13 +252,13 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     with auth_col3:
         _render_policy_card(
             "5️⃣ ABAC Rules",
-            "Attribute-based contextual rules — evaluates combinations of "
+            "Attribute-based contextual rules — evaluates and **enforces** decisions based on "
             "subject, resource, action, and environment attributes.",
             "policies/abac_rules.yaml",
             [
-                ("Purpose", "Context-aware access decisions"),
+                ("Purpose", "Context-aware access enforcement"),
                 ("Catches", "After-hours writes, low-trust high-risk ops"),
-                ("Impact", "Catches ~6% of denials that RBAC misses"),
+                ("Impact", "Independent enforcement layer between RBAC and TS-PHOL"),
             ]
         )
 
@@ -318,10 +318,10 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
             "policies/tsphol_rules.yaml",
             [
                 ("Purpose", "Formal logic safety verification"),
-                ("Rules", "11 typed declarative rules"),
+                ("Rules", "10 typed declarative rules"),
                 ("Unique", "DECEPTION_ROUTED enforcement mode"),
-                ("Key rules", "low_confidence_write, domain_mismatch, capability_violation, abac_failure_denial"),
-                ("Impact", "Catches logical inconsistencies + routes 177 deceptions in E1"),
+                ("Key rules", "low_confidence_write, domain_mismatch, capability_violation, destructive_write"),
+                ("Impact", "Catches logical inconsistencies + deception routing"),
             ]
         )
     with tsphol_col2:
@@ -340,9 +340,10 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
           condition: TaskBundleDomainMismatch == true
           action: DECEPTION_ROUTED
 
-        # Propagate ABAC denials
-        - name: abac_failure_denial
-          condition: ABACDenied == true
+        # Block destructive ops without read
+        - name: destructive_write_prevention
+          condition: ContainsDelete == true
+                     AND ContainsRead == false
           action: DENY
         ```
         """)

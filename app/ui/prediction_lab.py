@@ -1,4 +1,8 @@
 import streamlit as st
+import os
+import json
+import logging
+from datetime import datetime
 from typing import List, Any
 from app.models.astra import AstraTask
 from app.models.mcp import MCPPersona
@@ -17,6 +21,67 @@ from app.services.mcp_attribute_service import MCPAttributeService
 from app.services.decision_engine import DecisionEngine
 from app.services.spiffe_workload_service import SpiffeWorkloadService
 from app.services.reasoning_auditor import ReasoningAuditor
+
+PREDICTION_LOG_DIR = os.path.join("datasets", "prediction_logs")
+logger = logging.getLogger(__name__)
+
+
+def _save_prediction_log(run_data: dict, task: AstraTask) -> str:
+    """Save a single prediction lab run to a timestamped JSON log file."""
+    os.makedirs(PREDICTION_LOG_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ctx = run_data.get("experiment_context", {})
+    mode_tag = "sel" if ctx.get("mode", "").startswith("Selection") else "val"
+    import re
+    persona_tag = ctx.get("caller_label", "unknown")
+    persona_tag = re.sub(r'[^\w\-]', '_', persona_tag).strip('_').lower()
+    filename = f"pred_{ts}_{mode_tag}_{persona_tag}.json"
+    filepath = os.path.join(PREDICTION_LOG_DIR, filename)
+
+    decision: DecisionResult = run_data["decision"]
+    inference = run_data.get("inference")
+    comparison = run_data.get("comparison")
+
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "context": ctx,
+        "task": {
+            "task_text": task.task,
+            "match_tag": task.match_tag,
+            "candidate_tools": task.candidate_tools,
+            "candidate_mcp": task.candidate_mcp,
+            "groundtruth_tools": task.groundtruth_tools,
+            "groundtruth_mcp": task.groundtruth_mcp,
+        },
+        "decision": decision.model_dump(),
+        "inference": _serialize_inference(inference),
+        "comparison": comparison if isinstance(comparison, dict) else (
+            comparison.model_dump() if hasattr(comparison, "model_dump") else str(comparison)
+        ),
+    }
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(log_entry, f, indent=2, default=str)
+
+    logger.info("Prediction log saved to %s", filepath)
+    return filepath
+
+
+def _serialize_inference(inference) -> dict:
+    """Serialize a SelectionResult or ValidationResult to a dict."""
+    if inference is None:
+        return {}
+    if hasattr(inference, "model_dump"):
+        return inference.model_dump()
+    # Fallback for dataclass or plain object
+    result = {}
+    for attr in ["selected_mcp", "selected_tools", "confidence", "justification",
+                 "raw_output", "is_valid", "reason", "issues", "issue_codes",
+                 "expected_domain", "actual_domain", "task_alignment_score",
+                 "task_alignment_details", "validation_errors"]:
+        if hasattr(inference, attr):
+            result[attr] = getattr(inference, attr)
+    return result
 
 def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     st.title("🔮 Parallel reasoning lab")
@@ -278,6 +343,13 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 
                 st.session_state["last_run_data"] = run_data
 
+                # Persist log to disk
+                try:
+                    log_path = _save_prediction_log(run_data, task)
+                    st.success(f"📄 Prediction log saved to `{log_path}`")
+                except Exception as e:
+                    st.warning(f"⚠️ Could not save prediction log: {e}")
+
     # --- Persistent Result Rendering ---
     last_run = st.session_state.get("last_run_data")
     if last_run:
@@ -358,13 +430,13 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
 
 def _render_authorization_trace(decision: DecisionResult):
     """
-    Helper to render the RBAC and ABAC status and trace.
-    Used in Phase I for Validation and Phase III for Selection.
+    Helper to render the RBAC and ABAC status and detailed trace.
+    Both layers enforce independently in the pipeline.
     """
     rbac_status = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
     abac_status = decision.evaluation_states.get("abac", "NOT_EVALUATED")
 
-    with st.expander("⚖️ View Baseline Authority Trace (RBAC/ABAC)"):
+    with st.expander("⚖️ View Authorization Trace (RBAC → ABAC)"):
         # Display Subject Attributes
         from app.services.spiffe_registry_service import SpiffeRegistryService
         registry = SpiffeRegistryService().get_all()
@@ -394,7 +466,11 @@ def _render_authorization_trace(decision: DecisionResult):
         st.divider()
         abac = decision.context.get("abac_baseline", {})
         if abac:
-            st.markdown(f"**ABAC Evaluation Status:** `{abac.get('decision')}` | Rule: `{abac.get('matched_rule')}`")
+            abac_dec = abac.get('decision', 'N/A')
+            abac_icon = "✅" if abac_dec == "ALLOW" else "❌"
+            st.markdown(f"**ABAC Result:** {abac_icon} `{abac_dec}` | Rule: `{abac.get('matched_rule')}`")
+            if abac_dec == "DENY":
+                st.caption("⚡ ABAC enforced this denial directly — pipeline short-circuited.")
             
             # ABAC Attribute Mapping Detail (6D Detailed Trace)
             trace_steps = abac.get("reasoning_trace", {}).get("logic_steps", [])
@@ -447,11 +523,13 @@ def _render_phase_1(decision: DecisionResult, caller_display_name: str, mode: st
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Identity Verified", "ALLOW" if id_status == "ALLOW" else "DENY")
             c2.metric("mTLS Transport", "ALLOW" if tr_status == "ALLOW" else "DENY")
-            c3.metric("RBAC Status", rbac_status)
-            c4.metric("ABAC Status", abac_status)
+            c3.metric("RBAC (Identity)", rbac_status)
+            c4.metric("ABAC (Attributes)", abac_status)
             
             if rbac_status == "DENY":
-                st.error(f"RBAC Denial: {decision.reason}")
+                st.error(f"🛑 RBAC Denial: {decision.reason}")
+            elif abac_status == "DENY":
+                st.error(f"🛑 ABAC Denial: {decision.reason}")
             
             _render_authorization_trace(decision)
 
@@ -509,57 +587,6 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
     """
     st.markdown("### 🚦 Phase III: Verified Logic Trace (Post-LLM)")
     with st.container(border=True):
-        # Capability Coverage Assessment (post-LLM, computed from tool audit)
-        if mode == "selection" and inference is not None:
-            st.markdown("#### C.2 Capability Coverage Assessment")
-            st.caption(
-                "This is a **post-LLM verification step** — not part of the model's inference. "
-                "After the LLM selects tools, the system independently audits whether those tools "
-                "provide the capabilities required by the task."
-            )
-
-            # Read coverage from the decision engine's evaluation (authoritative source)
-            ctx = decision.context or {}
-            required_list = ctx.get("task_required_capabilities", [])
-            missing = ctx.get("missing_capabilities", [])
-            has_list = ctx.get("has_capabilities", [])
-
-            if required_list:
-                satisfied_count = len([c for c in required_list if c in has_list])
-                score = satisfied_count / len(required_list)
-            else:
-                satisfied_count = 0
-                score = 1.0  # No requirements = full coverage
-
-            c1, c2 = st.columns(2)
-            c1.metric("Capability Coverage", f"{score:.0%}")
-            c2.metric("Satisfied / Required", f"{satisfied_count} / {len(required_list)}" if required_list else "N/A")
-
-            if missing:
-                st.warning(f"⚠️ **Missing Required Capabilities:** {', '.join(f'`{c}`' for c in missing)}")
-                st.caption(
-                    "These capabilities are required by the task's domain and intent but were not "
-                    "provided by any of the selected tools. Missing **hard** capabilities trigger a "
-                    "coverage violation (potential deny); missing **soft** capabilities produce an audit warning."
-                )
-            else:
-                st.success("✅ **Full Capability Coverage** — all required capabilities are satisfied by the selected tools.")
-
-            with st.expander("ℹ️ How is this calculated?"):
-                st.markdown(
-                    "**Formula:** `coverage = satisfied_capabilities / total_required_capabilities`\n\n"
-                    "1. The system determines **required capabilities** from the domain/intent ontology "
-                    "(see Policy Studio → Capability Ontology).\n"
-                    "2. Each selected tool is audited to extract the capabilities it provides.\n"
-                    "3. The score is the ratio of requirements that are met. "
-                    "A score of **1.0 (100%)** means every required capability has at least one tool covering it.\n\n"
-                    "**Implications:**\n"
-                    "- **🔴 Hard capability missing** → `CapabilityCoverageViolation` → may result in **DENY**\n"
-                    "- **🟡 Soft capability missing** → lowers score, produces **audit warning** only\n"
-                    "- Score feeds into the TS-PHOL rule evaluation downstream"
-                )
-            st.divider()
-
         st.markdown("#### D. Fact Extraction & Audit")
         audit_data = decision.context.get("tool_audit", [])
         intent = decision.context.get("intent_decomposition", {})
@@ -581,15 +608,32 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
         
         if mode == "selection":
             st.divider()
-            st.markdown("#### E.2 Authorization Status (Post-Inference)")
+            st.markdown("#### E.2 Governance Pipeline (RBAC → ABAC → TS-PHOL)")
+            st.caption(
+                "Each layer enforces independently. If any layer denies, "
+                "the pipeline short-circuits — downstream layers are not reached."
+            )
             rbac_status = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
             abac_status = decision.evaluation_states.get("abac", "NOT_EVALUATED")
-            c1, c2 = st.columns(2)
-            c1.metric("RBAC Status", rbac_status)
-            c2.metric("ABAC Status", abac_status)
-            
+            tsphol_quick = decision.evaluation_states.get("tsphol", "NOT_EVALUATED")
+
+            c1, c2, c3 = st.columns(3)
+            # RBAC
+            rbac_icon = "✅" if rbac_status == "ALLOW" else ("❌" if rbac_status == "DENY" else "⏭️")
+            c1.metric(f"{rbac_icon} RBAC (Identity)", rbac_status)
+            # ABAC
+            abac_icon = "✅" if abac_status == "ALLOW" else ("❌" if abac_status == "DENY" else "⏭️")
+            c2.metric(f"{abac_icon} ABAC (Attributes)", abac_status)
+            # TS-PHOL
+            tsphol_icon = "✅" if tsphol_quick == "ALLOW" else ("❌" if tsphol_quick == "DENY" else "⏭️")
+            c3.metric(f"{tsphol_icon} TS-PHOL (Logic)", tsphol_quick)
+
             if rbac_status == "DENY":
-                st.error(f"RBAC Denial: {decision.reason}")
+                st.error(f"🛑 **RBAC Denial** — {decision.reason}")
+                st.caption("Pipeline short-circuited at RBAC. ABAC and TS-PHOL were not evaluated.")
+            elif abac_status == "DENY":
+                st.error(f"🛑 **ABAC Denial** — {decision.reason}")
+                st.caption("Pipeline short-circuited at ABAC. TS-PHOL was not evaluated.")
             
             _render_authorization_trace(decision)
 
@@ -599,7 +643,15 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
         summary = decision.context.get("tsphol_summary", {})
         
         if tsphol_status == "NOT_EVALUATED":
-            st.info("TS-PHOL not reached (Pre-LLM Block)")
+            # Determine why TS-PHOL was not reached
+            rbac_s = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
+            abac_s = decision.evaluation_states.get("abac", "NOT_EVALUATED")
+            if rbac_s == "DENY":
+                st.info("TS-PHOL not reached — pipeline short-circuited at **RBAC**.")
+            elif abac_s == "DENY":
+                st.info("TS-PHOL not reached — pipeline short-circuited at **ABAC**.")
+            else:
+                st.info("TS-PHOL not reached (Pre-LLM Block).")
         else:
             c1, c2, c3 = st.columns(3)
             c1.metric("Rules Evaluated", summary.get("evaluated_rules", 0))

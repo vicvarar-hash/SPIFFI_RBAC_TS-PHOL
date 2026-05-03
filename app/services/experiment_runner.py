@@ -26,6 +26,7 @@ from app.services.normalization import normalize_mcp_name
 from app.services.spiffe_registry_service import SpiffeRegistryService
 from app.services.spiffe_allowlist_service import SpiffeAllowlistService
 from app.services.rbac_service import RBACService
+from app.services.abac_rule_service import ABACRuleService
 from app.services.tsphol_rule_service import TSPHOLRuleService
 from app.services.mcp_attribute_service import MCPAttributeService
 from app.services.decision_engine import DecisionEngine
@@ -62,6 +63,9 @@ class RunResult:
     selected_mcps: List[str] = field(default_factory=list)    # What was actually evaluated
     groundtruth_tools: List[str] = field(default_factory=list)
     groundtruth_mcps: List[str] = field(default_factory=list)
+    # LLM selection accuracy vs groundtruth
+    tool_match: bool = False            # Exact set match (selected == groundtruth)
+    tool_jaccard: float = 0.0           # Jaccard similarity (partial credit)
 
 
 @dataclass
@@ -83,6 +87,20 @@ class ExperimentMetrics:
     tsphol_denials: int = 0
     other_denials: int = 0
     llm_failures: int = 0
+    # LLM selection accuracy
+    tool_exact_matches: int = 0         # LLM picked exactly the groundtruth tools
+    tool_jaccard_sum: float = 0.0       # Sum of Jaccard similarities (for averaging)
+    tool_evaluated: int = 0             # Rows where LLM selection was compared
+
+    @property
+    def tool_accuracy(self) -> float:
+        """Exact-match accuracy: fraction of tasks where LLM picked groundtruth tools."""
+        return self.tool_exact_matches / self.tool_evaluated if self.tool_evaluated > 0 else 0.0
+
+    @property
+    def tool_jaccard_avg(self) -> float:
+        """Average Jaccard similarity between selected and groundtruth tool sets."""
+        return self.tool_jaccard_sum / self.tool_evaluated if self.tool_evaluated > 0 else 0.0
 
     @property
     def precision(self) -> float:
@@ -111,7 +129,8 @@ class ExperimentMetrics:
     def to_dict(self) -> dict:
         d = asdict(self)
         d.update(precision=self.precision, recall=self.recall, f1=self.f1,
-                 security_failure_rate=self.security_failure_rate, allow_rate=self.allow_rate)
+                 security_failure_rate=self.security_failure_rate, allow_rate=self.allow_rate,
+                 tool_accuracy=self.tool_accuracy, tool_jaccard_avg=self.tool_jaccard_avg)
         return d
 
 
@@ -150,6 +169,7 @@ def build_engine_from_policies(policies: Dict[str, dict], personas_list) -> Deci
             registry_service=registry_svc,
         )
         rbac_svc = RBACService(filepath=os.path.join(tmp_dir, "rbac.yaml"))
+        abac_rule_svc = ABACRuleService(filepath=os.path.join(tmp_dir, "abac_rules.yaml"))
         tsphol_svc = TSPHOLRuleService(filepath=os.path.join(tmp_dir, "tsphol_rules.yaml"))
         # MCPAttributeService reads from policy_dir, copy original attributes file
         orig_attrs = "policies/mcp_attributes.yaml"
@@ -171,6 +191,7 @@ def build_engine_from_policies(policies: Dict[str, dict], personas_list) -> Deci
             tsphol_svc=tsphol_svc,
             attribute_svc=attribute_svc,
             personas=personas_list,
+            abac_rule_svc=abac_rule_svc,
         )
         # Keep reference to tmp_dir for cleanup
         engine._tmp_dir = tmp_dir
@@ -276,6 +297,13 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
 
     has_write = any(kw in t for t in eval_tools for kw in WRITE_KEYWORDS)
 
+    # LLM selection accuracy vs groundtruth
+    sel_set = set(eval_tools)
+    gt_set = set(gt_tools)
+    tool_match = sel_set == gt_set
+    union = sel_set | gt_set
+    tool_jaccard = len(sel_set & gt_set) / len(union) if union else 1.0
+
     return RunResult(
         experiment=config.name,
         group=config.group,
@@ -300,6 +328,8 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
         selected_mcps=list(eval_mcps),
         groundtruth_tools=gt_tools,
         groundtruth_mcps=gt_mcps,
+        tool_match=tool_match,
+        tool_jaccard=tool_jaccard,
     )
 
 
@@ -316,6 +346,12 @@ def compute_metrics(results: List[RunResult], config: ExperimentConfig) -> Exper
         if r.llm_failed:
             m.llm_failures += 1
             continue
+
+        # LLM selection accuracy (computed for every non-failed row)
+        m.tool_evaluated += 1
+        if r.tool_match:
+            m.tool_exact_matches += 1
+        m.tool_jaccard_sum += r.tool_jaccard
 
         is_denied = r.final_decision in ("DENY", "DECEPTION_ROUTED")
         is_allowed = not is_denied

@@ -36,15 +36,6 @@ rules:
   derive: IrrelevantBundle
   priority: 120
 
-- rule_name: abac_failure_denial
-  description: Deny when attribute-based access control baseline is not met
-  if:
-    - predicate: ABACDenied
-      equals: true
-  then: DENY
-  derive: ABACFailure
-  priority: 115
-
 - rule_name: validation_failure_denial
   description: Deny when validation explicitly determines the bundle is invalid for the task
   if:

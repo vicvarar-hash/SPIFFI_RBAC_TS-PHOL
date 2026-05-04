@@ -58,8 +58,10 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     with rq3:
         st.info(
             "### RQ3: Auditability\n"
-            "Can every agentic tool-use decision produce a complete, auditable "
-            "predicate trace from identity through authorization to final verdict?"
+            "Does PALADIN produce complete predicate traces sufficient for "
+            "post-hoc audit of every tool-use decision? "
+            "*(Evidence: trace logs in the Experiment Lab detail every predicate "
+            "evaluation per task.)*"
         )
 
     st.divider()
@@ -69,13 +71,13 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     # ════════════════════════════════════════════════════════════════════
     st.header("💡 Novelty: What Makes PALADIN Different")
 
-    nov1, nov2, nov3 = st.columns(3)
+    nov1, nov2 = st.columns(2)
     with nov1:
         st.markdown("""
         **1. Composable Layered Governance**
 
-        Unlike flat RBAC systems, PALADIN enforces three independent, non-overlapping
-        security layers — each catching threats the others miss:
+        Unlike flat RBAC systems, PALADIN enforces three complementary security layers
+        with distinct failure modes — each catching threats the others miss:
 
         | Layer | Catches | Example |
         |---|---|---|
@@ -98,12 +100,13 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         **Key innovations:**
         - **Post-inference, pre-execution** verification gate
         - **Deception routing** — a third enforcement mode beyond ALLOW/DENY
-          that honeypots suspicious requests for threat intelligence
-        - **Mission-permission decoupling** — safety evaluated against *task intent*,
-          not just identity
+          that honeypots suspicious requests for threat intelligence.
+          Current evaluation measures detection accuracy; false-positive impact
+          on availability is noted as a limitation and future work direction.
         - **Complete predicate traces** — every decision is formally auditable
         """)
 
+    nov3, nov4 = st.columns(2)
     with nov3:
         st.markdown("""
         **3. OPA Baseline Validation**
@@ -119,6 +122,27 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         Run the comparison yourself in the **🆚 OPA Baseline Comparison** tab
         of the Experiment Lab — no new experiment required.
         """)
+
+    with nov4:
+        st.markdown("""
+        **4. Mission-Permission Decoupling**
+
+        Unlike every existing RBAC/ABAC framework — which asks *"Is this caller allowed
+        to invoke this tool?"* — PALADIN evaluates tool selections against **task intent
+        and capability requirements**, not just caller identity.
+
+        TS-PHOL predicates verify that the *selected tool bundle* satisfies the
+        *mission's capability profile*: correct domain alignment, sufficient action
+        coverage, and adequate confidence — independently of who the caller is.
+        This means a legitimately authorized agent can still be denied if its tool
+        choice is wrong *for the task at hand*, closing a class of over-privilege
+        vulnerabilities that identity-only models cannot detect.
+        """)
+
+    st.caption(
+        "**Limitations:** Single-model evaluation (GPT-4o), purpose-built dataset (ASTRA), "
+        "and no production-scale latency benchmarks. See paper §7 for full discussion."
+    )
 
     st.divider()
 

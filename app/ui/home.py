@@ -150,28 +150,8 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     # Governance Pipeline Architecture
     # ════════════════════════════════════════════════════════════════════
     st.header("🏗️ Governance Pipeline")
-    st.markdown("""
-    Every tool-use request flows through a **layered pipeline** where each layer independently
-    evaluates and can deny or redirect the request:
-    """)
 
-    st.markdown("""
-    ```
-    ┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-    │  Phase I:        │     │  Phase II:        │     │  Phase III:       │
-    │  Pre-LLM         │ ──► │  LLM Inference    │ ──► │  Post-LLM Logic   │
-    │                  │     │                   │     │                   │
-    │  ◆ SPIFFE ID     │     │  ◆ Tool Selection │     │  ◆ RBAC Check     │
-    │  ◆ Registry      │     │  ◆ Confidence     │     │  ◆ ABAC Rules     │
-    │  ◆ Allowlist     │     │  ◆ Justification  │     │  ◆ Fact Extraction│
-    │                  │     │                   │     │  ◆ TS-PHOL Rules  │
-    └─────────────────┘     └──────────────────┘     └──────────────────┘
-                                                              │
-                                                    ┌────────┼────────┐
-                                                    ▼        ▼        ▼
-                                                  ALLOW    DENY   DECEPTION
-    ```
-    """)
+    st.image("assets/paladin_pipeline.png", use_container_width=True)
 
     st.divider()
 

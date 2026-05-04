@@ -1,123 +1,280 @@
-# SPIFFI_RBACK_TS-PHOL
+# 🛡️ PALADIN — Policy-Aware Layered Agentic Decision Intelligence
 
-Research and demonstration platform for secure, agentic tool orchestration using the Model Context Protocol (MCP).
+A composable governance framework for securing LLM-based agentic tool selection
+through layered identity, attribute, and formal logic policies.
 
-## Architecture & Iterations
+> **Live Demo:** [paladin-duutz4i3lmxwm.thankfulsea-2363085b.eastus.azurecontainerapps.io](https://paladin-duutz4i3lmxwm.thankfulsea-2363085b.eastus.azurecontainerapps.io/)
 
-### Iteration 1 & 2: Core Prediction Flow & Dual-Mode Reasoning
-- **LLM-ResM (Selection)**: Autonomous selection of up to 3 MCP tools based on task description.
-- **Validation**: Independent evaluation of ASTRA dataset candidate bundles.
-- **Parallel Reasoning Lab**: Side-by-side UI layout comparing Selection vs Validation against ASTRA Groundtruth.
+---
 
-### Iteration 3 & 4A/4A.1: Persona Identities, Realistic Policy, & Semantic Heuristics
-Introduces a configuration and visualization layer for a real-world security architecture. The architecture is explicitly decoupled from dataset groundtruth, meaning the application is evaluated dynamically as if it were running natively in production.
+## Problem Statement
 
-Features include:
-- **6-Persona Model**: Differentiating **Agent Personas** (e.g. `Finance Agent` or `DevOps Agent`) from internal restrictive **Service Identities** (e.g., `Automation Gateway`), mapped safely to backing `spiffe://` IDs. Backwards compatible auto-migration handles deprecated config keys natively.
-- **Dynamic Risk Models**: `MCPRiskService` configures independent operational risk levels per MCP domain.
-- **Realistic RBAC**: Identity-based authorization modeled heavily on real-world MCP tool domain scopes.
-- **Semantic Rule Inferences**: The TS-PHOL heuristic engine consumes raw ASTRA Task strings to algorithmically infer risks (`missing_required_capability`, `irrelevant_tool_detected`, `cumulative_risk_score`) to simulate high-fidelity Contextual Access Constraints.
+Modern autonomous AI agents operate in open, federated ecosystems using protocols like the
+**Model Context Protocol (MCP)**. These agents select and invoke tools on behalf of users —
+but current security models offer only **flat RBAC** ("can this agent use this tool?") or
+**prompt-level guardrails** that are brittle and non-auditable.
 
-### Iteration 4A.2 (Revised): Staged Execution Pipeline & Evaluation States
-This iteration refactors the pipeline for efficiency and complete transparency:
-- **Pre-LLM Gate**: A short-circuit mechanism evaluates deterministic checks (Identity and Transport) *before* invoking expensive LLM calls. If these checks fail, the LLM is entirely bypassed.
-- **Strict Evaluation States**: The pipeline uses explicit `ALLOW`, `DENY`, and `NOT_EVALUATED` states, clearly differentiating between a security rule explicitly denying a request versus a downstream step never executing because of a prior block.
-- **LLM Transparency & Derived Features**: The UI strictly separates the raw AI output (Predicted MCPs/Tools, Justification, Confidence) from the System-Derived Features calculated post-inference (Operation risk score, tool counts, read/write heuristics). This eliminates "black box" behavior.
+This creates a critical **governance gap**: probabilistic LLM decisions must be grounded by
+**non-repudiable identity**, **contextual risk awareness**, and **formal logic verification**
+— all *before* any tool is executed.
 
-### Iteration 4C & 4E: Intent-Aware Predicate-Based Reasoning + Declarative Engine
-This iteration transforms the security engine into a formal logic reasoning system (Tractable Scoped Probabilistic Higher-Order Logic, or TS-PHOL) that understands **intent** and **capabilities**.
-- **Intent Decomposition & Capability Mapping**: Extracts the "Why" behind an agent's request (e.g., `InvestigateAnomaly` vs `SystemUpdate`) and maps tools to abstract capabilities like `MetricsQuery` or `LogAnalysis`.
-- **Declarative TS-PHOL**: Rules are now evaluated using formal logic predicates (e.g., `ConfidenceValue < 0.9 ∧ HasWriteCapability → DENY`) through a generic logic interpreter.
-- **ABAC Baseline Layer**: A parallel, strictly attribute-based access control tier (Role, MCP, Action, Confidence) provides a comparison point for the more advanced TS-PHOL logic.
-- **Logical Reasoning Traces**: The UI exposes a multi-step logical derivation trace showing how base predicates were combined to reach a security decision.
+### Research Questions
 
-### Iteration 4F: Predicate & Intent Extraction Refinement (Tool-Centric)
-This iteration hardens the "fact extraction" layer by shifting from text heuristics to **tool-centric inference**.
-- **Tool Classifier Service**: A central authority that maps tools to action categories (read, write, delete, search, etc.) and granular capabilities.
-- **Refined Intent Extraction**: Intent properties (`ContainsRead`, `ContainsWrite`) and required capabilities are now derived primarily from the actual selected tools, ensuring reasoning is faithful to the request.
-- **Advanced Logic Predicates**: Introduces `ContainsReadBeforeWrite` and `DominantActionType` to support realistic workflow safety reasoning.
-- **Predicate Audit View**: A new UI section in the Prediction Lab providing full transparency into how each tool was classified and the request-level predicates generated.
+| # | Question |
+|---|----------|
+| **RQ1** | Does a composable governance stack (RBAC → ABAC → TS-PHOL) provide measurably superior security over any single layer alone? |
+| **RQ2** | Can Typed Security Policy Higher-Order Logic (TS-PHOL) provide a deterministic safety floor for probabilistic LLM inferences, including deception routing? |
+| **RQ3** | Can every agentic tool-use decision produce a complete, auditable predicate trace from identity through authorization to final verdict? |
 
-### Iteration 4G: Domain-Aware Policies & ABAC Calibration
-This iteration transforms the security engine into a **domain-aware reasoning system** with realistic baseline performance.
-- **Domain-Aware Intent Taxonomy**: Transitioning from general keyword matching to domain-specific (Atlassian, Wikipedia, Grafana) intent classification.
-- **Capability Enrichment**: Maps over 15 specific tools to unique, granular capabilities (e.g., `TopicSummarization`, `AlertRuleReview`) with source tracking (Curated vs Heuristic).
-- **ABAC Calibration**: Refines the baseline access control thresholds to produce a realistic performance mix: `ALLOW` for low-to-medium risk read tasks with sufficient confidence, and `DENY` for high-risk writes.
-- **Audit Source Transparency**: The Prediction Lab UI now identifies whether a tool mapping was derived from a curated catalog or a heuristic fallback.
+---
 
-### Iteration 4H: Required Capability Alignment & Policy Studio Visibility
-This iteration refines the capability requirement engine for maximum accuracy and transparency.
-- **Tool-Grounded Requirements**: `RequiredCapabilities` now default to only those directly mapped from selected tools, eliminating "noisy" over-generation.
-- **Rule-Based Intent Inference**: Task-text signals now add extra requirements only through formal, domain-scoped rules with configurable confidence thresholds.
-- **Policy Studio Controls**: A new dedicated section for managing the **Domain Capability Catalog**, **Inference Rules**, and the **Global Confidence Threshold**.
-- **Requirement Provenance Audit**: The Decision View explicitly breaks down requirement sources (Tool vs. Intent) and shows filtering/rejection status for explainable security.
+## Technical Novelty
 
-### Iteration 4H.1: Dynamic & Expandable Domain Capability Catalog
-This iteration scales the capability inference system to support the full ecosystem of MCP domains with dynamic management.
-- **Full Domain Expansion**: Refactored taxonomy to support all 9 MCP domains (Notion, Stripe, MongoDB, Azure, Hummingbot, Research, etc.).
-- **Dynamic Domain Management**: Added a new UI section to **Add, Update, and Delete Domains** directly from the Policy Studio.
-- **String-Based Routing**: Decoupled inference logic from fixed Enums, allowing for real-time catalog expansion without code changes.
-- **Seeded Capability Knowledge**: Pre-populated the catalog with over 45 curated capabilities across all 9 domains for high-fidelity reasoning.
+### 1. Composable Layered Governance
+Unlike flat RBAC systems, PALADIN enforces three independent, non-overlapping
+security layers — each catching threats the others miss:
 
-### Iteration 4L: Comprehensive Inference & Rule CRUD
-This iteration completes the Capability Inference system by seeding knowledge for the entire MCP ecosystem and providing full CRUD controls.
-- **Ecosystem-Wide Seeding**: Added high-fidelity inference rules for all 9 domains (Notion, Stripe, Azure, MongoDB, Hummingbot, Research), ensuring the system responds intelligently to keywords like "payment", "subscription", and "arxiv".
-- **Full Rule CRUD Lifecycle**: Upgraded the Policy Studio to support the **Update** operation for existing rules. You can now modify rule names, domains, keywords, and confidence levels in-place.
-- **Unified Domain Taxonomy**: Synchronized the inference engine with the 9-domain taxonomy to prevent cross-domain capability leakage.
+| Layer | Catches | Example |
+|---|---|---|
+| **RBAC** | Identity mismatches | Finance agent → DevOps tools |
+| **ABAC** | Contextual risk | Right role but after-hours + high-risk write |
+| **TS-PHOL** | Logical inconsistency | Domain mismatch, capability gaps |
 
-### Iteration 4I: Capability Enrichment & ABAC Tracing
-This iteration matures the system's semantic intelligence and explainability.
-- **Enriched Capability Mapping**: Eliminated `GenericToolUse` for core domains (Grafana, Jira, Wikipedia) by adding granular mappings (e.g., `AlertRuleReview`).
-- **Capability Hierarchy**: Introduced abstract reasoning layers (e.g., `AlertRuleReview` -> `ObservabilityRead`) allowing TS-PHOL to reason at multiple levels of abstraction.
-- **ABAC Reasoning Trace**: The ABAC baseline now provides a detailed logic trace, explaining exactly which attribute conditions were met.
-- **Full Predicate Synchrony**: Refactored the internal data flow to ensure `tool_aggregates` from the fact extraction layer are strictly identical to the input of the TS-PHOL engine.
-- **Enhanced Audit UI**: Improved the Predicate Audit view with better JSON rendering (sorting, set-to-list conversion) and distinct provenance indicators.
+Ablation experiments prove each layer provides **irreplaceable value** —
+removing any one leaves exploitable gaps.
 
-### Iteration 4K: TS-PHOL Rule Audit Transparency
-This iteration ensures full explainability for every security decision, including those that result in an `ALLOW`.
-- **Positive Evaluation Traces**: TS-PHOL now evaluates and records the status of *every* rule, even when they do not trigger a denial.
-- **Structured Audit Result**: Each rule evaluation produces a high-fidelity record containing `evaluated`, `triggered`, `passed`, and a human-readable `reason`.
-- **Human-Readable Rationale**: Refactored the interpreter to provide logical explanations for rule decisions (e.g., "ContainsWrite is false -> safe").
-- **Audit UI Table**: Added a dedicated "Rule Evaluation Audit" section to the Prediction Lab, showing a clear PASS/FAIL breakdown for every security policy.
-- **Zero-Empty Trace Policy**: Ensured that the TS-PHOL trace is never empty, providing a definitive proof of safety for every execution.
+### 2. TS-PHOL: Typed Formal Logic for Agentic Security
+TS-PHOL doesn't just ask *"Can this agent use this tool?"* — it asks:
+> *"Does the selected tool bundle satisfy the mission's capability requirements
+> with sufficient confidence and domain alignment?"*
 
-The **Unified Decision Engine** operates in a strict 6-step sequence:
-1. **Pre-LLM Gate (SPIFFE Identity & Transport Allowlist)**: Verifies the caller identity format, existence, and mTLS access restrictions.
-2. **LLM Inference**: LLM runs to perform selection or validation. Skipped if Step 1 fails.
-3. **Fact Extraction (Tool Audit & Intent Decomposition)**: Performs tool-centric action classification, capability mapping, and intent inference.
-4. **RBAC**: Evaluates the caller's allowed/denied permissions against the requested MCP tools.
-5. **ABAC Baseline (Parallel)**: Evaluates simple attribute-based rules for comparison and transparency.
-6. **TS-PHOL (Tractable Scoped Probabilistic Higher-Order Logic) Reasoning**: Executes formal predicate logic to reach the final authoritative decision.
+- **Post-inference, pre-execution** verification gate
+- **Deception routing** — a third enforcement mode beyond ALLOW/DENY that honeypots
+  suspicious requests for threat intelligence
+- **Mission-permission decoupling** — safety evaluated against *task intent*, not just identity
+- **Complete predicate traces** — every decision is formally auditable
 
-#### Prediction Lab Integration
-The Parallel Reasoning Lab features a fully integrated **Execution Pipeline Panel**. It dynamically runs the 6-step engine, producing detailed traces separating benchmark results from logical reasoning. Intent decomposition, ABAC baselines, and formal predicate traces are cleanly isolated in the view.
+### 3. OPA Baseline Validation
+PALADIN is validated against **Open Policy Agent (OPA)** — the CNCF-graduated
+industry standard — by translating all rules into Rego and replaying
+the same evaluations through a flat policy engine:
 
-## Installation
+- **Rule equivalence** — high agreement on RBAC/ABAC confirms correct implementation
+- **Layered advantage** — PALADIN's TS-PHOL predicates catch threats OPA's flat model misses
+- **Deception routing gap** — OPA's binary ALLOW/DENY cannot express honeypot containment
 
-1. Ensure Python 3.9+ is installed.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+---
 
-## Usage
+## Governance Pipeline Architecture
 
-### 1. Start Identity Infrastructure (SPIRE)
-If you wish to test with genuine cryptographic identities instead of simulating them, you can instantly spin up the Docker-Compose network and register the agents by running:
-```bash
-python deploy_spire.py
+Every tool-use request flows through a **layered pipeline** where each layer independently
+evaluates and can deny or redirect the request:
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Phase I:        │     │  Phase II:        │     │  Phase III:       │
+│  Pre-LLM         │ ──► │  LLM Inference    │ ──► │  Post-LLM Logic   │
+│                  │     │                   │     │                   │
+│  ◆ SPIFFE ID     │     │  ◆ Tool Selection │     │  ◆ RBAC Check     │
+│  ◆ Registry      │     │  ◆ Confidence     │     │  ◆ ABAC Rules     │
+│  ◆ Allowlist     │     │  ◆ Justification  │     │  ◆ Fact Extraction│
+│                  │     │                   │     │  ◆ TS-PHOL Rules  │
+└─────────────────┘     └──────────────────┘     └──────────────────┘
+                                                          │
+                                                ┌────────┼────────┐
+                                                ▼        ▼        ▼
+                                              ALLOW    DENY   DECEPTION
 ```
 
-### 2. Run the Application
-Start the Streamlit reasoning lab:
+### Unified Decision Engine (6-Step Sequence)
+1. **Pre-LLM Gate (SPIFFE Identity & Transport Allowlist)** — Verifies the caller identity format, existence, and mTLS access restrictions
+2. **LLM Inference** — Autonomous selection/validation of MCP tools. Skipped if Step 1 fails
+3. **Fact Extraction (Tool Audit & Intent Decomposition)** — Tool-centric action classification, capability mapping, and intent inference
+4. **RBAC** — Evaluates the caller's allowed/denied permissions against requested MCP tools
+5. **ABAC Baseline** — Evaluates attribute-based contextual rules (role, MCP, action, confidence, risk)
+6. **TS-PHOL Reasoning** — Executes formal predicate logic to reach the final authoritative decision
+
+---
+
+## Policy Layers (9 Configurable)
+
+| # | Layer | File | Purpose |
+|---|-------|------|---------|
+| 1 | SPIFFE Registry | `policies/spiffe_registry.json` | Cryptographic identity anchoring (SPIFFE IDs → roles, trust, clearance) |
+| 2 | Transport Allowlist | `policies/spiffe_allowlist.json` | Pre-LLM identity gate (DENY if caller not in allowlist) |
+| 3 | MCP Attributes | `policies/mcp_attributes.yaml` | Risk metadata per MCP server (risk levels, compliance tiers) |
+| 4 | RBAC Policies | `policies/rbac.yaml` | Role → permitted MCP domains/tools mapping |
+| 5 | ABAC Rules | `policies/abac_rules.yaml` | Context-aware attribute-based access enforcement |
+| 6 | Domain Catalog | `policies/domain_capability_catalog.json` | Tool → domain → action classification |
+| 7 | Capability Ontology | `policies/domain_capability_ontology.json` | Intent → required capabilities mapping |
+| 8 | Heuristic Logic | `policies/heuristic_policy.json` | Fallback tool classification via verb-prefix matching |
+| 9 | TS-PHOL Rules | `policies/tsphol_rules.yaml` | Formal logic safety predicates (10 typed rules + DECEPTION mode) |
+
+All policies are editable through the **Policy Studio** UI — changes take effect immediately.
+
+---
+
+## SPIRE Integration
+
+PALADIN includes a fully integrated **SPIFFE/SPIRE** identity infrastructure:
+
+- **Cloud (Azure Container Apps):** SPIRE server + agent run as a sidecar in the container.
+  Real X.509 SVIDs are issued automatically on startup — 6 workload identities registered.
+- **Local (Docker Compose):** Deploy SPIRE via `python deploy_spire.py` or the UI's
+  built-in **🔧 SPIRE Deployment Controls** button.
+- **Simulation mode:** If SPIRE is unavailable, the system operates with simulated identities.
+
+Trust domain: `spiffe://demo.local`
+
+---
+
+## Application Sections
+
+| Section | Description |
+|---------|-------------|
+| **🏠 Home** | Problem statement, research questions, novelty overview, pipeline architecture, and system state |
+| **🛡️ Policy Studio** | Configure and inspect all 9 policy layers. SPIFFE Identity Registry with live SPIRE controls |
+| **🤖 MCP Persona Explorer** | Browse the MCP server catalog — tools, descriptions, and domain scope per persona |
+| **🔍 ASTRA Task Explorer** | Explore the evaluation dataset. Filter by MCP server, task category, and match tag |
+| **🔮 Prediction Lab** | Run individual tasks through the full governance pipeline with detailed predicate traces |
+| **🧪 Experiment Lab** | Run batch experiments (E1–E4) with ablation analysis. OPA baseline comparison tab. Access Decision Matrix (6,942 rows). AI-powered assessment |
+
+---
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| **Frontend** | Streamlit |
+| **Language** | Python 3.12 |
+| **LLM** | OpenAI GPT (configurable model) |
+| **Identity** | SPIFFE/SPIRE 1.9.6 |
+| **Policy Baseline** | OPA-equivalent Rego engine (Python) |
+| **Hosting** | Azure Container Apps |
+| **Container** | Docker (Python 3.12-slim + SPIRE sidecar) |
+| **CI/CD** | Azure Developer CLI (`azd`) |
+
+---
+
+## Installation & Usage
+
+### Prerequisites
+- Python 3.10+ (3.12 recommended)
+- OpenAI API key (for LLM-powered experiments)
+- Docker (optional — for local SPIRE infrastructure)
+
+### Quick Start
+
 ```bash
+# 1. Clone the repository
+git clone https://github.com/vicvarar-hash/SPIFFI_RBAC_TS-PHOL.git
+cd SPIFFI_RBAC_TS-PHOL
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. (Optional) Start SPIRE identity infrastructure
+python deploy_spire.py
+
+# 4. Run the application
 streamlit run main.py
 ```
-*Configure your OpenAI API key in the Streamlit Sidebar.*
+
+Configure your **OpenAI API key** in the Streamlit sidebar.
+
+### Azure Deployment
+
+The application is configured for Azure Container Apps with SPIRE sidecar:
+
+```bash
+# Login to Azure
+az login
+
+# Deploy (provisions infrastructure + builds + deploys)
+azd up
+```
+
+Infrastructure is defined in `infra/` using Bicep (ACR + Container Apps Environment + Container App + Log Analytics).
+
+---
 
 ## File Structure
 
-- `app/services/`: Core logic (`decision_engine`, `prediction_service`, `policy_loader`, `rbac_service`, etc.)
-- `app/ui/`: Streamlit components (`prediction_lab`, `policy_studio`)
-- `policies/`: JSON and YAML configuration files managed by the Policy Studio.
-- `results/`: Output logs (`prediction_logs.jsonl`, `decision_logs.jsonl`, `policy_changes.jsonl`).
+```
+├── main.py                          # Streamlit entrypoint
+├── Dockerfile                       # Container image (Python + SPIRE sidecar)
+├── azure.yaml                       # Azure Developer CLI config
+├── requirements.txt                 # Python dependencies
+├── deploy_spire.py                  # Local SPIRE deployment script
+├── .gitattributes                   # Line ending rules (LF for .sh, .conf)
+│
+├── app/
+│   ├── models/                      # Data models (AstraTask, MCPPersona)
+│   ├── services/                    # Core logic
+│   │   ├── decision_engine.py       # 6-step unified decision pipeline
+│   │   ├── prediction_service.py    # LLM inference service
+│   │   ├── policy_loader.py         # Policy file loader
+│   │   ├── rbac_service.py          # RBAC evaluation
+│   │   ├── abac_rule_service.py     # ABAC evaluation
+│   │   ├── tsphol_rule_service.py   # TS-PHOL formal logic engine
+│   │   ├── spiffe_registry_service.py   # SPIFFE identity management
+│   │   ├── spiffe_workload_service.py   # SPIRE integration (sidecar + Docker)
+│   │   ├── capability_inference_service.py  # Capability mapping
+│   │   ├── opa_comparison_engine.py     # OPA baseline comparison
+│   │   └── ...
+│   └── ui/                          # Streamlit UI components
+│       ├── home.py                  # Home page
+│       ├── policy_studio.py         # Policy Studio + SPIRE controls
+│       ├── prediction_lab.py        # Prediction Lab
+│       ├── experiment_lab.py        # Experiment Lab + OPA tab
+│       └── ...
+│
+├── policies/                        # Configurable policy files (JSON/YAML)
+│   ├── spiffe_registry.json
+│   ├── spiffe_allowlist.json
+│   ├── rbac.yaml
+│   ├── abac_rules.yaml
+│   ├── tsphol_rules.yaml
+│   ├── mcp_attributes.yaml
+│   ├── domain_capability_catalog.json
+│   ├── domain_capability_ontology.json
+│   ├── heuristic_policy.json
+│   └── rego/                        # OPA Rego translations
+│       ├── rbac.rego
+│       ├── abac.rego
+│       └── tsphol.rego
+│
+├── datasets/                        # ASTRA dataset & generated artifacts
+│   ├── astra_tasks.json
+│   ├── mcp_personas.json
+│   └── access_decision_matrix.json  # Generated (6,942 rows)
+│
+├── infra/                           # Azure infrastructure (Bicep)
+│   ├── main.bicep                   # Subscription-scoped entry point
+│   ├── main.parameters.json
+│   ├── modules/
+│   │   └── web.bicep                # Container Apps + ACR + Log Analytics
+│   └── spire/
+│       ├── sidecar/                 # Cloud SPIRE configs
+│       │   ├── server.conf
+│       │   ├── agent.conf
+│       │   └── start-spire.sh       # Container startup orchestrator
+│       ├── server/server.conf       # Local Docker SPIRE server config
+│       ├── agent/agent.conf         # Local Docker SPIRE agent config
+│       ├── docker-compose.yml       # Local SPIRE containers
+│       └── register_workloads.sh
+│
+└── results/                         # Runtime output logs
+    ├── prediction_logs.jsonl
+    ├── decision_logs.jsonl
+    └── policy_changes.jsonl
+```
+
+---
+
+## License
+
+This project is a research platform for studying layered policy governance over LLM-based agentic systems.
+
+© 2026 PALADIN — Policy-Aware Layered Agentic Decision Intelligence
+

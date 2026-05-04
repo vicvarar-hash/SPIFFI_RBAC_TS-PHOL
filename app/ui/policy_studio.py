@@ -155,6 +155,43 @@ def _render_experiment_policies():
         st.code(json.dumps(allowlist, indent=2), language="json")
 
 
+def _render_spire_deploy_controls(workload_svc: SpiffeWorkloadService):
+    """Render SPIRE deploy/redeploy controls when Docker is available."""
+    with st.expander("🔧 SPIRE Deployment Controls", expanded=True):
+        st.markdown(
+            "Deploy a local SPIRE infrastructure (server + agent) using Docker. "
+            "This enables **real cryptographic identity** issuance via the SPIFFE Workload API."
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            deploy_clicked = st.button("🚀 Deploy SPIRE", type="primary",
+                                        help="Start SPIRE server, agent, and register workloads")
+        with col2:
+            stop_clicked = st.button("🛑 Stop SPIRE",
+                                      help="Shut down all SPIRE containers")
+
+        if deploy_clicked:
+            progress_area = st.empty()
+            with st.spinner("Deploying SPIRE infrastructure... this takes ~15 seconds"):
+                success, logs = workload_svc.deploy_spire()
+            for log_line in logs:
+                st.text(log_line)
+            if success:
+                st.success("🎉 SPIRE is now live! Refreshing status...")
+                st.rerun()
+            else:
+                st.error("Deployment failed. Check the logs above for details.")
+
+        if stop_clicked:
+            with st.spinner("Stopping SPIRE containers..."):
+                ok, msg = workload_svc.stop_spire()
+            if ok:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(f"Failed: {msg}")
+
+
 def _render_spiffe_registry(svc: SpiffeRegistryService, workload_svc: SpiffeWorkloadService):
     st.header("SPIFFE Identity Registry")
     st.markdown("Define agent personas and their corresponding SPIFFE IDs.")
@@ -162,14 +199,41 @@ def _render_spiffe_registry(svc: SpiffeRegistryService, workload_svc: SpiffeWork
     # SPIRE status section
     st.subheader("🌐 SPIRE Infrastructure Status")
     real_id, id_source = workload_svc.fetch_real_identity()
+    
     if real_id:
-        st.success(f"✅ Connected to SPIRE Agent")
+        is_sidecar = workload_svc.is_sidecar_active()
+        mode_label = "Sidecar" if is_sidecar else "Docker"
+        st.success(f"✅ Connected to SPIRE Agent ({mode_label}) — Identity: `{real_id}`")
+        st.caption(f"Source: {id_source}")
         with st.expander("View Full Workload SVID Details (X.509)"):
             status_text = workload_svc.fetch_full_svid_status()
             st.code(status_text)
+        # Only show stop button for Docker mode (can't stop sidecar from within)
+        if not is_sidecar:
+            if st.button("🛑 Stop SPIRE", help="Shut down SPIRE server and agent containers"):
+                with st.spinner("Stopping SPIRE containers..."):
+                    ok, msg = workload_svc.stop_spire()
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(f"Failed to stop: {msg}")
+    elif "No such file or directory" in id_source or "not found" in id_source.lower():
+        docker_available = workload_svc.is_docker_available()
+        if not docker_available:
+            st.info(
+                "ℹ️ **SPIRE is not available in this environment** (Docker not detected). "
+                "Identity simulation mode is active — all SPIFFE IDs below are usable for experiments."
+            )
+            st.caption("💡 To enable live SPIRE, run this application locally with Docker Desktop running.")
+        else:
+            st.info("ℹ️ SPIRE is not running. Docker is available — you can deploy SPIRE below.")
+            _render_spire_deploy_controls(workload_svc)
     else:
         st.warning(f"⚠️ SPIRE Agent Offline or No Identity Issued")
         st.caption(f"Reason: {id_source}")
+        if workload_svc.is_docker_available():
+            _render_spire_deploy_controls(workload_svc)
 
     st.divider()
     

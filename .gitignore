@@ -43,3 +43,7 @@ tmp/
 # Experiment logs (generated per-run, can be large)
 datasets/experiment_logs/
 datasets/prediction_logs/
+
+# Azure Developer CLI environment (contains local config)
+.azure/
+

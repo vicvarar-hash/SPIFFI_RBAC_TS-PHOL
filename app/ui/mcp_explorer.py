@@ -5,11 +5,11 @@ import json
 import os
 
 def render_mcp_explorer(personas: List[MCPPersona]):
-    st.title("🤖 MCP Persona Explorer")
+    st.title("🤖 MCP Domain Explorer")
     
     # 6B: Use session state for persona selection and transient updates
     persona_names = sorted([p.name for p in personas])
-    selected_name = st.selectbox("Select MCP Persona", persona_names)
+    selected_name = st.selectbox("Select MCP Domain", persona_names)
     
     # Track the active persona in session state to allow modifications
     if 'mcp_edit_state' not in st.session_state or st.session_state.mcp_edit_state.name != selected_name:

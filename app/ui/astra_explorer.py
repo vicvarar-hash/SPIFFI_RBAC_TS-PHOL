@@ -105,10 +105,10 @@ def render_astra_explorer(tasks: List[AstraTask], personas: List[MCPPersona] = N
 
     with col_s2:
         if personas:
-            st.write("**MCP Personas**")
+            st.write("**MCP Domains**")
             total_tools = sum(len(p.tools) for p in personas)
             st.table({
-                "Metric": ["Total Personas", "Total Available Tools", "Avg Tools per Persona"],
+                "Metric": ["Total Domains", "Total Available Tools", "Avg Tools per Domain"],
                 "Count": [len(personas), total_tools, round(total_tools / len(personas), 2) if personas else 0]
             })
 

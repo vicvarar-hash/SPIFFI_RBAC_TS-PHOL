@@ -8,22 +8,22 @@ def render_health(tasks: List[AstraTask], personas: List[MCPPersona], mcp_errors
     
     st.markdown("### Validation Summary")
     
-    # MCP Persona Validation
-    st.markdown("#### MCP Persona Files")
+    # MCP Domain Validation
+    st.markdown("#### MCP Domain Files")
     persona_names = [p.name for p in personas]
     duplicates = [name for name in set(persona_names) if persona_names.count(name) > 1]
     
     if duplicates:
-        st.error(f"Duplicate MCP Persona names found: {', '.join(duplicates)}")
+        st.error(f"Duplicate MCP Domain names found: {', '.join(duplicates)}")
     else:
-        st.success("No duplicate MCP Persona names found.")
+        st.success("No duplicate MCP Domain names found.")
         
     if mcp_errors:
         st.warning(f"Metadata errors encountered in {len(mcp_errors)} files:")
         for err in mcp_errors:
             st.text(f"• {err}")
     else:
-        st.success("All MCP persona files loaded and parsed correctly.")
+        st.success("All MCP domain files loaded and parsed correctly.")
         
     # ASTRA Task Validation
     st.markdown("#### ASTRA Dataset")

@@ -49,7 +49,7 @@ selection = st.sidebar.radio(
     [
         "🏠 Home / Overview",
         "🛡️ Policy Studio",
-        "🤖 MCP Persona Explorer",
+        "🤖 MCP Domain Explorer",
         "🔍 ASTRA Task Explorer",
         "🔮 Prediction Lab",
         "🧪 Experiment Lab",
@@ -79,7 +79,7 @@ if selection == "🏠 Home / Overview":
     render_home(tasks, personas)
 elif selection == "🛡️ Policy Studio":
     render_policy_studio()
-elif selection == "🤖 MCP Persona Explorer":
+elif selection == "🤖 MCP Domain Explorer":
     render_mcp_explorer(personas)
 elif selection == "🔍 ASTRA Task Explorer":
     render_astra_explorer(tasks, personas)

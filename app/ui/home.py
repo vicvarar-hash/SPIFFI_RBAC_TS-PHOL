@@ -1,6 +1,7 @@
 import streamlit as st
 from typing import List
 import pandas as pd
+import altair as alt
 import os
 import json
 from app.models.astra import AstraTask
@@ -62,6 +63,42 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
             "post-hoc audit of every tool-use decision? "
             "*(Evidence: trace logs in the Experiment Lab detail every predicate "
             "evaluation per task.)*"
+        )
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # Governance Layers Defined
+    # ════════════════════════════════════════════════════════════════════
+    st.header("📖 Governance Layers Defined")
+    st.markdown("""
+    PALADIN enforces three complementary security layers, each addressing a different class of threat:
+    """)
+
+    d1, d2, d3 = st.columns(3)
+    with d1:
+        st.success(
+            "### RBAC\n"
+            "**Role-Based Access Control**\n\n"
+            "Grants or denies access based on the caller's assigned role.\n\n"
+            '*"Is this agent\'s role allowed to use this tool?"*'
+        )
+    with d2:
+        st.success(
+            "### ABAC\n"
+            "**Attribute-Based Access Control**\n\n"
+            "Evaluates contextual attributes (time of day, risk level, confidence, "
+            "action type) to enforce fine-grained conditions beyond role membership.\n\n"
+            '*"Given the current context, should this action be permitted?"*'
+        )
+    with d3:
+        st.success(
+            "### TS-PHOL\n"
+            "**Typed, Staged Predicate Higher-Order Logic**\n\n"
+            "A formal logic layer that evaluates whether the selected tool bundle "
+            "satisfies the mission's capability requirements with correct domain "
+            "alignment and sufficient confidence. Operates post-inference, pre-execution.\n\n"
+            '*"Is this the right set of tools for this task — and is the selection logically sound?"*'
         )
 
     st.divider()
@@ -195,19 +232,19 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         persona_count = len(personas)
         total_tools = sum(len(p.tools) for p in personas)
         st.markdown(f"""
-        **MCP Persona Catalog** — *Tool Provider Registry*
+        **MCP Domain Catalog** — *Tool Provider Registry*
 
-        The set of MCP server personas that define available tools, their
-        descriptions, and domain scope. Each persona represents a distinct
-        capability domain.
+        The set of MCP server domains that define available tools, their
+        descriptions, and capability scope. Each domain represents a distinct
+        tooling provider (e.g., Atlassian, GitHub, MongoDB).
 
         | Property | Value |
         |---|---|
-        | MCP Personas | **{persona_count}** |
+        | MCP Domains | **{persona_count}** |
         | Total Tools | **{total_tools:,}** |
-        | Domains | Grafana, Atlassian, GitHub, Slack, Hummingbot, MongoDB, etc. |
+        | Examples | Grafana, Atlassian, GitHub, Slack, Hummingbot, MongoDB, etc. |
 
-        **Loaded Personas:**
+        **Loaded Domains:**
         {', '.join(f'`{p.name}`' for p in sorted(personas, key=lambda x: x.name))}
         """)
 
@@ -379,9 +416,9 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         ("1. **Policy Studio**", "🛡️",
          "Configure and inspect all 9 policy layers. Edit RBAC rules, ABAC conditions, "
          "TS-PHOL logic, capability ontology, and more. Changes take effect immediately."),
-        ("2. **MCP Persona Explorer**", "🤖",
+        ("2. **MCP Domain Explorer**", "🤖",
          "Browse the MCP server catalog — see available tools, descriptions, and "
-         "domain scope for each persona."),
+         "capability scope for each domain."),
         ("3. **ASTRA Task Explorer**", "🔍",
          "Explore the evaluation dataset. Filter by MCP server, task category, and "
          "match tag. View groundtruth bundles and technical statistics."),
@@ -409,7 +446,7 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     # Key metrics row
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("ASTRA Tasks", f"{len(tasks):,}")
-    m2.metric("MCP Personas", f"{len(personas)}")
+    m2.metric("MCP Domains", f"{len(personas)}")
     m3.metric("Total Tools", f"{sum(len(p.tools) for p in personas):,}")
 
     # Matrix stats if available
@@ -443,8 +480,13 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     with col_left:
         st.subheader("Match Tag Distribution")
         df_tags = pd.DataFrame([{"Tag": t.match_tag} for t in tasks])
-        counts = df_tags["Tag"].value_counts()
-        st.bar_chart(counts)
+        counts = df_tags["Tag"].value_counts().reset_index()
+        counts.columns = ["Tag", "Count"]
+        chart_tags = alt.Chart(counts).mark_bar().encode(
+            x=alt.X("Tag:N", sort="-y"),
+            y=alt.Y("Count:Q"),
+        ).properties(height=300).configure_view(strokeWidth=0)
+        st.altair_chart(chart_tags, use_container_width=True)
 
     with col_right:
         st.subheader("Tools per MCP Domain")
@@ -453,8 +495,12 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
             domain_tools[p.name] = len(p.tools)
         df_domains = pd.DataFrame(
             [{"Domain": k, "Tools": v} for k, v in sorted(domain_tools.items())]
-        ).set_index("Domain")
-        st.bar_chart(df_domains)
+        )
+        chart_domains = alt.Chart(df_domains).mark_bar().encode(
+            x=alt.X("Domain:N", sort="-y"),
+            y=alt.Y("Tools:Q"),
+        ).properties(height=300).configure_view(strokeWidth=0)
+        st.altair_chart(chart_domains, use_container_width=True)
 
     # ── Footer ──
     st.markdown("---")

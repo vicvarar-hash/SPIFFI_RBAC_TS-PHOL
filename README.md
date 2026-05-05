@@ -30,6 +30,14 @@ This creates a critical **governance gap**: probabilistic LLM decisions must be 
 
 ## Technical Novelty
 
+### Governance Layers Defined
+
+| Layer | Full Name | What It Does |
+|-------|-----------|--------------|
+| **RBAC** | Role-Based Access Control | Grants or denies access based on the caller's assigned role. Answers: *"Is this agent's role allowed to use this tool?"* |
+| **ABAC** | Attribute-Based Access Control | Evaluates contextual attributes (time of day, risk level, confidence score, action type) to enforce fine-grained conditions beyond role membership. Answers: *"Given the current context, should this action be permitted?"* |
+| **TS-PHOL** | Typed, Staged Predicate Higher-Order Logic | A formal logic layer that evaluates whether the selected tool bundle satisfies the mission's capability requirements with correct domain alignment and sufficient confidence. Operates post-inference, pre-execution. Answers: *"Is this the right set of tools for this task — and is the selection logically sound?"* |
+
 ### 1. Composable Layered Governance
 Unlike flat RBAC systems, PALADIN enforces three complementary security layers
 with distinct failure modes — each catching threats the others miss:
@@ -130,6 +138,17 @@ All policies are editable through the **Policy Studio** UI — changes take effe
 
 ---
 
+## Key Terminology
+
+| Term | Meaning in PALADIN |
+|------|-------------------|
+| **Persona** | A SPIFFE-authenticated agent identity with a role, trust score, and clearance level (e.g., DevOps Agent, Finance Agent, Research Agent). The 6 personas are the callers evaluated in experiments. |
+| **Domain** | An MCP server and its tool catalog (e.g., Atlassian, GitHub, Hummingbot, MongoDB). Each domain represents a distinct set of capabilities available for tool selection. |
+
+The evaluation matrix consists of **1,157 tasks × 6 personas = 6,942 decisions**.
+
+---
+
 ## SPIRE Integration
 
 PALADIN includes a fully integrated **SPIFFE/SPIRE** identity infrastructure:
@@ -150,8 +169,8 @@ Trust domain: `spiffe://demo.local`
 |---------|-------------|
 | **🏠 Home** | Problem statement, research questions, novelty overview, pipeline architecture, and system state |
 | **🛡️ Policy Studio** | Configure and inspect all 9 policy layers. SPIFFE Identity Registry with live SPIRE controls |
-| **🤖 MCP Persona Explorer** | Browse the MCP server catalog — tools, descriptions, and domain scope per persona |
-| **🔍 ASTRA Task Explorer** | Explore the evaluation dataset. Filter by MCP server, task category, and match tag |
+| **🤖 MCP Domain Explorer** | Browse the MCP server catalog — tools, descriptions, and capability scope per domain (e.g., Atlassian, GitHub, MongoDB) |
+| **🔍 ASTRA Task Explorer** | Explore the evaluation dataset (1,157 tasks × 6 personas). Filter by MCP domain, task category, and match tag |
 | **🔮 Prediction Lab** | Run individual tasks through the full governance pipeline with detailed predicate traces |
 | **🧪 Experiment Lab** | Run batch experiments (E1–E4) with ablation analysis. OPA baseline comparison tab. Access Decision Matrix (6,942 rows). AI-powered assessment |
 
@@ -225,7 +244,7 @@ Infrastructure is defined in `infra/` using Bicep (ACR + Container Apps Environm
 ├── .gitattributes                   # Line ending rules (LF for .sh, .conf)
 │
 ├── app/
-│   ├── models/                      # Data models (AstraTask, MCPPersona)
+│   ├── models/                      # Data models (AstraTask, MCPPersona/Domain)
 │   ├── services/                    # Core logic
 │   │   ├── decision_engine.py       # 6-step unified decision pipeline
 │   │   ├── prediction_service.py    # LLM inference service
@@ -261,8 +280,8 @@ Infrastructure is defined in `infra/` using Bicep (ACR + Container Apps Environm
 │       └── tsphol.rego
 │
 ├── datasets/                        # ASTRA dataset & generated artifacts
-│   ├── astra_tasks.json
-│   ├── mcp_personas.json
+│   ├── astra_tasks.json             # 1,157 tasks across 8 MCP domains
+│   ├── mcp_personas.json            # NOTE: "personas" here = SPIFFE agent identities (not MCP domains)
 │   └── access_decision_matrix.json  # Generated (6,942 rows)
 │
 ├── infra/                           # Azure infrastructure (Bicep)

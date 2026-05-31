@@ -15,11 +15,10 @@ class ValidationService:
         self.persona_map = {p.name: p for p in personas}
         self.classifier = ToolClassifier()
 
-    def run_validation(self, task: AstraTask) -> ValidationResult:
+    def run_validation(self, task: AstraTask, exemplars: List[dict] = None) -> ValidationResult:
         if not self.llm.is_configured():
             return ValidationResult(
                 is_valid=False,
-                confidence=0.0,
                 reason="LLM provider not configured.",
                 issues=["LLM_NOT_CONFIGURED"]
             )
@@ -34,7 +33,7 @@ class ValidationService:
         intent_engine = IntentEngine()
         required_caps, optional_caps, _ = intent_engine.inference_svc.get_task_required_capabilities("General", task.task)
         
-        user_prompt = self._build_user_prompt(task, grounded_artifacts, list(required_caps), list(optional_caps))
+        user_prompt = self._build_user_prompt(task, grounded_artifacts, list(required_caps), list(optional_caps), exemplars=exemplars)
         
         try:
             raw_output = self.llm.query(system_prompt, user_prompt)
@@ -47,7 +46,6 @@ class ValidationService:
             
             return ValidationResult(
                 is_valid=bool(data.get("is_valid", False)),
-                confidence=float(data.get("confidence", 0.0)),
                 reason=data.get("justification", "No justification provided."),
                 issues=issue_meta.get("details", []),
                 issue_codes=issue_meta.get("codes", []),
@@ -60,7 +58,6 @@ class ValidationService:
         except Exception as e:
             return ValidationResult(
                 is_valid=False,
-                confidence=0.0,
                 reason=f"Error during validation: {str(e)}",
                 issues=[str(e)],
                 raw_output=None
@@ -89,7 +86,6 @@ class ValidationService:
         Return your answer ONLY in structured JSON format with the following fields:
         {
           "is_valid": true,
-          "confidence": 0.9,
           "justification": "Detailed explanation of your judgment, referencing the GROUNDED METADATA.",
           "selections": [{"tool": "...", "mcp": "..."}],
           "mission_metrics": {
@@ -107,11 +103,12 @@ class ValidationService:
         }
         
         IMPORTANT: The proposed bundle MUST contain EXACTLY 3 tools to be considered valid in this specific evaluation fragment. If the bundle contains fewer or more than 3 tools, you MUST mark it as invalid (`is_valid`: false) and include "INVALID_TOOL_COUNT" in the `issue_codes`.
-        Confidence and scores must be returned as actual calculated float numbers (e.g. 0.85). Do not just reply with fixed placeholders.
+        Scores must be returned as actual calculated float numbers (e.g. 0.85). Do not just reply with fixed placeholders.
         """
         return prompt
 
-    def _build_user_prompt(self, task: AstraTask, grounded_artifacts: List[dict], required_caps: List[str], optional_caps: List[str]) -> str:
+    def _build_user_prompt(self, task: AstraTask, grounded_artifacts: List[dict], required_caps: List[str], optional_caps: List[str],
+                            exemplars: List[dict] = None) -> str:
         persona_context = []
         for p in self.personas:
             p_text = f"MCP Persona: {p.name}\nTools: {', '.join([t.name for t in p.tools])}"
@@ -122,11 +119,25 @@ class ValidationService:
         artifact_str = ""
         for i, art in enumerate(grounded_artifacts):
             artifact_str += f"\n- Tool: {art['tool']}\n  - Grounded Actions: {', '.join(art['actions'] or [])}\n  - Grounded Capabilities: {', '.join(art['capabilities'] or [])}\n"
-        
+
+        exemplar_block = ""
+        if exemplars:
+            lines = ["", "[FEW-SHOT EXAMPLES — known-VALID bundles for similar tasks]"]
+            for i, ex in enumerate(exemplars, 1):
+                tools_json = json.dumps(ex.get("tools", []))
+                lines.append(
+                    f"Example {i}:\n  Task: {ex.get('task','')}\n"
+                    f"  Valid MCP: {ex.get('mcp','')}\n"
+                    f"  Valid tools: {tools_json}\n"
+                    f"  Judgment: is_valid=true"
+                )
+            lines.append("[END EXAMPLES]\n")
+            exemplar_block = "\n".join(lines)
+
         user_prompt = f"""
         [MCP CATALOG]
         {context_str}
-        
+        {exemplar_block}
         [GROUND-TRUTH REQUIREMENTS]
         REQUIRED CAPABILITIES: {', '.join(required_caps) if required_caps else 'None'}
         OPTIONAL ENRICHMENT: {', '.join(optional_caps) if optional_caps else 'None'}

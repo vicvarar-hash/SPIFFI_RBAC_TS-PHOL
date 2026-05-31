@@ -53,7 +53,6 @@ class RunResult:
     rbac_state: str
     abac_state: str
     tsphol_state: str
-    confidence: float
     has_write: bool
     # LLM inference tracking
     inference_mode: str = "simulation"        # "simulation" or "llm"
@@ -262,22 +261,28 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
                 final_decision="LLM_FAILED", denial_source=None,
                 identity_state="N/A", transport_state="N/A",
                 rbac_state="N/A", abac_state="N/A", tsphol_state="N/A",
-                confidence=0.0, has_write=False,
+                has_write=False,
                 inference_mode="llm", llm_failed=True, llm_error=llm_error,
                 selected_tools=[], selected_mcps=[],
                 groundtruth_tools=gt_tools, groundtruth_mcps=gt_mcps,
             )
-        # Use LLM-selected tools for governance evaluation
-        eval_tools = llm_output.get("selected_tools", gt_tools)
-        eval_mcps = llm_output.get("selected_mcps", gt_mcps)
-        confidence = llm_output.get("confidence", 0.5)
+        # Two cache shapes are supported:
+        #   • Selection cache  → LLM picks tools, governance evaluates picks.
+        #   • Validation cache → LLM judges the candidate (GT) bundle,
+        #     governance evaluates the GT bundle itself (matches Prediction Lab).
+        cache_mode = llm_output.get("_mode", "selection")
+        if cache_mode == "validation":
+            eval_tools = gt_tools
+            eval_mcps = gt_mcps
+        else:
+            eval_tools = llm_output.get("selected_tools", gt_tools)
+            eval_mcps = llm_output.get("selected_mcps", gt_mcps)
         llm_out = llm_output
     else:
         # Simulation: use groundtruth tools (deterministic passthrough)
         llm_out = simulate_llm_output(task, mode=mode, seed_extra=persona_key)
         eval_tools = llm_out.get("selected_tools", gt_tools)
         eval_mcps = llm_out.get("selected_mcps", gt_mcps)
-        confidence = llm_out["confidence"]
 
     mcp_filter = gt_mcps[0] if gt_mcps else "All"
 
@@ -288,7 +293,6 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
         caller_spiffe_id=spiffe_id,
         mcps=eval_mcps,
         tools=eval_tools,
-        confidence=confidence,
         llm_outputs=llm_out,
         task_text=task_text,
         mode=mode,
@@ -319,7 +323,6 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
         rbac_state=result.evaluation_states.get("rbac", "N/A"),
         abac_state=result.evaluation_states.get("abac", "N/A"),
         tsphol_state=result.evaluation_states.get("tsphol", "N/A"),
-        confidence=confidence,
         has_write=has_write,
         inference_mode=inference_mode,
         llm_failed=False,
@@ -419,14 +422,22 @@ def compute_domain_breakdown(results: List[RunResult]) -> Dict[str, Dict[str, in
 # ═══════════════════════════════════════════════════════════════════════
 
 def _task_fingerprint(task) -> str:
-    """Stable fingerprint for a task — used as cache key."""
+    """Stable fingerprint for a task — used as cache key.
+
+    Includes ``match_tag`` so rows with identical (text, mcps) but
+    different bundle category (correct vs wrong vs null) map to distinct
+    fingerprints. This keeps train/test/other partitions disjoint and
+    prevents cache collisions between correct and adversarial rows.
+    """
     if isinstance(task, dict):
         text = task["input"]["task"]
         mcps = task["input"]["mcp_servers"]
+        tag = task.get("match_tag") or "null"
     else:
         text = task.task
         mcps = task.candidate_mcp
-    raw = f"{text}|{','.join(sorted(mcps))}"
+        tag = getattr(task, "match_tag", None) or "null"
+    raw = f"{text}|{','.join(sorted(mcps))}|{tag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -448,24 +459,42 @@ def _to_astra_task(task):
 
 def build_llm_cache(tasks: list, personas_list, api_key: str,
                     model: str = "gpt-4o",
+                    mode: str = "selection",
                     progress_callback: Optional[Callable] = None,
-                    max_retries: int = 2) -> Dict[str, dict]:
+                    max_retries: int = 2,
+                    retriever: Optional[Any] = None) -> Dict[str, dict]:
     """Call the LLM once per unique task and cache results.
-    
+
+    Behavior depends on ``mode``:
+
+    * ``"selection"`` — invokes :class:`PredictionService` to have the LLM
+      pick a 3-tool bundle. Governance later evaluates the LLM's picks.
+    * ``"validation"`` — invokes :class:`ValidationService` to have the LLM
+      judge the dataset's candidate (groundtruth) bundle. Governance later
+      evaluates the candidate bundle itself (mirrors Prediction Lab).
+
+    If ``retriever`` (an :class:`ExemplarRetriever`) is provided, K few-shot
+    exemplars are injected into each prompt.
+
     Returns dict mapping task fingerprint → llm_output dict compatible
     with run_single()'s llm_output parameter.
     """
     from app.services.llm_provider import LLMProvider
     from app.services.prediction_service import PredictionService
+    from app.services.validation_service import ValidationService
     from app.services.intent_engine import IntentEngine
 
     llm = LLMProvider(api_key=api_key, model=model)
     if not llm.is_configured():
         raise ValueError("LLM provider not configured — check API key")
 
+    if mode not in ("selection", "validation"):
+        raise ValueError(f"Unsupported mode: {mode!r} (expected 'selection' or 'validation')")
+
     intent_engine = IntentEngine()
     pred_svc = PredictionService(llm=llm, personas=personas_list,
                                   intent_engine=intent_engine)
+    val_svc = ValidationService(llm=llm, personas=personas_list)
 
     # Dedupe tasks by fingerprint
     unique_tasks: Dict[str, Any] = {}
@@ -481,27 +510,54 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
 
     for fp, task in unique_tasks.items():
         astra_task = _to_astra_task(task)
-        result = None
+        exemplars = retriever.get(task) if retriever is not None else None
+        few_shot_k = len(exemplars) if exemplars else 0
 
         for attempt in range(max_retries + 1):
             try:
-                sel = pred_svc.run_selection(astra_task)
-                if sel.validation_errors and "LLM_NOT_CONFIGURED" in sel.validation_errors:
-                    cache[fp] = {"_failed": True, "_error": "LLM not configured"}
-                    break
+                if mode == "selection":
+                    sel = pred_svc.run_selection(astra_task, exemplars=exemplars)
+                    if sel.validation_errors and "LLM_NOT_CONFIGURED" in sel.validation_errors:
+                        cache[fp] = {"_failed": True, "_error": "LLM not configured"}
+                        break
 
-                cache[fp] = {
-                    "selected_tools": sel.selected_tools,
-                    "selected_mcps": sel.selected_mcp,
-                    "confidence": sel.confidence,
-                    "justification": sel.justification,
-                    "id_source": "LLM",
-                    "expected_domain": normalize_mcp_name(
-                        astra_task.candidate_mcp[0]) if astra_task.candidate_mcp else "uncertain",
-                    "raw_output": sel.raw_output,
-                    "validation_errors": sel.validation_errors,
-                }
-                result = True
+                    cache[fp] = {
+                        "_mode": "selection",
+                        "_few_shot_k": few_shot_k,
+                        "selected_tools": sel.selected_tools,
+                        "selected_mcps": sel.selected_mcp,
+                        "justification": sel.justification,
+                        "id_source": "LLM",
+                        "expected_domain": normalize_mcp_name(
+                            astra_task.candidate_mcp[0]) if astra_task.candidate_mcp else "uncertain",
+                        "raw_output": sel.raw_output,
+                        "validation_errors": sel.validation_errors,
+                    }
+                else:  # validation
+                    val = val_svc.run_validation(astra_task, exemplars=exemplars)
+                    if val.issues and "LLM_NOT_CONFIGURED" in val.issues:
+                        cache[fp] = {"_failed": True, "_error": "LLM not configured"}
+                        break
+
+                    # Governance will evaluate the candidate (GT) bundle itself.
+                    # We still record the candidate tools/mcps under
+                    # selected_tools/selected_mcps so downstream callers that
+                    # inspect the cache (e.g. OPA comparison) see what was judged.
+                    cache[fp] = {
+                        "_mode": "validation",
+                        "_few_shot_k": few_shot_k,
+                        "selected_tools": list(astra_task.candidate_tools),
+                        "selected_mcps": list(astra_task.candidate_mcp),
+                        "justification": val.reason,
+                        "is_valid": val.is_valid,
+                        "issue_codes": val.issue_codes,
+                        "issues": val.issues,
+                        "expected_domain": val.expected_domain,
+                        "actual_domain": val.actual_domain,
+                        "task_alignment_score": val.task_alignment_score,
+                        "id_source": "LLM",
+                        "raw_output": val.raw_output,
+                    }
                 break
             except Exception as e:
                 if attempt < max_retries:
@@ -509,7 +565,6 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
                     continue
                 cache[fp] = {"_failed": True, "_error": str(e)}
                 errors += 1
-                result = False
                 break
 
         done += 1
@@ -531,12 +586,17 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
 def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
                    mode: str = "selection",
                    progress_callback: Optional[Callable] = None,
-                   llm_cache: Optional[Dict[str, dict]] = None) -> tuple:
+                   llm_cache: Optional[Dict[str, dict]] = None,
+                   task_filter_fingerprints: Optional[set] = None) -> tuple:
     """
     Run a complete experiment: build engine, iterate all persona×task pairs, compute metrics.
 
     If llm_cache is provided, uses real LLM results for governance evaluation.
     Otherwise falls back to deterministic simulation.
+
+    If ``task_filter_fingerprints`` is provided, only tasks whose fingerprint
+    is in that set are evaluated (used to restrict governance evaluation to
+    the held-out test split when few-shot is enabled).
 
     Returns: (metrics: ExperimentMetrics, results: List[RunResult])
     """
@@ -556,6 +616,11 @@ def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
                     filtered_tasks.append(t)
         else:
             filtered_tasks = tasks
+
+        # Apply test-split fingerprint filter on top of match_tag filter
+        if task_filter_fingerprints is not None:
+            filtered_tasks = [t for t in filtered_tasks
+                              if _task_fingerprint(t) in task_filter_fingerprints]
 
         total_evals = len(active_personas) * len(filtered_tasks)
         done = 0

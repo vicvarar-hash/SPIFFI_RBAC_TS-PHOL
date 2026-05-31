@@ -75,7 +75,7 @@ def _serialize_inference(inference) -> dict:
         return inference.model_dump()
     # Fallback for dataclass or plain object
     result = {}
-    for attr in ["selected_mcp", "selected_tools", "confidence", "justification",
+    for attr in ["selected_mcp", "selected_tools", "justification",
                  "raw_output", "is_valid", "reason", "issues", "issue_codes",
                  "expected_domain", "actual_domain", "task_alignment_score",
                  "task_alignment_details", "validation_errors"]:
@@ -218,16 +218,74 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             st.warning("No tasks match the selected Task Category filter.")
             return
 
+        # 🎓 Few-shot toggle (must come BEFORE the task index so we can
+        # restrict the index range to the held-out test cohort).
+        # Mode must be selected first so the few-shot widget can show
+        # mode-appropriate options (selection-mode forbids in-domain
+        # retrieval because the MCP label on every exemplar leaks the
+        # answer; validation-mode permits it because the bundle already
+        # declares the MCP).
+        from app.ui.few_shot_widget import render_k_selector
+        split_info = None
+        with col_c1:
+            selected_mode = st.radio(
+                "Experiment Mode",
+                ["Selection (LLM-ResM)", "Validation"],
+                horizontal=True,
+                key="pred_mode_radio",
+            )
+            _mode_key = "selection" if selected_mode.startswith("Selection") else "validation"
+        st.session_state["experiment_mode"] = selected_mode
+        with col_c1:
+            use_few_shot = st.checkbox(
+                "🎓 Few-shot exemplars (70/30 split)", value=False,
+                help="Inject known-good examples from the 70% train split "
+                     "into the prompt, and restrict task picker to the 30% held-out test cohort.",
+            )
+            fs_choice = render_k_selector(
+                key=f"pred_fs_k_{_mode_key}",  # remount when mode changes
+                mode=_mode_key,
+                disabled=not use_few_shot,
+            )
+
+        if use_few_shot:
+            from app.services.split_service import load_or_build_split
+            split_info = load_or_build_split(tasks, ratio=0.7, seed=42)
+            test_fps = set(split_info.test_fingerprints)
+            other_fps = set(split_info.other_fingerprints)
+            allowed = test_fps | other_fps  # never train (would leak)
+            # Filter the task list to evaluable tasks only
+            from app.services.split_service import _task_fingerprint as _fp
+            filtered_tasks = [t for t in filtered_tasks if _fp(t) in allowed]
+            if not filtered_tasks:
+                st.warning("No TEST or wrong/null tasks match the selected filters. "
+                           "Either disable few-shot or widen the MCP/category filters.")
+                return
+
+        st.session_state["use_few_shot"] = use_few_shot
+        st.session_state["fs_choice"] = fs_choice
+        st.session_state["few_shot_label"] = fs_choice.label
+        st.session_state["fs_split"] = split_info
+
         with col_c2:
-            task_idx_in_filtered = st.number_input(f"Task Index (0-{len(filtered_tasks)-1})", min_value=0, max_value=len(filtered_tasks)-1, value=0)
+            label_suffix = " · TEST cohort only" if use_few_shot else ""
+            task_idx_in_filtered = st.number_input(
+                f"Task Index (0-{len(filtered_tasks)-1}){label_suffix}",
+                min_value=0, max_value=len(filtered_tasks)-1, value=0,
+            )
             task = filtered_tasks[task_idx_in_filtered]
             st.info(f"**Task Description:**  \n{task.task}")
             st.caption(f"Category: {task.match_tag if task.match_tag else 'Null'}")
-            
+
+            if use_few_shot and split_info is not None:
+                cohort = split_info.classify(task)
+                cohort_label = {"test": "🟩 TEST (held-out)", "other": "⬜ wrong/null"}.get(cohort, "🟦 train (?)")
+                st.caption(
+                    f"Few-shot: {fs_choice.label} · cohort: {cohort_label} · "
+                    f"train pool={len(split_info.train_fingerprints)} · test={len(split_info.test_fingerprints)}"
+                )
+
             st.divider()
-            # New Iteration 4F: Mode Selection
-            selected_mode = st.radio("Experiment Mode", ["Selection (LLM-ResM)", "Validation"], horizontal=True)
-            st.session_state["experiment_mode"] = selected_mode
             
         # Reset results if task context changes
         context_key = f"{selected_mcp_filter}_{selected_filter}_{task_idx_in_filtered}_{selected_mode}"
@@ -285,19 +343,34 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 if selected_mode.startswith("Selection"):
                     sel_pre_llm = decision_engine.pre_llm_check(caller_spiffe_id, None, None)
                     if sel_pre_llm["passed"]:
-                        selection = predictor.run_selection(task)
+                        # Build exemplars on-demand if few-shot enabled
+                        sel_exemplars = None
+                        if st.session_state.get("use_few_shot") and st.session_state.get("fs_split") is not None:
+                            from app.services.exemplar_retriever import ExemplarRetriever
+                            fs_split = st.session_state["fs_split"]
+                            train_tasks = fs_split.filter_train(tasks)
+                            _choice = st.session_state["fs_choice"]
+                            retriever = ExemplarRetriever(
+                                train_tasks,
+                                k=_choice.resolve_k(len(train_tasks)),
+                                strategy=_choice.strategy,
+                                seed=42,
+                                pad_cross_domain=_choice.pad_cross_domain,
+                            )
+                            sel_exemplars = retriever.get(task)
+                        selection = predictor.run_selection(task, exemplars=sel_exemplars)
                         sel_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, selection.selected_mcp, selection.selected_tools)
                         sel_raw = {}
                         try:
                             if selection.raw_output: sel_raw = json.loads(selection.raw_output)
                         except: pass
-                        sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, selection.selected_mcp, selection.selected_tools, selection.confidence, sel_raw, task.task, mode="selection", mcp_filter=selected_mcp_filter)
+                        sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, selection.selected_mcp, selection.selected_tools, sel_raw, task.task, mode="selection", mcp_filter=selected_mcp_filter)
                         sel_decision.llm_executed = True
-                        sel_decision.llm_output = {"selected_mcp": selection.selected_mcp, "selected_tools": selection.selected_tools, "confidence": selection.confidence, "justification": selection.justification}
+                        sel_decision.llm_output = {"selected_mcp": selection.selected_mcp, "selected_tools": selection.selected_tools, "justification": selection.justification}
                     else:
-                        selection = SelectionResult(selected_mcp=[], selected_tools=[], justification="Skipped due to Pre-LLM block", confidence=0.0, raw_output=None)
+                        selection = SelectionResult(selected_mcp=[], selected_tools=[], justification="Skipped due to Pre-LLM block", raw_output=None)
                         sel_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, [], [])
-                        sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, [], [], 0.0, {}, task.task)
+                        sel_decision = decision_engine.evaluate(sel_pre_llm, caller_spiffe_id, [], [], {}, task.task)
                         sel_decision.llm_executed = False
                     
                     run_data.update({
@@ -310,17 +383,30 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 elif selected_mode == "Validation":
                     val_pre_llm = decision_engine.pre_llm_check(caller_spiffe_id, task.candidate_mcp, task.candidate_tools)
                     if val_pre_llm["passed"]:
-                        validation = validator.run_validation(task)
+                        val_exemplars = None
+                        if st.session_state.get("use_few_shot") and st.session_state.get("fs_split") is not None:
+                            from app.services.exemplar_retriever import ExemplarRetriever
+                            fs_split = st.session_state["fs_split"]
+                            train_tasks = fs_split.filter_train(tasks)
+                            _choice = st.session_state["fs_choice"]
+                            retriever = ExemplarRetriever(
+                                train_tasks,
+                                k=_choice.resolve_k(len(train_tasks)),
+                                strategy=_choice.strategy,
+                                seed=42,
+                                pad_cross_domain=_choice.pad_cross_domain,
+                            )
+                            val_exemplars = retriever.get(task)
+                        validation = validator.run_validation(task, exemplars=val_exemplars)
                         val_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, task.candidate_mcp, task.candidate_tools)
                         val_raw = {}
                         try:
                             if validation.raw_output: val_raw = json.loads(validation.raw_output)
                         except: pass
-                        val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, validation.confidence, val_raw, task.task, mode="validation", mcp_filter=selected_mcp_filter)
+                        val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, val_raw, task.task, mode="validation", mcp_filter=selected_mcp_filter)
                         val_decision.llm_executed = True
                         val_decision.llm_output = {
                             "is_valid": validation.is_valid, 
-                            "confidence": validation.confidence, 
                             "reason": validation.reason, 
                             "issues": validation.issues,
                             "issue_codes": validation.issue_codes,
@@ -330,9 +416,9 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                             "task_alignment_details": validation.task_alignment_details
                         }
                     else:
-                        validation = ValidationResult(is_valid=False, confidence=0.0, reason="Skipped due to Pre-LLM block", issues=["SKIPPED"], raw_output=None)
+                        validation = ValidationResult(is_valid=False, reason="Skipped due to Pre-LLM block", issues=["SKIPPED"], raw_output=None)
                         val_comparison = comparer.compare(task.groundtruth_mcp, task.groundtruth_tools, task.candidate_mcp, task.candidate_tools)
-                        val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, 0.0, {}, task.task)
+                        val_decision = decision_engine.evaluate(val_pre_llm, caller_spiffe_id, task.candidate_mcp, task.candidate_tools, {}, task.task)
                         val_decision.llm_executed = False
                     
                     run_data.update({
@@ -547,9 +633,6 @@ def _render_phase_2(result: Any, mode: str, task: Any = None):
             st.write("**Predicted Tools:**")
             st.json(result.selected_tools)
             
-            c1, _ = st.columns(2)
-            c1.metric("Model Confidence", f"{result.confidence:.0%}")
-            
             st.markdown(f"**Model Justification:** {result.justification}")
             
         else:
@@ -559,15 +642,13 @@ def _render_phase_2(result: Any, mode: str, task: Any = None):
             
             v_out = result.model_dump() if hasattr(result, "model_dump") else result
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Model Confidence", f"{v_out.get('confidence', 0.0):.0%}")
-            
+            c1, c2 = st.columns(2)
             alignment_score = v_out.get("task_alignment_score", 0.0)
             eval_eval = "✅" if alignment_score > 0 else "❌" # Simulated indicator
-            c2.metric(f"Alignment Score {eval_eval}", f"{alignment_score:.2f}")
+            c1.metric(f"Alignment Score {eval_eval}", f"{alignment_score:.2f}")
             
             is_valid = v_out.get("is_valid", False)
-            c3.metric("Logical Validity", "VALID" if is_valid else "INVALID")
+            c2.metric("Logical Validity", "VALID" if is_valid else "INVALID")
             
             if v_out.get("issue_codes"):
                 st.write("**Detected Issue Codes:**")
@@ -700,3 +781,4 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
                     st.success(step)
                 else:
                     st.info(step)
+

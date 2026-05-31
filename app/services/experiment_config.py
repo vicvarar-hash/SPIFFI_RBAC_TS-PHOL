@@ -10,8 +10,7 @@ import os
 import copy
 import json
 import yaml
-import hashlib
-import random as _random_mod
+import hashlib  # noqa: F401
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Any, Callable, Optional
 
@@ -225,9 +224,6 @@ def tsphol_minimal() -> dict:
          "if": [{"predicate": "TaskBundleDomainMismatch", "equals": True},
                 {"predicate": "SelectionToleranceActive", "equals": False}],
          "then": "DENY", "priority": 120},
-        {"rule_name": "low_confidence_write_prevention", "description": "Deny low-confidence writes",
-         "if": [{"predicate": "ContainsWrite", "equals": True}, {"predicate": "ConfidenceValue", "lt": 0.75}],
-         "then": "DENY", "priority": 130},
     ]}
 
 
@@ -235,28 +231,10 @@ def tsphol_strict() -> dict:
     base = tsphol_production()
     for rule in base["rules"]:
         rn = rule.get("rule_name", "")
-        if rn == "elevated_risk_confidence":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = 0.95
-        elif rn == "low_task_alignment":
+        if rn == "low_task_alignment":
             for c in rule["if"]:
                 if c.get("predicate") == "TaskAlignmentScore" and "lt" in c:
                     c["lt"] = 0.6
-        elif rn == "high_risk_write_confidence_safeguard":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = 0.9
-        elif rn == "low_confidence_write_prevention":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = 0.85
-    base["rules"].append({
-        "rule_name": "read_only_confidence",
-        "description": "Deny read-only if confidence < 0.6",
-        "if": [{"predicate": "ContainsWrite", "equals": False}, {"predicate": "ConfidenceValue", "lt": 0.6}],
-        "then": "DENY", "priority": 50,
-    })
     return base
 
 
@@ -264,43 +242,16 @@ def tsphol_relaxed() -> dict:
     base = tsphol_production()
     for rule in base["rules"]:
         rn = rule.get("rule_name", "")
-        if rn == "elevated_risk_confidence":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = 0.80
-        elif rn == "low_task_alignment":
+        if rn == "low_task_alignment":
             for c in rule["if"]:
                 if c.get("predicate") == "TaskAlignmentScore" and "lt" in c:
                     c["lt"] = 0.3
-        elif rn == "high_risk_write_confidence_safeguard":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = 0.7
-        elif rn == "low_confidence_write_prevention":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = 0.6
     return base
 
 
 def _tsphol_without_rule(rule_to_remove: str) -> dict:
     base = tsphol_production()
     base["rules"] = [r for r in base["rules"] if r.get("rule_name") != rule_to_remove]
-    return base
-
-
-def _tsphol_confidence_sweep(write_threshold: float, high_risk_threshold: float) -> dict:
-    base = tsphol_production()
-    for rule in base["rules"]:
-        rn = rule.get("rule_name", "")
-        if rn == "low_confidence_write_prevention":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = write_threshold
-        elif rn == "high_risk_write_confidence_safeguard":
-            for c in rule["if"]:
-                if c.get("predicate") == "ConfidenceValue" and "lt" in c:
-                    c["lt"] = high_risk_threshold
     return base
 
 
@@ -317,16 +268,9 @@ POLICY_GENERATORS: Dict[str, Dict[str, Callable]] = {
         "production": tsphol_production, "open": tsphol_open,
         "minimal": tsphol_minimal,
         "strict": tsphol_strict, "relaxed": tsphol_relaxed,
-        "no_confidence_write":  lambda: _tsphol_without_rule("low_confidence_write_prevention"),
-        "no_high_risk_conf":    lambda: _tsphol_without_rule("high_risk_write_confidence_safeguard"),
         "no_hard_cap":          lambda: _tsphol_without_rule("hard_capability_violation"),
         "no_destructive":       lambda: _tsphol_without_rule("destructive_write_prevention"),
         "no_domain_mismatch":   lambda: _tsphol_without_rule("task_bundle_domain_mismatch"),
-        "conf_050_060": lambda: _tsphol_confidence_sweep(0.50, 0.60),
-        "conf_060_070": lambda: _tsphol_confidence_sweep(0.60, 0.70),
-        "conf_070_080": lambda: _tsphol_confidence_sweep(0.70, 0.80),
-        "conf_080_090": lambda: _tsphol_confidence_sweep(0.80, 0.90),
-        "conf_090_095": lambda: _tsphol_confidence_sweep(0.90, 0.95),
     },
 }
 
@@ -400,27 +344,10 @@ def simulate_llm_output(task, mode: str = "selection", seed_extra: str = "") -> 
         task_text = task.task
         match_tag = getattr(task, "match_tag", "null")
 
-    # Task-intrinsic confidence (no label leakage)
-    tool_count_signal = max(0.0, 1.0 - len(tools) * 0.05)
-    unique_mcps = len(set(mcps)) if mcps else 1
-    mcp_consistency = 1.0 if unique_mcps == 1 else 0.7
-    task_len = len(task_text)
-    specificity = min(1.0, task_len / 200.0)
-
-    raw_signal = 0.4 * tool_count_signal + 0.3 * mcp_consistency + 0.3 * specificity
-    base_confidence = 0.55 + 0.40 * raw_signal
-
-    seed_str = task_text[:100] + seed_extra
-    seed_val = int(hashlib.sha256(seed_str.encode()).hexdigest()[:8], 16)
-    rng = _random_mod.Random(seed_val)
-    noise = rng.gauss(0, 0.06)
-    confidence = max(0.10, min(0.99, base_confidence + noise))
-
     base_out = {
         "selected_tools": tools,
         "selected_mcps": mcps,
         "justification": f"Simulated {mode} for task: {task_text[:80]}...",
-        "confidence": confidence,
         "id_source": "Simulation",
         "expected_domain": normalize_mcp_name(mcps[0]) if mcps else "uncertain",
     }
@@ -428,7 +355,7 @@ def simulate_llm_output(task, mode: str = "selection", seed_extra: str = "") -> 
     if mode == "validation":
         is_correct = match_tag == "correct"
         # Validation-specific fields
-        base_out["is_valid"] = is_correct if confidence > 0.6 else False
+        base_out["is_valid"] = is_correct
         base_out["reason"] = "Tools match task requirements" if is_correct else "Tool-task mismatch detected"
         base_out["issues"] = [] if is_correct else ["domain_mismatch"]
         base_out["issue_codes"] = [] if is_correct else ["DOMAIN_MISMATCH"]

@@ -67,7 +67,6 @@ class PredicateEngine:
             p["ContainsSearch"] = properties.get("contains_search", False)
         
         # Metadata
-        p["ConfidenceValue"] = context.get("confidence", 0.0)
         p["HighestRiskLevel"] = context.get("highest_risk", "low")
         
         # 4M: Task/Bundle Alignment Predicates

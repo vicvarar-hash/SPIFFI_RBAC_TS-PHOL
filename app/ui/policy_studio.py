@@ -533,8 +533,8 @@ def _render_abac_baseline(svc: ABACRuleService):
         rule_id = st.text_input("Rule ID (e.g. abac_6)")
         
         st.markdown("**Rule JSON (Attributes & Action)**")
-        st.caption('Example: `{"condition": "confidence < 0.9", "action": "deny"}` or `{"multi_domain_limit": true, "action": "deny"}`')
-        rule_text = st.text_area("Rule Body", value='{"condition": "risk < confidence", "action": "deny"}')
+        st.caption('Example: `{"condition": "trust_score < 0.5", "action": "deny"}` or `{"multi_domain_limit": true, "action": "deny"}`')
+        rule_text = st.text_area("Rule Body", value='{"condition": "after_hours == true", "action": "deny"}')
         
         if st.form_submit_button("Save ABAC Rule"):
             try:

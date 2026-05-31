@@ -99,7 +99,6 @@ class DecisionEngine:
                  caller_spiffe_id: str, 
                  mcps: List[str], 
                  tools: List[str], 
-                 confidence: float,
                  llm_outputs: Dict[str, Any],
                  task_text: str = "",
                  mode: str = "selection",
@@ -138,8 +137,7 @@ class DecisionEngine:
             },
             "phase_2_inference": {
                 "mode": mode,
-                "llm_executed": True,
-                "confidence": confidence
+                "llm_executed": True
             },
             "phase_3_logic": {
                 "status": "EVALUATING"
@@ -226,7 +224,6 @@ class DecisionEngine:
                 "multi_domain": intent_info["intent_properties"].get("multi_domain", False)
             },
             "environment": {
-                "confidence": confidence,
                 "after_hours": _after_hours,
                 "simulated_hour": _hour_seed
             }
@@ -342,8 +339,6 @@ class DecisionEngine:
             "missing_optional": [c for c in optional_caps if c not in has_caps],
             "intent_info": intent_info,
             "tool_aggregates": tool_aggregates, # 4I: Direct aggregate sync
-            "confidence": confidence,
-            "ConfidenceValue": confidence, # Direct predicate injection for TS-PHOL
             "highest_risk": highest_risk,
             "HighestRiskLevel": highest_risk, # Direct predicate injection for TS-PHOL
             # 4M: Validation-Aware Context

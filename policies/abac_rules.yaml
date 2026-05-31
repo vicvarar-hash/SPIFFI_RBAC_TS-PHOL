@@ -223,3 +223,57 @@ rules:
     op: ==
     source: environment
     value: true
+
+# ═══════════════════════════════════════════════════════════════════
+# READ-SIDE GATES (new — give ABAC presence beyond writes)
+# These let ABAC catch attribute violations on read-only requests too.
+# ═══════════════════════════════════════════════════════════════════
+- id: abac_finance_data_access_restricted
+  description: Stripe and Hummingbot data access restricted to Finance or Security departments
+  action: deny
+  failure_reason: 'Access denied: Financial data (Stripe/Hummingbot) requires Finance or Security department membership'
+  match_attributes:
+  - attribute: domain
+    op: in
+    source: resource
+    value: ['stripe', 'hummingbot-mcp']
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Finance
+  - attribute: attributes.department
+    op: '!='
+    source: subject
+    value: Security
+
+- id: abac_infra_write_high_trust_required
+  description: Writes to infrastructure domains (Azure/MongoDB) require trust score >= 0.9
+  action: deny
+  failure_reason: 'Access denied: Infrastructure write operations require trust score >= 0.9'
+  match_attributes:
+  - attribute: domain
+    op: in
+    source: resource
+    value: ['azure', 'mongodb']
+  - attribute: contains_write
+    op: ==
+    source: action
+    value: true
+  - attribute: attributes.trust_score
+    op: <
+    source: subject
+    value: '0.9'
+
+- id: abac_cross_domain_low_trust
+  description: Multi-domain bundles require trust score >= 0.85
+  action: deny
+  failure_reason: 'Access denied: Cross-domain operations require trust score >= 0.85'
+  match_attributes:
+  - attribute: multi_domain
+    op: ==
+    source: action
+    value: true
+  - attribute: attributes.trust_score
+    op: <
+    source: subject
+    value: '0.85'

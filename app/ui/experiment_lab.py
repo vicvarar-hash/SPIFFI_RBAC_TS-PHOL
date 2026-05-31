@@ -1,15 +1,13 @@
 """
-Experiment Lab — batch experiment execution, OPA baseline comparison, and access decision matrix explorer.
+Experiment Lab — batch experiment execution and OPA baseline comparison.
 
-Three main sections:
+Two main sections:
 1. Experiment Runner — execute E1–E4 configurations and view results
 2. OPA Baseline Comparison — replay any saved log through OPA-equivalent evaluation
-3. Access Decision Matrix — explore pre-computed ground truth governance decisions
 """
 
 import os
 import json
-import hashlib
 import logging
 from datetime import datetime
 import streamlit as st
@@ -29,7 +27,6 @@ from app.services.experiment_runner import (
 )
 from app.services.opa_comparison import run_opa_comparison
 
-MATRIX_PATH = os.path.join("datasets", "access_decision_matrix.json")
 LOG_DIR = os.path.join("datasets", "experiment_logs")
 
 logger = logging.getLogger(__name__)
@@ -41,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 def _save_experiment_log(all_metrics: List, all_results: Dict,
                          mode: str, inference_mode: str,
-                         llm_model: str = None) -> str:
+                         llm_model: str = None,
+                         few_shot: Dict = None) -> str:
     """Save full experiment results to a timestamped JSON log file.
 
     Returns the path to the saved log file.
@@ -51,14 +49,21 @@ def _save_experiment_log(all_metrics: List, all_results: Dict,
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_mode = re.sub(r'[^\w\-]', '_', inference_mode)
     model_tag = f"_{re.sub(r'[^\w\-]', '_', llm_model)}" if llm_model else ""
-    filename = f"run_{ts}_{safe_mode}{model_tag}.json"
+    fs_tag = ""
+    if few_shot and few_shot.get("enabled"):
+        fs_label = re.sub(r'[^\w\-]', '_', str(few_shot.get("label", "fs")))
+        fs_tag = f"_fs-{fs_label}_k{few_shot.get('k_resolved', 0)}"
+    filename = f"run_{ts}_{safe_mode}{model_tag}_{mode}{fs_tag}.json"
     filepath = os.path.join(LOG_DIR, filename)
+
+    fs_meta = few_shot or {"enabled": False}
 
     log_data = {
         "timestamp": datetime.now().isoformat(),
         "inference_mode": inference_mode,
         "llm_model": llm_model,
         "evaluation_mode": mode,
+        "few_shot": fs_meta,
         "experiments": {},
     }
 
@@ -75,6 +80,7 @@ def _save_experiment_log(all_metrics: List, all_results: Dict,
             "metrics": m.to_dict(),
             "config": {
                 "description": m.description,
+                "few_shot": fs_meta,
             },
             "total_rows": len(rows),
             "rows": rows,
@@ -100,59 +106,18 @@ def _save_experiment_log(all_metrics: List, all_results: Dict,
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Cache helpers
-# ═══════════════════════════════════════════════════════════════════════
-
-def _regenerate_matrix():
-    """Regenerate the Access Decision Matrix from the UI with progress tracking."""
-    from scripts.generate_access_matrix import generate_matrix
-    with st.spinner("🔄 Regenerating Access Decision Matrix... This may take a few minutes."):
-        try:
-            result = generate_matrix()
-            total = result["metadata"]["total_rows"]
-            st.success(f"✅ Matrix regenerated: **{total:,}** rows written to `{MATRIX_PATH}`")
-            # Clear the cached version so it reloads
-            _load_matrix.clear()
-        except Exception as e:
-            st.error(f"❌ Matrix generation failed: {e}")
-
-@st.cache_data
-def _load_matrix():
-    """Load the access decision matrix from disk (cached)."""
-    if not os.path.exists(MATRIX_PATH):
-        return None
-    with open(MATRIX_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _current_policy_hashes() -> Dict[str, str]:
-    """Compute current policy file hashes for staleness detection."""
-    policy_files = ["rbac.yaml", "abac_rules.yaml", "tsphol_rules.yaml",
-                    "domain_capability_ontology.json"]
-    hashes = {}
-    for pf in policy_files:
-        path = os.path.join("policies", pf)
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                hashes[pf] = hashlib.sha256(f.read()).hexdigest()[:12]
-    return hashes
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # Main entry point
 # ═══════════════════════════════════════════════════════════════════════
 
 def render_experiment_lab(tasks, personas):
     st.title("🧪 Experiment Lab")
     st.markdown(
-        "Run governance experiments and explore the pre-computed Access Decision Matrix "
-        "that maps every *(persona × task)* combination through the full policy pipeline."
+        "Run governance experiments (E1–E4) and compare against an OPA-equivalent baseline."
     )
 
-    tab_runner, tab_opa, tab_matrix = st.tabs([
+    tab_runner, tab_opa = st.tabs([
         "🚀 Experiment Runner",
         "🆚 OPA Baseline Comparison",
-        "📊 Access Decision Matrix",
     ])
 
     with tab_runner:
@@ -160,9 +125,6 @@ def render_experiment_lab(tasks, personas):
 
     with tab_opa:
         _render_opa_comparison()
-
-    with tab_matrix:
-        _render_matrix_explorer()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -258,6 +220,25 @@ def _render_experiment_runner(tasks, personas):
         st.write("")  # spacing
         run_clicked = st.button("🚀 Run", type="primary", use_container_width=True)
 
+    # ── Few-shot controls (mode-aware) ──
+    from app.ui.few_shot_widget import render_k_selector
+    fs_col1, fs_col2 = st.columns([1, 2])
+    with fs_col1:
+        use_few_shot = st.checkbox(
+            "🎓 Few-shot exemplars (70/30 split)", value=False,
+            help="When enabled: inject K exemplars from the 70% train split "
+                 "into each prompt, and evaluate ONLY on the 30% held-out test "
+                 "cohort (plus all wrong/null tasks). When disabled, the full "
+                 "dataset is evaluated with K=0 (no exemplars).",
+            key="exp_use_few_shot",
+        )
+    with fs_col2:
+        fs_choice = render_k_selector(
+            key=f"exp_fs_k_{mode_str}",  # remount when mode changes
+            mode=mode_str,
+            disabled=not use_few_shot,
+        )
+
     if run_choice == "Run All (E1–E4)":
         configs_to_run = list(EXPERIMENTS)
     elif run_choice == "Run E1 (Full Pipeline)":
@@ -275,7 +256,9 @@ def _render_experiment_runner(tasks, personas):
         else:
             _run_and_display(configs_to_run, tasks, personas, mode_str,
                              use_real_llm=use_real_llm, api_key=api_key,
-                             llm_model=llm_model)
+                             llm_model=llm_model,
+                             use_few_shot=use_few_shot,
+                             fs_choice=fs_choice if use_few_shot else None)
     elif "experiment_results" in st.session_state:
         _display_results(st.session_state["experiment_results"])
     else:
@@ -284,14 +267,64 @@ def _render_experiment_runner(tasks, personas):
 
 def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                      mode: str, use_real_llm: bool = False,
-                     api_key: str = None, llm_model: str = "gpt-4o"):
-    """Execute experiments with progress tracking and display results."""
+                     api_key: str = None, llm_model: str = "gpt-4o",
+                     use_few_shot: bool = False,
+                     fs_choice=None):
+    """Execute experiments with progress tracking and display results.
+
+    If ``use_few_shot`` is True, ``fs_choice`` (a FewShotChoice) drives
+    exemplar retrieval: a 70/30 stratified split is built (or loaded),
+    K exemplars from the train pool are injected into each prompt, and
+    governance evaluation is restricted to the held-out test cohort plus
+    all wrong/null tasks.
+    """
     all_metrics: List[ExperimentMetrics] = []
     all_results: Dict[str, List[RunResult]] = {}
 
     progress_bar = st.progress(0, text="Starting experiments...")
     status_text = st.empty()
     llm_cache = None
+
+    # ── Few-shot setup ──
+    retriever = None
+    test_fingerprints = None
+    fs_meta: Dict = {"enabled": False}
+    if use_few_shot and fs_choice is not None:
+        from app.services.split_service import load_or_build_split, _task_fingerprint as _fp
+        from app.services.exemplar_retriever import ExemplarRetriever
+
+        split_info = load_or_build_split(tasks, ratio=0.7, seed=42)
+        train_pool = split_info.filter_train(tasks)
+        k_resolved = fs_choice.resolve_k(len(train_pool))
+        # K=0 baseline: no retriever (no exemplars injected) but the test
+        # cohort filter still applies so it is comparable to K>0 runs.
+        if k_resolved > 0:
+            retriever = ExemplarRetriever(
+                train_pool=train_pool,
+                k=k_resolved,
+                strategy=fs_choice.strategy,
+                pad_cross_domain=fs_choice.pad_cross_domain,
+            )
+        # Evaluate only on test cohort + wrong/null tasks (never trains).
+        test_fingerprints = set(split_info.test_fingerprints) | set(split_info.other_fingerprints)
+        fs_meta = {
+            "enabled": True,
+            "label": fs_choice.label,
+            "strategy": fs_choice.strategy,
+            "pad_cross_domain": fs_choice.pad_cross_domain,
+            "k_resolved": k_resolved,
+            "train_pool_size": len(train_pool),
+            "test_cohort_size": len(split_info.test_fingerprints),
+            "other_cohort_size": len(split_info.other_fingerprints),
+            "split_ratio": split_info.ratio,
+            "split_seed": split_info.seed,
+        }
+        st.info(
+            f"🎓 Few-shot: **{fs_choice.label}** (K={k_resolved}) · "
+            f"train={len(train_pool)} · test={len(split_info.test_fingerprints)} "
+            f"(+{len(split_info.other_fingerprints)} wrong/null) · "
+            f"strategy=`{fs_choice.strategy}`"
+        )
 
     # Phase 1: Build LLM cache if using real inference
     if use_real_llm:
@@ -308,6 +341,13 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
             else:
                 for t in tasks:
                     all_tasks_for_cache.add(_task_fingerprint(t))
+
+        # If few-shot enabled, only call LLM for tasks we'll actually evaluate
+        if test_fingerprints is not None:
+            all_tasks_for_cache &= test_fingerprints
+            tasks_for_cache = [t for t in tasks if _task_fingerprint(t) in all_tasks_for_cache]
+        else:
+            tasks_for_cache = tasks
 
         unique_count = len(all_tasks_for_cache)
         st.info(f"🤖 Calling {llm_model} for **{unique_count}** unique tasks "
@@ -326,8 +366,10 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                 )
 
             llm_cache = build_llm_cache(
-                tasks, personas, api_key=api_key, model=llm_model,
+                tasks_for_cache, personas, api_key=api_key, model=llm_model,
+                mode=mode,
                 progress_callback=llm_progress,
+                retriever=retriever,
             )
 
             failed = sum(1 for v in llm_cache.values() if v.get("_failed"))
@@ -361,13 +403,15 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
 
         metrics, results = run_experiment(config, tasks, personas, mode=mode,
                                           progress_callback=progress_cb,
-                                          llm_cache=llm_cache)
+                                          llm_cache=llm_cache,
+                                          task_filter_fingerprints=test_fingerprints)
         all_metrics.append(metrics)
         all_results[config.name] = results
 
     progress_bar.progress(1.0, text="Complete!")
     inference_label = f"real LLM ({llm_model})" if use_real_llm else "simulation"
-    status_text.markdown(f"✅ **Completed {total_configs} experiment(s)** — {mode} mode, {inference_label}")
+    fs_label = f" · few-shot {fs_meta.get('label', 'off')} (K={fs_meta.get('k_resolved', 0)})" if fs_meta.get("enabled") else ""
+    status_text.markdown(f"✅ **Completed {total_configs} experiment(s)** — {mode} mode, {inference_label}{fs_label}")
 
     # Show LLM failure summary if any
     total_failures = sum(m.llm_failures for m in all_metrics)
@@ -381,6 +425,7 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
         "mode": mode,
         "inference_mode": "llm" if use_real_llm else "simulation",
         "llm_model": llm_model if use_real_llm else None,
+        "few_shot": fs_meta,
     }
 
     # Persist full log to disk
@@ -389,6 +434,7 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
             all_metrics, all_results, mode,
             inference_mode="llm" if use_real_llm else "simulation",
             llm_model=llm_model if use_real_llm else None,
+            few_shot=fs_meta,
         )
         st.success(f"📄 Results log saved to `{log_path}`")
     except Exception as e:
@@ -707,43 +753,6 @@ def _build_assessment_prompt(metrics_list: List[ExperimentMetrics],
         if e1 and e2:
             ablation_text += f"RBAC contribution (E2→E1): {e2.allow_count - e1.allow_count} fewer unsafe ALLOWs\n"
 
-    # Access Decision Matrix summary
-    matrix_text = "\n## Access Decision Matrix Summary\n\n"
-    matrix_data = _load_matrix()
-    if matrix_data:
-        rows = matrix_data.get("rows", [])
-        total_rows = len(rows)
-        if total_rows > 0:
-            decisions = Counter(r.get("final_decision", "UNKNOWN") for r in rows)
-            matrix_text += f"Total matrix rows: {total_rows} (personas × tasks)\n\n"
-            matrix_text += "| Decision | Count | % |\n|---|---|---|\n"
-            for dec, cnt in decisions.most_common():
-                matrix_text += f"| {dec} | {cnt} | {cnt/total_rows*100:.1f}% |\n"
-
-            # Per-persona summary from matrix
-            persona_decisions = defaultdict(Counter)
-            for r in rows:
-                persona_decisions[r.get("persona", "?")][r.get("final_decision", "?")] += 1
-            matrix_text += "\n### Matrix Per-Persona\n"
-            matrix_text += "| Persona | ALLOW | DENY | DECEPTION |\n|---|---|---|---|\n"
-            for persona, counts in sorted(persona_decisions.items()):
-                matrix_text += (
-                    f"| {persona} | {counts.get('ALLOW',0)} | "
-                    f"{counts.get('DENY',0)} | {counts.get('DECEPTION_ROUTED',0)} |\n"
-                )
-
-            # Denial attribution from matrix
-            denial_sources = Counter()
-            for r in rows:
-                src = r.get("denial_source")
-                if src:
-                    denial_sources[src] += 1
-            if denial_sources:
-                matrix_text += "\n### Matrix Denial Attribution\n"
-                matrix_text += "| Source | Count |\n|---|---|\n"
-                for src, cnt in denial_sources.most_common():
-                    matrix_text += f"| {src} | {cnt} |\n"
-
     # Experiment config context
     config_text = "\n## Experiment Configurations\n\n"
     config_text += "| ID | Task Filter | RBAC | ABAC | TS-PHOL | Purpose |\n"
@@ -779,8 +788,6 @@ The experiments use the ASTRA dataset (Agentic Security Tool Recommendation Asse
 {domain_text}
 
 {ablation_text}
-
-{matrix_text}
 
 ---
 
@@ -1090,434 +1097,3 @@ This represents a **fundamental architectural capability gap** in flat policy en
     ]
     st.dataframe(pd.DataFrame(arch_rows), use_container_width=True, hide_index=True)
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# Tab 2 — Access Decision Matrix Explorer
-# ═══════════════════════════════════════════════════════════════════════
-
-def _render_matrix_explorer():
-    # ── Regeneration button ──
-    regen_col1, regen_col2 = st.columns([3, 1])
-    with regen_col1:
-        st.markdown("### 📊 Access Decision Matrix")
-    with regen_col2:
-        regen_clicked = st.button("🔄 Regenerate Matrix", type="secondary",
-                                   help="Re-run all persona × task evaluations through the full governance pipeline.",
-                                   use_container_width=True)
-
-    if regen_clicked:
-        _regenerate_matrix()
-        st.rerun()
-
-    data = _load_matrix()
-    if data is None:
-        st.warning(
-            "Access Decision Matrix not found. Click **🔄 Regenerate Matrix** above "
-            "or run `python scripts/generate_access_matrix.py`."
-        )
-        return
-
-    metadata = data["metadata"]
-    summary = data["summary"]
-    matrix = data["matrix"]
-
-    # ── Staleness check ──
-    stored_hashes = metadata.get("policy_versions", {})
-    current_hashes = _current_policy_hashes()
-    is_stale = stored_hashes != current_hashes
-    if is_stale:
-        st.warning(
-            "⚠️ **Stale Matrix** — Policy files have changed since this matrix was generated. "
-            "Click **🔄 Regenerate Matrix** above to update.",
-            icon="⚠️",
-        )
-
-    # ── Header info ──
-    st.markdown("### Selection-Mode Production Baseline")
-    st.caption(
-        "This matrix was generated by running every *(persona × task)* combination through "
-        "the full governance pipeline with production policies in **selection mode**. "
-        "It serves as the ground truth for validating experiment results."
-    )
-
-    # ── KPI row ──
-    total = summary["total"]
-    allow = summary.get("final_ALLOW", 0)
-    deny = summary.get("final_DENY", 0)
-    deception = summary.get("final_DECEPTION_ROUTED", 0)
-
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Total Rows", f"{total:,}")
-    k2.metric("ALLOW", f"{allow:,}", f"{allow*100/total:.1f}%")
-    k3.metric("DENY", f"{deny:,}", f"{deny*100/total:.1f}%")
-    k4.metric("DECEPTION", f"{deception:,}", f"{deception*100/total:.1f}%")
-    k5.metric("Personas × Tasks", f"{metadata['personas']} × {metadata['tasks']:,}")
-
-    st.markdown("---")
-
-    # ── Sub-tabs for different views ──
-    sub_waterfall, sub_heatmap, sub_persona, sub_browse = st.tabs([
-        "🔽 Governance Waterfall",
-        "🗺️ Persona × Layer Heatmap",
-        "👤 Per-Persona Deep Dive",
-        "🔍 Browse & Filter",
-    ])
-
-    # ── Governance Waterfall ──
-    with sub_waterfall:
-        _render_waterfall(matrix)
-
-    # ── Persona × Layer Heatmap ──
-    with sub_heatmap:
-        _render_heatmap(matrix)
-
-    # ── Per-Persona Deep Dive ──
-    with sub_persona:
-        _render_persona_dive(matrix)
-
-    # ── Browse & Filter ──
-    with sub_browse:
-        _render_browse(matrix)
-
-    # ── Policy Fingerprints ──
-    st.markdown("---")
-    with st.expander("📋 Policy Fingerprints", expanded=False):
-        st.caption(
-            "Partial SHA-256 hashes of the policy files used to generate this matrix. "
-            "If current hashes differ, the matrix is stale."
-        )
-        fp_rows = []
-        for pf, h in stored_hashes.items():
-            curr = current_hashes.get(pf, "—")
-            match = "✅" if h == curr else "❌"
-            fp_rows.append({"File": pf, "Matrix Hash": h, "Current Hash": curr, "Match": match})
-        st.dataframe(pd.DataFrame(fp_rows), use_container_width=True, hide_index=True)
-        st.caption(f"Dataset: `{metadata.get('dataset', 'N/A')}`")
-
-
-def _render_waterfall(matrix: list):
-    """Governance layer waterfall showing how tasks flow through each gate."""
-    st.markdown("#### Governance Layer Waterfall")
-    st.caption(
-        "Shows how evaluations flow through each governance layer. "
-        "Tasks are blocked at the first DENY and do not reach subsequent layers."
-    )
-
-    # ── Optional persona filter ──
-    persona_filter = st.selectbox(
-        "Filter by Persona",
-        ["All Personas"] + [PERSONAS[k]["display_name"] for k in sorted(PERSONAS)],
-        key="waterfall_persona",
-    )
-
-    if persona_filter != "All Personas":
-        pkey = next(k for k, v in PERSONAS.items() if v["display_name"] == persona_filter)
-        rows = [r for r in matrix if r["persona"] == pkey]
-    else:
-        rows = matrix
-
-    total = len(rows)
-    layers = [
-        ("RBAC", "expected_rbac"),
-        ("ABAC", "expected_abac"),
-        ("TS-PHOL", "expected_tsphol"),
-    ]
-
-    waterfall_data = []
-    surviving = total
-    for layer_name, key in layers:
-        passed = sum(1 for r in rows if r[key] == "ALLOW")
-        blocked = sum(1 for r in rows if r[key] == "DENY")
-        not_eval = sum(1 for r in rows if r[key] == "NOT_EVALUATED")
-        waterfall_data.append({
-            "Layer": layer_name,
-            "Passed ✅": passed,
-            "Blocked Here 🛑": blocked,
-            "Not Evaluated ⏭️": not_eval,
-        })
-        surviving -= blocked
-
-    st.dataframe(pd.DataFrame(waterfall_data), use_container_width=True, hide_index=True)
-
-    # Funnel bar chart
-    funnel_data = []
-    remaining = total
-    funnel_data.append({"Stage": "Entered", "Count": remaining})
-    for layer_name, key in layers:
-        blocked = sum(1 for r in rows if r[key] == "DENY")
-        remaining -= blocked
-        funnel_data.append({"Stage": f"After {layer_name}", "Count": remaining})
-    df_funnel = pd.DataFrame(funnel_data).set_index("Stage")
-    st.bar_chart(df_funnel)
-
-    # Denial source attribution (first_deny_layer)
-    st.markdown("##### First Deny Layer Attribution")
-    deny_counter = Counter(r["first_deny_layer"] for r in rows if r["first_deny_layer"])
-    if deny_counter:
-        dc_rows = [{"Layer": k, "Count": v, "% of Total": f"{v*100/total:.1f}%"}
-                   for k, v in deny_counter.most_common()]
-        st.dataframe(pd.DataFrame(dc_rows), use_container_width=True, hide_index=True)
-
-    # Defense-in-depth (all_deny_layers)
-    st.markdown("##### Defense-in-Depth (All Layers That Would Deny)")
-    all_deny = Counter()
-    for r in rows:
-        for dl in r.get("all_deny_layers", []):
-            all_deny[dl] += 1
-    if all_deny:
-        ad_rows = [{"Layer": k, "Would Deny": v} for k, v in all_deny.most_common()]
-        st.dataframe(pd.DataFrame(ad_rows), use_container_width=True, hide_index=True)
-        st.caption(
-            "Even if a task is blocked early (e.g., by RBAC), later layers may have also "
-            "denied it. This shows the total defense-in-depth coverage."
-        )
-
-
-def _render_heatmap(matrix: list):
-    """Persona × governance layer heatmap."""
-    st.markdown("#### Persona × Governance Outcome")
-    st.caption(
-        "Each cell shows `Passed / Blocked / Not Evaluated` for that persona at each layer."
-    )
-
-    layers = [
-        ("RBAC", "expected_rbac"),
-        ("ABAC", "expected_abac"),
-        ("TS-PHOL", "expected_tsphol"),
-        ("Final", "expected_final"),
-    ]
-
-    heatmap_rows = []
-    for pkey in sorted(PERSONAS):
-        pdata = PERSONAS[pkey]
-        prows = [r for r in matrix if r["persona"] == pkey]
-        total = len(prows)
-        row = {"Persona": pdata["display_name"]}
-        for lname, lkey in layers:
-            if lname == "Final":
-                allow = sum(1 for r in prows if r[lkey] == "ALLOW")
-                deny = sum(1 for r in prows if r[lkey] == "DENY")
-                dec = sum(1 for r in prows if r[lkey] == "DECEPTION_ROUTED")
-                row[lname] = f"✅{allow} 🛑{deny} 🪤{dec}"
-            else:
-                passed = sum(1 for r in prows if r[lkey] == "ALLOW")
-                blocked = sum(1 for r in prows if r[lkey] == "DENY")
-                not_eval = sum(1 for r in prows if r[lkey] == "NOT_EVALUATED")
-                row[lname] = f"✅{passed} 🛑{blocked} ⏭️{not_eval}"
-        heatmap_rows.append(row)
-
-    st.dataframe(pd.DataFrame(heatmap_rows), use_container_width=True, hide_index=True)
-
-    # Numeric summary for bar chart
-    st.markdown("##### Final Decision Distribution by Persona")
-    bar_rows = []
-    for pkey in sorted(PERSONAS):
-        prows = [r for r in matrix if r["persona"] == pkey]
-        bar_rows.append({
-            "Persona": PERSONAS[pkey]["display_name"],
-            "ALLOW": sum(1 for r in prows if r["expected_final"] == "ALLOW"),
-            "DENY": sum(1 for r in prows if r["expected_final"] == "DENY"),
-            "DECEPTION": sum(1 for r in prows if r["expected_final"] == "DECEPTION_ROUTED"),
-        })
-    df_bar = pd.DataFrame(bar_rows).set_index("Persona")
-    st.bar_chart(df_bar)
-
-
-def _render_persona_dive(matrix: list):
-    """Deep dive into a single persona's governance outcomes."""
-    st.markdown("#### Per-Persona Deep Dive")
-
-    persona_sel = st.selectbox(
-        "Select Persona",
-        [PERSONAS[k]["display_name"] for k in sorted(PERSONAS)],
-        key="persona_dive_sel",
-    )
-    pkey = next(k for k, v in PERSONAS.items() if v["display_name"] == persona_sel)
-    prows = [r for r in matrix if r["persona"] == pkey]
-    total = len(prows)
-
-    # Domain breakdown
-    st.markdown("##### Domain Breakdown")
-    domain_groups = defaultdict(list)
-    for r in prows:
-        domain_groups[r["task_domain"]].append(r)
-
-    domain_rows = []
-    for domain in sorted(domain_groups):
-        dr = domain_groups[domain]
-        allow = sum(1 for r in dr if r["expected_final"] == "ALLOW")
-        deny = sum(1 for r in dr if r["expected_final"] == "DENY")
-        dec = sum(1 for r in dr if r["expected_final"] == "DECEPTION_ROUTED")
-        authorized = domain in LEGITIMATE_PAIRINGS.get(pkey, set())
-        domain_rows.append({
-            "Domain": domain,
-            "Authorized": "✅" if authorized else "❌",
-            "Tasks": len(dr),
-            "ALLOW": allow,
-            "DENY": deny,
-            "DECEPTION": dec,
-            "Allow Rate": f"{allow*100/len(dr):.0f}%" if dr else "—",
-        })
-    st.dataframe(pd.DataFrame(domain_rows), use_container_width=True, hide_index=True)
-
-    # RBAC-pass / ABAC-fail zone
-    abac_only = [r for r in prows if r["expected_rbac"] == "ALLOW" and r["expected_abac"] == "DENY"]
-    if abac_only:
-        st.markdown("##### RBAC-Pass / ABAC-Fail Zone")
-        st.caption(f"{len(abac_only)} tasks passed RBAC but were blocked by ABAC.")
-        abac_domains = Counter(r["task_domain"] for r in abac_only)
-        abac_rules = Counter(r["abac_matched_rule"] for r in abac_only)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("**By Domain:**")
-            st.dataframe(
-                pd.DataFrame([{"Domain": k, "Count": v} for k, v in abac_domains.most_common()]),
-                use_container_width=True, hide_index=True,
-            )
-        with c2:
-            st.write("**By ABAC Rule:**")
-            st.dataframe(
-                pd.DataFrame([{"Rule": k, "Count": v} for k, v in abac_rules.most_common()]),
-                use_container_width=True, hide_index=True,
-            )
-
-    # TS-PHOL-only catches
-    tsphol_only = [r for r in prows
-                   if r["expected_rbac"] == "ALLOW" and r["expected_abac"] == "ALLOW"
-                   and r.get("tsphol_status", "ALLOW") != "ALLOW"]
-    if tsphol_only:
-        st.markdown("##### TS-PHOL Additional Catches")
-        st.caption(f"{len(tsphol_only)} tasks passed RBAC+ABAC but were caught by TS-PHOL rules.")
-
-    # Capability coverage summary
-    st.markdown("##### Capability Coverage")
-    cov_values = [r["capability_coverage"] for r in prows if r["expected_final"] == "ALLOW"]
-    if cov_values:
-        avg_cov = sum(cov_values) / len(cov_values)
-        full_cov = sum(1 for v in cov_values if v >= 1.0)
-        st.caption(
-            f"Among {len(cov_values)} ALLOW decisions: "
-            f"avg coverage = **{avg_cov:.1%}**, full coverage = **{full_cov}** "
-            f"({full_cov*100/len(cov_values):.0f}%)"
-        )
-
-    # Match tag breakdown
-    st.markdown("##### By Match Tag")
-    tag_rows = []
-    for tag in ["correct", "wrong", "null"]:
-        tr = [r for r in prows if r["match_tag"] == tag]
-        if tr:
-            allow = sum(1 for r in tr if r["expected_final"] == "ALLOW")
-            tag_rows.append({
-                "Tag": tag,
-                "Tasks": len(tr),
-                "ALLOW": allow,
-                "DENY": len(tr) - allow,
-                "Allow Rate": f"{allow*100/len(tr):.0f}%",
-            })
-    st.dataframe(pd.DataFrame(tag_rows), use_container_width=True, hide_index=True)
-
-
-def _render_browse(matrix: list):
-    """Filterable data browser for the matrix."""
-    st.markdown("#### Browse & Filter")
-
-    # ── Filters ──
-    fc1, fc2, fc3, fc4 = st.columns(4)
-    with fc1:
-        f_persona = st.selectbox("Persona", ["All"] + sorted(PERSONAS.keys()), key="browse_persona")
-    with fc2:
-        all_domains = sorted(set(r["task_domain"] for r in matrix))
-        f_domain = st.selectbox("Domain", ["All"] + all_domains, key="browse_domain")
-    with fc3:
-        f_tag = st.selectbox("Match Tag", ["All", "correct", "wrong", "null"], key="browse_tag")
-    with fc4:
-        f_decision = st.selectbox("Final Decision", ["All", "ALLOW", "DENY", "DECEPTION_ROUTED"],
-                                  key="browse_decision")
-
-    filtered = matrix
-    if f_persona != "All":
-        filtered = [r for r in filtered if r["persona"] == f_persona]
-    if f_domain != "All":
-        filtered = [r for r in filtered if r["task_domain"] == f_domain]
-    if f_tag != "All":
-        filtered = [r for r in filtered if r["match_tag"] == f_tag]
-    if f_decision != "All":
-        filtered = [r for r in filtered if r["expected_final"] == f_decision]
-
-    st.caption(f"Showing **{len(filtered):,}** of {len(matrix):,} rows")
-
-    # Summary of filtered set
-    if filtered:
-        fc_allow = sum(1 for r in filtered if r["expected_final"] == "ALLOW")
-        fc_deny = sum(1 for r in filtered if r["expected_final"] == "DENY")
-        fc_dec = sum(1 for r in filtered if r["expected_final"] == "DECEPTION_ROUTED")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("ALLOW", fc_allow)
-        m2.metric("DENY", fc_deny)
-        m3.metric("DECEPTION", fc_dec)
-
-    # Data table (compact view)
-    display_rows = []
-    for r in filtered[:500]:
-        display_rows.append({
-            "Persona": r["persona"],
-            "Task": r["task_idx"],
-            "Domain": r["task_domain"],
-            "Tag": r["match_tag"],
-            "Write?": "✍️" if r["has_write"] else "",
-            "RBAC": r["expected_rbac"],
-            "ABAC": r["expected_abac"],
-            "TS-PHOL": r["expected_tsphol"],
-            "Final": r["expected_final"],
-            "Deny Layer": r["first_deny_layer"] or "—",
-            "Cap Coverage": f"{r['capability_coverage']:.0%}",
-        })
-
-    if display_rows:
-        st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
-        if len(filtered) > 500:
-            st.caption(f"Showing first 500 of {len(filtered):,} rows")
-
-    # Row detail expander
-    if filtered:
-        st.markdown("##### Row Detail Inspector")
-        row_idx = st.number_input(
-            "Select row index to inspect", min_value=0,
-            max_value=min(499, len(filtered) - 1), value=0, key="browse_row_idx",
-        )
-        selected_row = filtered[row_idx]
-
-        with st.expander(
-            f"Row {row_idx}: {selected_row['persona']} × task {selected_row['task_idx']} "
-            f"→ {selected_row['expected_final']}",
-            expanded=True,
-        ):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.write("**Per-Tool RBAC Decisions:**")
-                if selected_row.get("tool_decisions"):
-                    td_rows = []
-                    for td in selected_row["tool_decisions"]:
-                        td_rows.append({
-                            "Tool": td["tool"],
-                            "MCP": td["mcp"],
-                            "RBAC": td["rbac"],
-                            "Rule": td["rbac_rule"],
-                        })
-                    st.dataframe(pd.DataFrame(td_rows), use_container_width=True, hide_index=True)
-
-            with c2:
-                st.write("**Capabilities:**")
-                st.write(f"Required: `{selected_row.get('required_capabilities', [])}`")
-                st.write(f"Has: `{selected_row.get('has_capabilities', [])}`")
-                missing = selected_row.get("missing_capabilities", [])
-                if missing:
-                    st.write(f"Missing: `{missing}`")
-                st.write(f"Coverage: **{selected_row['capability_coverage']:.0%}**")
-
-            st.write("**All Deny Layers:**", selected_row.get("all_deny_layers", []))
-            if selected_row.get("abac_matched_rule"):
-                st.write(f"**ABAC Rule:** `{selected_row['abac_matched_rule']}`")
-            if selected_row.get("tsphol_triggered_rules", 0) > 0:
-                st.write(f"**TS-PHOL Triggered:** {selected_row['tsphol_triggered_rules']} rule(s)")

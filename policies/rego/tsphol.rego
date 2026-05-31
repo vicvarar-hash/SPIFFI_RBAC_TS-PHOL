@@ -14,19 +14,6 @@ import rego.v1
 
 default decision := "ALLOW"
 
-# Priority 130: Low-confidence write prevention
-tsphol_deny("low_confidence_write_prevention", 130) if {
-    input.predicates.ContainsWrite == true
-    input.predicates.ConfidenceValue < 0.75
-}
-
-# Priority 125: High-risk write confidence safeguard
-tsphol_deny("high_risk_write_confidence_safeguard", 125) if {
-    input.predicates.HighestRiskLevel == "high"
-    input.predicates.ContainsWrite == true
-    input.predicates.ConfidenceValue < 0.85
-}
-
 # Priority 120: Task-bundle domain mismatch
 tsphol_deny("task_bundle_domain_mismatch", 120) if {
     input.predicates.TaskBundleDomainMismatch == true
@@ -48,14 +35,6 @@ tsphol_deny("hard_capability_violation", 105) if {
 tsphol_deny("destructive_write_prevention", 100) if {
     input.predicates.ContainsDelete == true
     input.predicates.ContainsRead == false
-}
-
-# Priority 70: Elevated risk + low confidence
-# (Priority 80 elevated_risk_detection just derives a fact, doesn't deny)
-tsphol_deny("elevated_risk_confidence", 70) if {
-    input.predicates.HighestRiskLevel == "high"
-    input.predicates.MultiDomain == true
-    input.predicates.ConfidenceValue < 0.90
 }
 
 # Priority 60: Low task alignment

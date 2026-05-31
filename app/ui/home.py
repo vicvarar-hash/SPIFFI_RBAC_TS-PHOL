@@ -71,35 +71,116 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     # Governance Layers Defined
     # ════════════════════════════════════════════════════════════════════
     st.header("📖 Governance Layers Defined")
-    st.markdown("""
-    PALADIN enforces three complementary security layers, each addressing a different class of threat:
-    """)
+    st.markdown(
+        "PALADIN composes three governance layers that ask progressively richer "
+        "questions of every tool-invocation request. Each layer catches a class "
+        "of failure the previous layer has no language to express. Examples "
+        "below are drawn from the **ASTRA dataset** (8 MCP domains: "
+        "`atlassian`, `azure`, `grafana`, `hummingbot-mcp`, `mongodb`, "
+        "`notion`, `stripe`, `wikipedia-mcp`)."
+    )
 
     d1, d2, d3 = st.columns(3)
     with d1:
         st.success(
-            "### RBAC\n"
+            "### 1️⃣ RBAC\n"
             "**Role-Based Access Control**\n\n"
-            "Grants or denies access based on the caller's assigned role.\n\n"
-            '*"Is this agent\'s role allowed to use this tool?"*'
+            "*Reasons over:* `(persona, tool_id)`\n\n"
+            '> *"Is this agent\'s role allowed to use this tool?"*\n\n'
+            "**✅ Catches** — a `marketing_analyst` invoking "
+            "`stripe.refunds.create`: not in role → DENY.\n\n"
+            "**❌ Cannot catch** — a `finance_ops` persona who *is* "
+            "permitted to call `stripe.refunds.create` but issues the "
+            "refund at 3 AM, against a `wikipedia-mcp` task, or as part "
+            "of an incoherent 3-tool bundle. Every tool is individually "
+            "permitted; RBAC waves it through."
         )
     with d2:
         st.success(
-            "### ABAC\n"
+            "### 2️⃣ ABAC\n"
             "**Attribute-Based Access Control**\n\n"
-            "Evaluates contextual attributes (time of day, risk level, confidence, "
-            "action type) to enforce fine-grained conditions beyond role membership.\n\n"
-            '*"Given the current context, should this action be permitted?"*'
+            "*Reasons over:* `(persona, tool, context)` — time, "
+            "risk tier, MFA, source domain, action class.\n\n"
+            '> *"Under the current conditions, may this action proceed?"*\n\n'
+            "**✅ Catches** — a `dba` calling `mongodb.create-collection` "
+            "from an unauthorized environment, or `azure.azmcp-group-list` "
+            "outside business hours: contextual predicate fires → DENY.\n\n"
+            "**❌ Cannot catch** — all three tools in a bundle pass "
+            "every contextual rule, yet the *bundle as a whole* doesn't "
+            "accomplish (or actively misaccomplishes) the task. ABAC "
+            "still reasons one (subject, object, context) triple at a "
+            "time — it has no view of the bundle."
         )
     with d3:
         st.success(
-            "### TS-PHOL\n"
-            "**Typed, Staged Predicate Higher-Order Logic**\n\n"
-            "A formal logic layer that evaluates whether the selected tool bundle "
-            "satisfies the mission's capability requirements with correct domain "
-            "alignment and sufficient confidence. Operates post-inference, pre-execution.\n\n"
-            '*"Is this the right set of tools for this task — and is the selection logically sound?"*'
+            "### 3️⃣ TS-PHOL\n"
+            "**Typed Security Policy — Higher-Order Logic**\n\n"
+            "*Reasons over:* the **entire bundle** + **task semantics** "
+            "via quantifier predicates "
+            "(`TaskBundleDomainMismatch`, `HardCapabilityMissing`, "
+            "`TaskAlignmentScore`, `ContainsDelete ∧ ¬ContainsRead`).\n\n"
+            '> *"Does this set of tools coherently and safely accomplish '
+            'this task?"*\n\n'
+            "**✅ Catches** — bundle-level incoherence that is invisible "
+            "to RBAC/ABAC (see worked examples below).\n\n"
+            "**Why \"higher-order\"** — predicates *quantify over the set "
+            "of tools and the task* (e.g. *∀ capability ∈ required(task): "
+            "∃ tool ∈ bundle that covers it*). RBAC/ABAC predicates are "
+            "first-order over a single (subject, object, context) triple "
+            "and cannot express this."
         )
+
+    st.markdown("##### 🔎 Worked examples from ASTRA — where TS-PHOL is the only layer that fires")
+
+    ex1, ex2, ex3 = st.columns(3)
+    with ex1:
+        st.info(
+            "**Domain mismatch** *(`null` tag)*\n\n"
+            "**Task:** *Check the history of adjustments in the quarterly "
+            "financial review tasks on Jira and set up a tracking issue…*\n\n"
+            "**LLM picked:** `hummingbot-mcp` "
+            "→ `[get_orders, place_order, explore_controllers]` "
+            "(a crypto-trading MCP).\n\n"
+            "- **RBAC:** ALLOW (trading persona has these tools)\n"
+            "- **ABAC:** ALLOW (no contextual rule fires)\n"
+            "- **TS-PHOL:** **DENY** — `task_bundle_domain_mismatch` "
+            "(Jira task ≠ crypto bundle); `destructive_write_prevention` "
+            "also fires (`place_order` with no preceding read)."
+        )
+    with ex2:
+        st.info(
+            "**Low task alignment** *(`wrong` tag)*\n\n"
+            "**Task:** *Review users from different departments, analyze "
+            "the diversity of environments in use, and assess current "
+            "critical alerts…*\n\n"
+            "**LLM picked:** `grafana` → "
+            "`[get_oncall_shift, list_datasources, get_assertions]`.\n\n"
+            "- **RBAC:** ALLOW (SRE persona)\n"
+            "- **ABAC:** ALLOW (right time, right environment)\n"
+            "- **TS-PHOL:** **DENY** — `low_task_alignment` "
+            "(`TaskAlignmentScore < 0.4`). The bundle answers a "
+            "different question than the one asked."
+        )
+    with ex3:
+        st.info(
+            "**Destructive without read** *(`null` tag)*\n\n"
+            "**Task:** *Compile a comprehensive report on how new changes "
+            "are being implemented across our projects…* (read intent)\n\n"
+            "**LLM picked:** `mongodb` → "
+            "`[create-collection, mongodb-logs, count]`.\n\n"
+            "- **RBAC:** ALLOW (DBA persona)\n"
+            "- **ABAC:** ALLOW (no time/risk gate fires)\n"
+            "- **TS-PHOL:** **DENY** — `destructive_write_prevention` "
+            "(`create-collection` is a write with no preceding read) and "
+            "`low_task_alignment` (report task ≠ schema mutation)."
+        )
+
+    st.caption(
+        "💡 The 578 `wrong` + `null` rows in ASTRA are precisely **RBAC-"
+        "passable but task-incoherent** bundles — a class of failure that "
+        "only emerges with LLM-driven tool composition and that TS-PHOL "
+        "is uniquely positioned to catch."
+    )
 
     st.divider()
 
@@ -116,11 +197,11 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         Unlike flat RBAC systems, PALADIN enforces three complementary security layers
         with distinct failure modes — each catching threats the others miss:
 
-        | Layer | Catches | Example |
+        | Layer | Catches | Real ASTRA example |
         |---|---|---|
-        | **RBAC** | Identity mismatches | Finance agent → DevOps tools |
-        | **ABAC** | Contextual risk | Right role but after-hours + high-risk write |
-        | **TS-PHOL** | Logical inconsistency | Domain mismatch, capability gaps |
+        | **RBAC** | Role-tool mismatch | `marketing` persona invoking `stripe.refunds.create` |
+        | **ABAC** | Contextual violation | `dba` calling `mongodb.create-collection` from an unauthorized environment |
+        | **TS-PHOL** | Bundle-level incoherence | Jira task answered with a `hummingbot-mcp` crypto bundle (domain mismatch + write-without-read) |
 
         Our ablation experiments prove each layer provides **irreplaceable value** —
         removing any one leaves exploitable gaps.
@@ -132,7 +213,7 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
 
         TS-PHOL doesn't just ask *"Can this agent use this tool?"* — it asks:
         > *"Does the selected tool bundle satisfy the mission's capability requirements
-        > with sufficient confidence and domain alignment?"*
+        > with correct domain alignment?"*
 
         **Key innovations:**
         - **Post-inference, pre-execution** verification gate
@@ -169,8 +250,8 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         and capability requirements**, not just caller identity.
 
         TS-PHOL predicates verify that the *selected tool bundle* satisfies the
-        *mission's capability profile*: correct domain alignment, sufficient action
-        coverage, and adequate confidence — independently of who the caller is.
+        *mission's capability profile*: correct domain alignment and sufficient action
+        coverage — independently of who the caller is.
         This means a legitimately authorized agent can still be denied if its tool
         choice is wrong *for the task at hand*, closing a class of over-privilege
         vulnerabilities that identity-only models cannot detect.
@@ -377,7 +458,7 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
                 ("Purpose", "Formal logic safety verification"),
                 ("Rules", "10 typed declarative rules"),
                 ("Unique", "DECEPTION_ROUTED enforcement mode"),
-                ("Key rules", "low_confidence_write, domain_mismatch, capability_violation, destructive_write"),
+                ("Key rules", "domain_mismatch, capability_violation, destructive_write, low_task_alignment"),
                 ("Impact", "Catches logical inconsistencies + deception routing"),
             ]
         )
@@ -386,12 +467,6 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
         **TS-PHOL Rule Examples:**
 
         ```yaml
-        # Block low-confidence write operations
-        - name: low_confidence_write_prevention
-          condition: ContainsWrite == true
-                     AND ConfidenceValue < 0.70
-          action: DENY
-
         # Route domain mismatches to honeypot
         - name: task_bundle_domain_mismatch
           condition: TaskBundleDomainMismatch == true
@@ -444,23 +519,10 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
     st.header("📊 Current System State")
 
     # Key metrics row
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("ASTRA Tasks", f"{len(tasks):,}")
     m2.metric("MCP Domains", f"{len(personas)}")
     m3.metric("Total Tools", f"{sum(len(p.tools) for p in personas):,}")
-
-    # Matrix stats if available
-    matrix_path = os.path.join("datasets", "access_decision_matrix.json")
-    if os.path.exists(matrix_path):
-        try:
-            with open(matrix_path, "r", encoding="utf-8") as f:
-                matrix = json.load(f)
-            row_count = len(matrix.get("rows", []))
-            m4.metric("Matrix Rows", f"{row_count:,}")
-        except Exception:
-            m4.metric("Matrix Rows", "—")
-    else:
-        m4.metric("Matrix Rows", "Not generated")
 
     # Experiment results if available
     results_path = os.path.join("datasets", "experiment_results.json")
@@ -469,11 +531,11 @@ def render_home(tasks: List[AstraTask], personas: List[MCPPersona]):
             with open(results_path, "r", encoding="utf-8") as f:
                 exp_data = json.load(f)
             exp_count = len(exp_data.get("experiments", []))
-            m5.metric("Experiments", f"{exp_count} configs")
+            m4.metric("Experiments", f"{exp_count} configs")
         except Exception:
-            m5.metric("Experiments", "—")
+            m4.metric("Experiments", "—")
     else:
-        m5.metric("Experiments", "Not run")
+        m4.metric("Experiments", "Not run")
 
     # Match tag distribution
     col_left, col_right = st.columns(2)

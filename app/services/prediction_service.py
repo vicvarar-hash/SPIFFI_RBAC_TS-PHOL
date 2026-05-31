@@ -18,13 +18,12 @@ class PredictionService:
         self.intent_engine = intent_engine or IntentEngine()
         self.classifier = ToolClassifier()
 
-    def run_selection(self, task: AstraTask) -> SelectionResult:
+    def run_selection(self, task: AstraTask, exemplars: List[dict] = None) -> SelectionResult:
         if not self.llm.is_configured():
             return SelectionResult(
                 selected_mcp=[],
                 selected_tools=[],
                 justification="LLM provider not configured. Please check your API key.",
-                confidence=0.0,
                 validation_errors=["LLM_NOT_CONFIGURED"]
             )
 
@@ -51,7 +50,7 @@ class PredictionService:
         )
         
         system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(task, list(required_caps), list(optional_caps))
+        user_prompt = self._build_user_prompt(task, list(required_caps), list(optional_caps), exemplars=exemplars)
         
         try:
             raw_output = self.llm.query(system_prompt, user_prompt)
@@ -98,7 +97,6 @@ class PredictionService:
                 selected_mcp=selected_mcp,
                 selected_tools=selected_tools,
                 justification=data.get("justification", "No justification provided."),
-                confidence=float(data.get("confidence", 0.0)),
                 capability_coverage_score=coverage_score,
                 missing_capabilities=actual_missing, 
                 raw_output=raw_output,
@@ -115,7 +113,6 @@ class PredictionService:
                 selected_mcp=[],
                 selected_tools=[],
                 justification=f"Error during selection: {str(e)}",
-                confidence=0.0,
                 raw_output=None,
                 validation_errors=[str(e)]
             )
@@ -129,7 +126,6 @@ class PredictionService:
         Return your answer ONLY in structured JSON format with the following fields:
         {
           "is_valid": true,
-          "confidence": 0.9,
           "justification": "Why you chose these specific logic hypotheses, focusing on capability coverage.",
           "selections": [
             {"tool": "tool_name1", "mcp": "mcp_name1"},
@@ -159,11 +155,12 @@ class PredictionService:
         5. Aim for SUFFICIENCY. A bundle is valid if it covers the REQUIRED capabilities.
         6. 'mission_metrics.capability_coverage' must be a float between 0.0 and 1.0.
         7. List EACH tool-mcp pair separately in the 'selections' list.
-        8. Confidence and scores must be ACTUAL computed numbers (e.g. 0.92). DO NOT use placeholders.
+        8. Scores must be ACTUAL computed numbers (e.g. 0.92). DO NOT use placeholders.
         """
         return prompt
 
-    def _build_user_prompt(self, task: AstraTask, required_caps: List[str], optional_caps: List[str]) -> str:
+    def _build_user_prompt(self, task: AstraTask, required_caps: List[str], optional_caps: List[str],
+                            exemplars: List[dict] = None) -> str:
         persona_context = []
         for p in self.personas:
             p_text = f"MCP Persona: {p.name}\nDescription: {p.description}\nTools:\n"
@@ -172,11 +169,24 @@ class PredictionService:
             persona_context.append(p_text)
             
         context_str = "\n\n".join(persona_context)
-        
+
+        exemplar_block = ""
+        if exemplars:
+            lines = ["", "[FEW-SHOT EXAMPLES — previously solved tasks, use as reference]"]
+            for i, ex in enumerate(exemplars, 1):
+                tools_json = json.dumps(ex.get("tools", []))
+                lines.append(
+                    f"Example {i}:\n  Task: {ex.get('task','')}\n"
+                    f"  Correct MCP: {ex.get('mcp','')}\n"
+                    f"  Correct tools: {tools_json}"
+                )
+            lines.append("[END EXAMPLES]\n")
+            exemplar_block = "\n".join(lines)
+
         user_prompt = f"""
         Available MCP Personas and Tools:
         {context_str}
-        
+        {exemplar_block}
         Inferred Capability Requirements:
         - REQUIRED: {', '.join(required_caps) if required_caps else 'None'}
         - OPTIONAL: {', '.join(optional_caps) if optional_caps else 'None'}

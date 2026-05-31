@@ -95,19 +95,16 @@ class TSPHOLInterpreter:
             trace.append(rule_res)
 
         # Phase 2: Probabilistic Hardening
-        # Calculate a mathematical certainty based on TS-PHOL facts and LLM confidence
-        base_confidence = predicates.get("ConfidenceValue", 1.0)
-        certainty = base_confidence
-        
+        # Mathematical certainty derived from TS-PHOL facts (no LLM-reported confidence).
+        certainty = 1.0
+
         # Penalize certainty for skipped safeguards or multiple derived warnings
         if final_decision == "ALLOW":
             safeguards_skipped = sum(1 for r in trace if r.get("status") == "SAFEGUARDED")
-            warnings = len([d for d in derived if d in ["UnsafeWrite", "LowConfidence"]])
+            warnings = len([d for d in derived if d in ["UnsafeWrite"]])
             penalty = (safeguards_skipped * 0.05) + (warnings * 0.1)
             certainty = max(0.5, certainty - penalty)
-        else:
-            # If TS-PHOL mathematically denies, we are highly certain of the DENY (fail-secure)
-            certainty = min(1.0, certainty + 0.2)
+        # If TS-PHOL mathematically denies, fail-secure: certainty stays at 1.0
 
         return final_decision, derived, trace, round(certainty, 2)
 
@@ -185,8 +182,6 @@ class TSPHOLInterpreter:
                     return False, "Rule not triggered: ContainsRead = true → safe write context"
                 if p_name == "MultiDomain" and cond.get("equals") is True:
                     return False, "Rule not triggered: request is not multi-domain"
-                if p_name == "ConfidenceValue" and "lt" in cond:
-                    return False, f"Rule not triggered: confidence {actual_val} is sufficient"
                 
                 negation = "is not" if "==" in op else "does not satisfy"
                 return False, f"{p_name} {negation} condition ({op})"

@@ -43,7 +43,7 @@ def _reconstruct_input(row: dict, mcp_attrs: dict, mode: str) -> Dict[str, Any]:
 
     RBAC input: spiffe_id + mcps + tools (directly from log).
     ABAC input: subject attrs from PERSONAS config + resource attrs from MCP.
-    TS-PHOL input: derived predicates from tool names + confidence + domain.
+    TS-PHOL input: derived predicates from tool names + domain.
     """
     persona_key = row["persona"]
     persona = PERSONAS[persona_key]
@@ -52,7 +52,6 @@ def _reconstruct_input(row: dict, mcp_attrs: dict, mode: str) -> Dict[str, Any]:
 
     tools = row.get("selected_tools", [])
     mcps = row.get("selected_mcps", [])
-    confidence = row.get("confidence", 0.5)
     domain = row.get("domain", "unknown")
 
     # ── Tool classification (lightweight — from tool names) ──
@@ -127,7 +126,6 @@ def _reconstruct_input(row: dict, mcp_attrs: dict, mode: str) -> Dict[str, Any]:
             "write_tool_count": write_tool_count,
         },
         "environment": {
-            "confidence": confidence,
             "after_hours": after_hours,
             "simulated_hour": hour_seed,
         },
@@ -138,7 +136,6 @@ def _reconstruct_input(row: dict, mcp_attrs: dict, mode: str) -> Dict[str, Any]:
         "ContainsWrite": contains_write,
         "ContainsRead": contains_read,
         "ContainsDelete": contains_delete,
-        "ConfidenceValue": confidence,
         "HighestRiskLevel": highest_risk,
         "MultiDomain": multi_domain,
         "TaskBundleDomainMismatch": domain_mismatch,
@@ -153,7 +150,6 @@ def _reconstruct_input(row: dict, mcp_attrs: dict, mode: str) -> Dict[str, Any]:
         "spiffe_id": spiffe_id,
         "mcps": [normalize_mcp_name(m) for m in mcps],
         "tools": tools,
-        "confidence": confidence,
         "mode": mode,
         "abac_attrs": abac_attrs,
         "predicates": predicates,

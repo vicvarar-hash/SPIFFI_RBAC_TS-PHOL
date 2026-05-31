@@ -172,7 +172,7 @@ Trust domain: `spiffe://demo.local`
 | **🤖 MCP Domain Explorer** | Browse the MCP server catalog — tools, descriptions, and capability scope per domain (e.g., Atlassian, GitHub, MongoDB) |
 | **🔍 ASTRA Task Explorer** | Explore the evaluation dataset (1,157 tasks × 6 personas). Filter by MCP domain, task category, and match tag |
 | **🔮 Prediction Lab** | Run individual tasks through the full governance pipeline with detailed predicate traces |
-| **🧪 Experiment Lab** | Run batch experiments (E1–E4) with ablation analysis. OPA baseline comparison tab. Access Decision Matrix (6,942 rows). AI-powered assessment |
+| **🧪 Experiment Lab** | Run batch experiments (E1–E4) with ablation analysis. OPA baseline comparison tab. AI-powered assessment |
 
 ---
 
@@ -281,8 +281,7 @@ Infrastructure is defined in `infra/` using Bicep (ACR + Container Apps Environm
 │
 ├── datasets/                        # ASTRA dataset & generated artifacts
 │   ├── astra_tasks.json             # 1,157 tasks across 8 MCP domains
-│   ├── mcp_personas.json            # NOTE: "personas" here = SPIFFE agent identities (not MCP domains)
-│   └── access_decision_matrix.json  # Generated (6,942 rows)
+│   └── mcp_personas.json            # NOTE: "personas" here = SPIFFE agent identities (not MCP domains)
 │
 ├── infra/                           # Azure infrastructure (Bicep)
 │   ├── main.bicep                   # Subscription-scoped entry point

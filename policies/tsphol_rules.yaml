@@ -1,33 +1,5 @@
 rules:
 # ═══════════════════════════════════════════════════════════════════
-# HIGHEST PRIORITY: Safety-Critical Gates
-# These catch what RBAC and ABAC cannot — LLM behavioral issues
-# ═══════════════════════════════════════════════════════════════════
-- rule_name: low_confidence_write_prevention
-  description: Deny destructive write operations if LLM confidence is below 0.75
-  if:
-    - predicate: ContainsWrite
-      equals: true
-    - predicate: ConfidenceValue
-      lt: 0.75
-  then: DENY
-  derive: LowConfidenceWrite
-  priority: 130
-
-- rule_name: high_risk_write_confidence_safeguard
-  description: High-risk write resources require at least 0.85 confidence
-  if:
-    - predicate: HighestRiskLevel
-      equals: high
-    - predicate: ContainsWrite
-      equals: true
-    - predicate: ConfidenceValue
-      lt: 0.85
-  then: DENY
-  derive: HighRiskLowConfidence
-  priority: 125
-
-# ═══════════════════════════════════════════════════════════════════
 # DOMAIN & STRUCTURAL GATES
 # Catch domain mismatches and ABAC propagation
 # ═══════════════════════════════════════════════════════════════════
@@ -43,13 +15,41 @@ rules:
   priority: 120
 
 - rule_name: validation_failure_denial
-  description: Deny when validation explicitly determines the bundle is invalid for the task
+  description: Deny when the validator flags critical failure AND the alignment score is also low (cross-check to avoid single-vote vetoes on correct bundles)
   if:
     - predicate: CriticalValidationFailure
       equals: true
+    - predicate: TaskAlignmentScore
+      lt: 0.5
   then: DENY
   derive: TaskMismatch
   priority: 110
+
+- rule_name: severe_domain_mismatch_override
+  description: Re-engage domain-mismatch denial in selection mode when the alignment score also collapses (two-signal cross-check that bypasses SelectionToleranceActive)
+  if:
+    - predicate: TaskBundleDomainMismatch
+      equals: true
+    - predicate: AlignmentEvaluated
+      equals: true
+    - predicate: TaskAlignmentScore
+      lt: 0.4
+  then: DENY
+  derive: IrrelevantBundle
+  priority: 115
+
+- rule_name: bundle_irrelevant_strong
+  description: Deny when the validator marks the bundle irrelevant AND the alignment score is low
+  if:
+    - predicate: BundleIrrelevantToTask
+      equals: true
+    - predicate: TaskAlignmentScore
+      lt: 0.5
+    - predicate: AlignmentEvaluated
+      equals: true
+  then: DENY
+  derive: IrrelevantBundle
+  priority: 95
 
 # ═══════════════════════════════════════════════════════════════════
 # CAPABILITY COVERAGE (Two-Tier: only hard misses deny)
@@ -81,9 +81,21 @@ rules:
   derive: UnsafeDestructiveWrite
   priority: 100
 
+- rule_name: mutation_without_context_read
+  description: Deny high-risk writes that are not preceded by a read (verify-before-mutate ordering — a relational property RBAC/ABAC cannot express)
+  if:
+    - predicate: ContainsWrite
+      equals: true
+    - predicate: ContainsReadBeforeWrite
+      equals: false
+    - predicate: HighestRiskLevel
+      equals: high
+  then: DENY
+  derive: UnsafeBlindMutation
+  priority: 102
+
 # ═══════════════════════════════════════════════════════════════════
-# RISK DETECTION & GATING
-# Multi-domain high-risk scenarios require very high confidence
+# RISK DETECTION
 # ═══════════════════════════════════════════════════════════════════
 - rule_name: elevated_risk_detection
   description: Identify high-risk multi-domain scenarios
@@ -96,16 +108,6 @@ rules:
   derive: ElevatedRisk
   priority: 80
 
-- rule_name: elevated_risk_confidence
-  description: Deny elevated risk missions if confidence is below 0.90
-  if:
-    - predicate: ElevatedRisk
-      equals: true
-    - predicate: ConfidenceValue
-      lt: 0.90
-  then: DENY
-  priority: 70
-
 # ═══════════════════════════════════════════════════════════════════
 # ALIGNMENT GATES
 # Catches semantically irrelevant bundles (wrong tools for the task)
@@ -116,7 +118,7 @@ rules:
     - predicate: AlignmentEvaluated
       equals: true
     - predicate: TaskAlignmentScore
-      lt: 0.4
+      lt: 0.3
     - predicate: SelectionToleranceActive
       equals: false
   then: DENY
@@ -129,9 +131,39 @@ rules:
     - predicate: AlignmentEvaluated
       equals: true
     - predicate: TaskAlignmentScore
-      lt: 0.3
+      lt: 0.25
     - predicate: SelectionToleranceActive
       equals: true
   then: DENY
   derive: LowAlignment
   priority: 60
+
+- rule_name: multi_domain_low_alignment
+  description: Deny multi-domain bundles whose alignment with the task is weak (TS-PHOL-unique signal)
+  if:
+    - predicate: MultiDomain
+      equals: true
+    - predicate: AlignmentEvaluated
+      equals: true
+    - predicate: TaskAlignmentScore
+      lt: 0.6
+  then: DENY
+  derive: UnjustifiedCrossDomain
+  priority: 70
+
+# ═══════════════════════════════════════════════════════════════════
+# CAPABILITY COVERAGE — GRADUATED
+# Goes beyond binary hard-cap check: scores how much of the required
+# capability set the bundle actually covers. Pure TS-PHOL accounting —
+# RBAC/ABAC have no concept of capability sufficiency.
+# ═══════════════════════════════════════════════════════════════════
+- rule_name: partial_capability_coverage
+  description: Deny when the bundle covers less than half of the task's required capabilities
+  if:
+    - predicate: CapabilityCoverageScore
+      lt: 0.5
+    - predicate: AlignmentEvaluated
+      equals: true
+  then: DENY
+  derive: InsufficientCapabilityCoverage
+  priority: 65

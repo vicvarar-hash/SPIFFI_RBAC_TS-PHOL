@@ -53,6 +53,15 @@ def _save_experiment_log(all_metrics: List, all_results: Dict,
     if few_shot and few_shot.get("enabled"):
         fs_label = re.sub(r'[^\w\-]', '_', str(few_shot.get("label", "fs")))
         fs_tag = f"_fs-{fs_label}_k{few_shot.get('k_resolved', 0)}"
+    # Encode prompt-context ablation flags in the filename so K-curve / ablation
+    # logs are visually distinguishable at a glance.
+    pc_flags = ""
+    if few_shot:
+        if few_shot.get("rbac_scoped"): pc_flags += "A"
+        if few_shot.get("cap_filtered"): pc_flags += "B"
+        if few_shot.get("bm25"): pc_flags += "C"
+    if pc_flags:
+        fs_tag += f"_+{pc_flags}"
     filename = f"run_{ts}_{safe_mode}{model_tag}_{mode}{fs_tag}.json"
     filepath = os.path.join(LOG_DIR, filename)
 
@@ -239,6 +248,38 @@ def _render_experiment_runner(tasks, personas):
             disabled=not use_few_shot,
         )
 
+    # ── Prompt-context ablation toggles (selection mode only) ──
+    # Stage A (RBAC-scoped catalog) and Stage B (capability pre-filter) shrink
+    # the prompt the LLM sees. Stage C (BM25 exemplar retrieval) replaces the
+    # random sampler with a similarity-ranked one. All three are independent
+    # so we can ablate any combination.
+    pc_disabled = (mode_str != "selection")
+    with st.expander("🧪 Prompt-context ablations (selection mode)", expanded=False):
+        if pc_disabled:
+            st.caption("Disabled in validation mode (candidate bundle already declares the MCP).")
+        pc_col1, pc_col2, pc_col3 = st.columns(3)
+        with pc_col1:
+            use_rbac_scope = st.checkbox(
+                "A · RBAC-scoped catalog", value=False,
+                help="Hide MCPs the persona is not allowed to use. Cache "
+                     "expands to ~5 distinct allow-list variants (≈5x LLM calls).",
+                key="exp_use_rbac_scope", disabled=pc_disabled,
+            )
+        with pc_col2:
+            use_cap_filter = st.checkbox(
+                "B · Capability pre-filter", value=False,
+                help="Drop tools whose classified capabilities don't intersect "
+                     "the task's required/optional set. Per-MCP floor of 5 tools.",
+                key="exp_use_cap_filter", disabled=pc_disabled,
+            )
+        with pc_col3:
+            use_bm25 = st.checkbox(
+                "C · BM25 exemplar retrieval", value=False,
+                help="Override the few-shot strategy to BM25 similarity ranking "
+                     "over the train pool. Requires few-shot enabled with K>0.",
+                key="exp_use_bm25", disabled=pc_disabled or not use_few_shot,
+            )
+
     if run_choice == "Run All (E1–E4)":
         configs_to_run = list(EXPERIMENTS)
     elif run_choice == "Run E1 (Full Pipeline)":
@@ -258,7 +299,10 @@ def _render_experiment_runner(tasks, personas):
                              use_real_llm=use_real_llm, api_key=api_key,
                              llm_model=llm_model,
                              use_few_shot=use_few_shot,
-                             fs_choice=fs_choice if use_few_shot else None)
+                             fs_choice=fs_choice if use_few_shot else None,
+                             use_rbac_scope=use_rbac_scope,
+                             use_cap_filter=use_cap_filter,
+                             use_bm25=use_bm25)
     elif "experiment_results" in st.session_state:
         _display_results(st.session_state["experiment_results"])
     else:
@@ -269,7 +313,10 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                      mode: str, use_real_llm: bool = False,
                      api_key: str = None, llm_model: str = "gpt-4o",
                      use_few_shot: bool = False,
-                     fs_choice=None):
+                     fs_choice=None,
+                     use_rbac_scope: bool = False,
+                     use_cap_filter: bool = False,
+                     use_bm25: bool = False):
     """Execute experiments with progress tracking and display results.
 
     If ``use_few_shot`` is True, ``fs_choice`` (a FewShotChoice) drives
@@ -296,13 +343,16 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
         split_info = load_or_build_split(tasks, ratio=0.7, seed=42)
         train_pool = split_info.filter_train(tasks)
         k_resolved = fs_choice.resolve_k(len(train_pool))
+        # Stage C: override strategy to BM25 similarity ranking if requested.
+        # Only meaningful for K>0; K=0 has no exemplars to rank.
+        effective_strategy = "bm25" if (use_bm25 and k_resolved > 0) else fs_choice.strategy
         # K=0 baseline: no retriever (no exemplars injected) but the test
         # cohort filter still applies so it is comparable to K>0 runs.
         if k_resolved > 0:
             retriever = ExemplarRetriever(
                 train_pool=train_pool,
                 k=k_resolved,
-                strategy=fs_choice.strategy,
+                strategy=effective_strategy,
                 pad_cross_domain=fs_choice.pad_cross_domain,
             )
         # Evaluate only on test cohort + wrong/null tasks (never trains).
@@ -310,7 +360,7 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
         fs_meta = {
             "enabled": True,
             "label": fs_choice.label,
-            "strategy": fs_choice.strategy,
+            "strategy": effective_strategy,
             "pad_cross_domain": fs_choice.pad_cross_domain,
             "k_resolved": k_resolved,
             "train_pool_size": len(train_pool),
@@ -323,8 +373,13 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
             f"🎓 Few-shot: **{fs_choice.label}** (K={k_resolved}) · "
             f"train={len(train_pool)} · test={len(split_info.test_fingerprints)} "
             f"(+{len(split_info.other_fingerprints)} wrong/null) · "
-            f"strategy=`{fs_choice.strategy}`"
+            f"strategy=`{effective_strategy}`"
         )
+
+    # Record prompt-context ablation flags in fs_meta so they appear in the log.
+    fs_meta["rbac_scoped"] = bool(use_rbac_scope) and mode == "selection"
+    fs_meta["cap_filtered"] = bool(use_cap_filter) and mode == "selection"
+    fs_meta["bm25"] = bool(use_bm25) and mode == "selection" and use_few_shot
 
     # Phase 1: Build LLM cache if using real inference
     if use_real_llm:
@@ -370,6 +425,8 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                 mode=mode,
                 progress_callback=llm_progress,
                 retriever=retriever,
+                rbac_scoped=fs_meta.get("rbac_scoped", False),
+                capability_filter=fs_meta.get("cap_filtered", False),
             )
 
             failed = sum(1 for v in llm_cache.values() if v.get("_failed"))
@@ -404,7 +461,8 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
         metrics, results = run_experiment(config, tasks, personas, mode=mode,
                                           progress_callback=progress_cb,
                                           llm_cache=llm_cache,
-                                          task_filter_fingerprints=test_fingerprints)
+                                          task_filter_fingerprints=test_fingerprints,
+                                          rbac_scoped_cache=fs_meta.get("rbac_scoped", False))
         all_metrics.append(metrics)
         all_results[config.name] = results
 

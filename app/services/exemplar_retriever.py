@@ -17,9 +17,68 @@ objects.
 
 from __future__ import annotations
 
+import math
 import random
-from collections import defaultdict
-from typing import Any, Dict, Iterable, List, Optional
+import re
+from collections import Counter, defaultdict
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]+")
+
+
+def _tokenize(text: str) -> List[str]:
+    """Lowercase + alphanumeric tokenize. Drops very short tokens."""
+    if not text:
+        return []
+    return [t.lower() for t in _TOKEN_RE.findall(text) if len(t) >= 2]
+
+
+class _BM25Index:
+    """Minimal BM25 (Okapi) index. Built once, reused per query."""
+
+    def __init__(self, docs: List[List[str]], k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
+        self.N = len(docs)
+        self.doc_lens = [len(d) for d in docs]
+        self.avgdl = (sum(self.doc_lens) / self.N) if self.N else 0.0
+        # term frequencies per doc
+        self.tfs: List[Counter] = [Counter(d) for d in docs]
+        # document frequency per term
+        df: Counter = Counter()
+        for d in self.tfs:
+            for term in d:
+                df[term] += 1
+        # idf using BM25 idf with +1 smoothing (always positive)
+        self.idf: Dict[str, float] = {
+            term: math.log(1.0 + (self.N - n + 0.5) / (n + 0.5))
+            for term, n in df.items()
+        }
+
+    def score(self, query_tokens: List[str], doc_idx: int) -> float:
+        tf = self.tfs[doc_idx]
+        dl = self.doc_lens[doc_idx]
+        denom_norm = (1.0 - self.b + self.b * (dl / self.avgdl)) if self.avgdl else 1.0
+        s = 0.0
+        for term in query_tokens:
+            f = tf.get(term, 0)
+            if f == 0:
+                continue
+            idf = self.idf.get(term, 0.0)
+            s += idf * (f * (self.k1 + 1.0)) / (f + self.k1 * denom_norm)
+        return s
+
+    def topk(self, query_tokens: List[str], k: int,
+             exclude_idxs: Optional[set] = None) -> List[Tuple[int, float]]:
+        excl = exclude_idxs or set()
+        scored = [
+            (i, self.score(query_tokens, i))
+            for i in range(self.N) if i not in excl
+        ]
+        # Sort by score desc, then by index asc for deterministic tiebreak.
+        scored.sort(key=lambda x: (-x[1], x[0]))
+        return scored[:k]
 
 
 def _to_exemplar(task: Any) -> Optional[Dict[str, Any]]:
@@ -75,7 +134,7 @@ class ExemplarRetriever:
     ):
         if k < 0:
             raise ValueError("k must be >= 0")
-        if strategy not in ("random_in_domain", "random_any"):
+        if strategy not in ("random_in_domain", "random_any", "bm25"):
             raise ValueError(f"unsupported strategy: {strategy}")
         self.k = k
         self.strategy = strategy
@@ -93,6 +152,12 @@ class ExemplarRetriever:
                 continue
             self._by_mcp[ex["mcp"]].append(ex)
             self._all.append(ex)
+
+        # BM25 index over self._all (parallel to _all). Built lazily on first use.
+        self._bm25_index: Optional[_BM25Index] = None
+        if self.strategy == "bm25" and self._all:
+            tokenized = [_tokenize(e["task"]) for e in self._all]
+            self._bm25_index = _BM25Index(tokenized)
 
     @property
     def domains(self) -> List[str]:
@@ -137,6 +202,17 @@ class ExemplarRetriever:
                 rng_extra = random.Random(f"{self.seed}|{query_text}|extra")
                 rng_extra.shuffle(extra)
                 candidates = candidates + extra
+        elif self.strategy == "bm25":
+            # Score every pool entry against the query, return top-K by BM25.
+            if self._bm25_index is None or self._bm25_index.N == 0:
+                return []
+            q_tokens = _tokenize(query_text)
+            if not q_tokens:
+                return []
+            # Exclude any exact text match (defensive)
+            exclude = {i for i, e in enumerate(self._all) if e["task"] == query_text}
+            scored = self._bm25_index.topk(q_tokens, self.k, exclude_idxs=exclude)
+            return [self._all[i] for i, _ in scored if _ > 0.0]
         else:  # random_any
             candidates = [e for e in self._all if e["task"] != query_text]
 

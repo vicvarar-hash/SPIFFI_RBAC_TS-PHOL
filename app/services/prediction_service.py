@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Optional, Set
 from app.models.astra import AstraTask
 from app.models.mcp import MCPPersona
 from app.models.selection import SelectionResult
@@ -17,8 +17,20 @@ class PredictionService:
         self.persona_map = {p.name: p for p in personas}
         self.intent_engine = intent_engine or IntentEngine()
         self.classifier = ToolClassifier()
+        # Process-lifetime cache for tool→capabilities lookups (Stage B).
+        # ToolClassifier.classify_tools is rule-based and deterministic, so safe to memoize.
+        self._tool_caps_cache: dict = {}
 
-    def run_selection(self, task: AstraTask, exemplars: List[dict] = None) -> SelectionResult:
+    def _tool_caps(self, tool_name: str) -> Set[str]:
+        if tool_name not in self._tool_caps_cache:
+            audit = self.classifier.classify_tools([tool_name])
+            caps = set(audit[0].get("capabilities", [])) if audit else set()
+            self._tool_caps_cache[tool_name] = caps
+        return self._tool_caps_cache[tool_name]
+
+    def run_selection(self, task: AstraTask, exemplars: List[dict] = None,
+                      allowed_mcps: Optional[Set[str]] = None,
+                      capability_filter: bool = False) -> SelectionResult:
         if not self.llm.is_configured():
             return SelectionResult(
                 selected_mcp=[],
@@ -50,7 +62,12 @@ class PredictionService:
         )
         
         system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(task, list(required_caps), list(optional_caps), exemplars=exemplars)
+        user_prompt = self._build_user_prompt(
+            task, list(required_caps), list(optional_caps),
+            exemplars=exemplars,
+            allowed_mcps=allowed_mcps,
+            capability_filter=capability_filter,
+        )
         
         try:
             raw_output = self.llm.query(system_prompt, user_prompt)
@@ -77,9 +94,7 @@ class PredictionService:
             # We determine what's ACTUALLY missing from the selected tools
             provided_caps = set()
             for tool in selected_tools:
-                audit = self.classifier.classify_tools([tool])
-                if audit:
-                    provided_caps.update(audit[0].get("capabilities", []))
+                provided_caps.update(self._tool_caps(tool))
             
             # Mission critical: only flag missing REQUIRED capabilities
             actual_missing = [cap for cap in required_caps if cap not in provided_caps]
@@ -160,14 +175,39 @@ class PredictionService:
         return prompt
 
     def _build_user_prompt(self, task: AstraTask, required_caps: List[str], optional_caps: List[str],
-                            exemplars: List[dict] = None) -> str:
+                            exemplars: List[dict] = None,
+                            allowed_mcps: Optional[Set[str]] = None,
+                            capability_filter: bool = False) -> str:
+        # Stage A: RBAC-scoped catalog. When the caller is persona-aware, hide
+        # MCPs that aren't in the persona's allow-list so the LLM can't even
+        # propose tools the runtime would refuse. Production-realistic.
+        scoped_personas = self.personas
+        if allowed_mcps:
+            scoped_personas = [p for p in self.personas if p.name in allowed_mcps]
+            # Safety: if scoping nukes the entire catalog (misconfigured persona),
+            # fall back to the unfiltered list rather than send an empty prompt.
+            if not scoped_personas:
+                scoped_personas = self.personas
+
+        # Stage B: capability pre-filter. Drop tools whose classified capabilities
+        # don't intersect required ∪ optional. Keep a per-MCP floor so the LLM
+        # still has enough context to assemble a valid 3-tool single-MCP bundle.
+        cap_target: Set[str] = set(required_caps) | set(optional_caps) if capability_filter else set()
+        MIN_TOOLS_PER_MCP = 5  # if filter would leave <5, keep the full tool list for that MCP
+
         persona_context = []
-        for p in self.personas:
+        for p in scoped_personas:
+            tools_to_show = p.tools
+            if cap_target:
+                kept = [t for t in p.tools if self._tool_caps(t.name) & cap_target]
+                if len(kept) >= MIN_TOOLS_PER_MCP:
+                    tools_to_show = kept
+                # else: fall back to the full tool list for this MCP
             p_text = f"MCP Persona: {p.name}\nDescription: {p.description}\nTools:\n"
-            for t in p.tools:
+            for t in tools_to_show:
                 p_text += f" - {t.name}: {t.description}\n"
             persona_context.append(p_text)
-            
+
         context_str = "\n\n".join(persona_context)
 
         exemplar_block = ""

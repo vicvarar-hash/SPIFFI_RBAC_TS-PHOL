@@ -15,7 +15,7 @@ import shutil
 import tempfile
 import time
 from dataclasses import dataclass, asdict, field
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable, Any, Iterable
 from collections import defaultdict
 
 from app.services.experiment_config import (
@@ -462,7 +462,9 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
                     mode: str = "selection",
                     progress_callback: Optional[Callable] = None,
                     max_retries: int = 2,
-                    retriever: Optional[Any] = None) -> Dict[str, dict]:
+                    retriever: Optional[Any] = None,
+                    rbac_scoped: bool = False,
+                    capability_filter: bool = False) -> Dict[str, dict]:
     """Call the LLM once per unique task and cache results.
 
     Behavior depends on ``mode``:
@@ -476,13 +478,25 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
     If ``retriever`` (an :class:`ExemplarRetriever`) is provided, K few-shot
     exemplars are injected into each prompt.
 
-    Returns dict mapping task fingerprint → llm_output dict compatible
-    with run_single()'s llm_output parameter.
+    Prompt-context optimizations (selection mode only):
+
+    * ``rbac_scoped`` — per-persona RBAC scoping: hide MCPs the persona is
+      not allowed to use. This expands the cache by ~5x (one entry per
+      distinct allowed-MCP set across the 6 personas). Cache keys become
+      ``f"{fp}|{mcps_key}"`` where mcps_key is the sorted allowed-MCP set.
+    * ``capability_filter`` — drop tools whose classified capabilities don't
+      intersect the task's required/optional capability set. Does not affect
+      cache cardinality (task-deterministic).
+
+    Returns dict mapping cache-key → llm_output dict compatible with
+    run_single()'s llm_output parameter. The matching key-builder is exposed
+    as :func:`llm_cache_key`.
     """
     from app.services.llm_provider import LLMProvider
     from app.services.prediction_service import PredictionService
     from app.services.validation_service import ValidationService
     from app.services.intent_engine import IntentEngine
+    from app.services.experiment_config import LEGITIMATE_PAIRINGS
 
     llm = LLMProvider(api_key=api_key, model=model)
     if not llm.is_configured():
@@ -491,24 +505,47 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
     if mode not in ("selection", "validation"):
         raise ValueError(f"Unsupported mode: {mode!r} (expected 'selection' or 'validation')")
 
+    # Validation mode judges the candidate bundle and is persona-agnostic;
+    # prompt-context flags only apply to selection.
+    if mode == "validation":
+        rbac_scoped = False
+        capability_filter = False
+
     intent_engine = IntentEngine()
     pred_svc = PredictionService(llm=llm, personas=personas_list,
                                   intent_engine=intent_engine)
     val_svc = ValidationService(llm=llm, personas=personas_list)
 
-    # Dedupe tasks by fingerprint
-    unique_tasks: Dict[str, Any] = {}
-    for task in tasks:
-        fp = _task_fingerprint(task)
-        if fp not in unique_tasks:
-            unique_tasks[fp] = task
+    # Dedupe (task, allowed_mcps_set) pairs. When rbac_scoped is OFF, the
+    # set is empty → one entry per unique task (legacy behavior).
+    unique_jobs: Dict[str, tuple] = {}
+    if rbac_scoped:
+        # Collect distinct allowed-MCP sets across the active personas.
+        from app.services.experiment_config import PERSONAS
+        distinct_mcp_sets = set()
+        for pkey in PERSONAS.keys():
+            allowed = frozenset(LEGITIMATE_PAIRINGS.get(pkey, set()))
+            if allowed:
+                distinct_mcp_sets.add(allowed)
+        for task in tasks:
+            fp = _task_fingerprint(task)
+            for allowed in distinct_mcp_sets:
+                key = llm_cache_key(fp, allowed)
+                if key not in unique_jobs:
+                    unique_jobs[key] = (task, allowed)
+    else:
+        for task in tasks:
+            fp = _task_fingerprint(task)
+            key = llm_cache_key(fp, None)
+            if key not in unique_jobs:
+                unique_jobs[key] = (task, None)
 
     cache: Dict[str, dict] = {}
-    total = len(unique_tasks)
+    total = len(unique_jobs)
     done = 0
     errors = 0
 
-    for fp, task in unique_tasks.items():
+    for key, (task, allowed) in unique_jobs.items():
         astra_task = _to_astra_task(task)
         exemplars = retriever.get(task) if retriever is not None else None
         few_shot_k = len(exemplars) if exemplars else 0
@@ -516,14 +553,22 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
         for attempt in range(max_retries + 1):
             try:
                 if mode == "selection":
-                    sel = pred_svc.run_selection(astra_task, exemplars=exemplars)
+                    sel = pred_svc.run_selection(
+                        astra_task,
+                        exemplars=exemplars,
+                        allowed_mcps=set(allowed) if allowed else None,
+                        capability_filter=capability_filter,
+                    )
                     if sel.validation_errors and "LLM_NOT_CONFIGURED" in sel.validation_errors:
-                        cache[fp] = {"_failed": True, "_error": "LLM not configured"}
+                        cache[key] = {"_failed": True, "_error": "LLM not configured"}
                         break
 
-                    cache[fp] = {
+                    cache[key] = {
                         "_mode": "selection",
                         "_few_shot_k": few_shot_k,
+                        "_rbac_scoped": bool(allowed),
+                        "_cap_filtered": bool(capability_filter),
+                        "_allowed_mcps": sorted(allowed) if allowed else None,
                         "selected_tools": sel.selected_tools,
                         "selected_mcps": sel.selected_mcp,
                         "justification": sel.justification,
@@ -536,14 +581,10 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
                 else:  # validation
                     val = val_svc.run_validation(astra_task, exemplars=exemplars)
                     if val.issues and "LLM_NOT_CONFIGURED" in val.issues:
-                        cache[fp] = {"_failed": True, "_error": "LLM not configured"}
+                        cache[key] = {"_failed": True, "_error": "LLM not configured"}
                         break
 
-                    # Governance will evaluate the candidate (GT) bundle itself.
-                    # We still record the candidate tools/mcps under
-                    # selected_tools/selected_mcps so downstream callers that
-                    # inspect the cache (e.g. OPA comparison) see what was judged.
-                    cache[fp] = {
+                    cache[key] = {
                         "_mode": "validation",
                         "_few_shot_k": few_shot_k,
                         "selected_tools": list(astra_task.candidate_tools),
@@ -563,7 +604,7 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
                 if attempt < max_retries:
                     time.sleep(1.0 * (attempt + 1))  # backoff
                     continue
-                cache[fp] = {"_failed": True, "_error": str(e)}
+                cache[key] = {"_failed": True, "_error": str(e)}
                 errors += 1
                 break
 
@@ -579,6 +620,19 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
     return cache
 
 
+def llm_cache_key(fp: str, allowed_mcps: Optional[Iterable[str]]) -> str:
+    """Build the cache key used by build_llm_cache and run_experiment lookup.
+
+    When ``allowed_mcps`` is falsy, returns the plain fingerprint (legacy).
+    When provided, appends a stable suffix derived from the sorted MCP set,
+    so personas that share the same allow-list share the cached LLM result.
+    """
+    if not allowed_mcps:
+        return fp
+    suffix = "+".join(sorted(set(allowed_mcps)))
+    return f"{fp}|{suffix}"
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Batch experiment runner
 # ═══════════════════════════════════════════════════════════════════════
@@ -587,7 +641,8 @@ def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
                    mode: str = "selection",
                    progress_callback: Optional[Callable] = None,
                    llm_cache: Optional[Dict[str, dict]] = None,
-                   task_filter_fingerprints: Optional[set] = None) -> tuple:
+                   task_filter_fingerprints: Optional[set] = None,
+                   rbac_scoped_cache: bool = False) -> tuple:
     """
     Run a complete experiment: build engine, iterate all persona×task pairs, compute metrics.
 
@@ -598,8 +653,13 @@ def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
     is in that set are evaluated (used to restrict governance evaluation to
     the held-out test split when few-shot is enabled).
 
+    If ``rbac_scoped_cache`` is True, the LLM cache is assumed to be keyed by
+    ``(task_fingerprint, allowed_mcps_set)`` and is looked up using the
+    persona's allow-list from LEGITIMATE_PAIRINGS.
+
     Returns: (metrics: ExperimentMetrics, results: List[RunResult])
     """
+    from app.services.experiment_config import LEGITIMATE_PAIRINGS
     policies = config.get_policies()
     engine = build_engine_from_policies(policies, personas_list)
 
@@ -626,12 +686,18 @@ def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
         done = 0
 
         for persona_key in active_personas:
+            persona_allowed = frozenset(LEGITIMATE_PAIRINGS.get(persona_key, set())) if rbac_scoped_cache else None
             for task_idx, task in enumerate(filtered_tasks):
                 # Look up cached LLM output if available
                 llm_out = None
                 if llm_cache is not None:
                     fp = _task_fingerprint(task)
-                    llm_out = llm_cache.get(fp)
+                    key = llm_cache_key(fp, persona_allowed)
+                    llm_out = llm_cache.get(key)
+                    # Defensive fallback: if scoped key missed, try plain fp
+                    # (covers legacy caches loaded without rbac_scoped flag).
+                    if llm_out is None and rbac_scoped_cache:
+                        llm_out = llm_cache.get(fp)
 
                 result = run_single(engine, persona_key, task, task_idx, config,
                                     mode=mode, llm_output=llm_out)

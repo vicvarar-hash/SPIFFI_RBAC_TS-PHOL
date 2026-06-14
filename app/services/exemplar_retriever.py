@@ -1,5 +1,5 @@
 """
-Exemplar retriever for in-context few-shot learning.
+Exemplar retriever for in-context RA-ICL learning.
 
 Given a pool of training tasks (with trustworthy groundtruth bundles),
 this returns K exemplars for a given test task. The default retrieval

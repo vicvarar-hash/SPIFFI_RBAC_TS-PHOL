@@ -1,4 +1,8 @@
 import json
+import os
+import sys
+import time
+import traceback
 from typing import List, Optional, Set
 from app.models.astra import AstraTask
 from app.models.mcp import MCPPersona
@@ -9,6 +13,30 @@ import re
 from app.services.intent_engine import IntentEngine
 from app.services.tool_classifier import ToolClassifier
 from app.services.intent_taxonomy import IntentTaxonomy
+
+# Sidecar error log — captures every exception raised inside run_selection so we
+# can diagnose silent failures that get swallowed and returned as empty results.
+_ERROR_LOG_PATH = os.path.join("datasets", "experiment_logs", "last_run_errors.log")
+
+
+def _log_selection_error(err: BaseException, context: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_ERROR_LOG_PATH), exist_ok=True)
+        with open(_ERROR_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write("=" * 72 + "\n")
+            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] run_selection failed\n")
+            fh.write(f"  error_type: {type(err).__name__}\n")
+            fh.write(f"  error_msg:  {err}\n")
+            for k, v in context.items():
+                fh.write(f"  {k}: {v}\n")
+            fh.write("  traceback:\n")
+            fh.write(traceback.format_exc())
+            fh.write("\n")
+    except Exception:
+        # Never let logging itself break the run.
+        pass
+    # Also write to stderr so it appears in the Streamlit terminal.
+    print(f"[run_selection FAILED] {type(err).__name__}: {err}", file=sys.stderr)
 
 class PredictionService:
     def __init__(self, llm: LLMProvider, personas: List[MCPPersona], intent_engine: IntentEngine = None):
@@ -124,12 +152,20 @@ class PredictionService:
             
             return prediction
         except Exception as e:
+            _log_selection_error(e, {
+                "task": (task.task[:120] + "...") if task and getattr(task, "task", None) and len(task.task) > 120 else getattr(task, "task", "<no task>"),
+                "candidate_mcp": getattr(task, "candidate_mcp", None),
+                "exemplars_count": len(exemplars) if exemplars else 0,
+                "allowed_mcps": sorted(allowed_mcps) if allowed_mcps else None,
+                "capability_filter": capability_filter,
+            })
+            err_tag = f"{type(e).__name__}: {e}"
             return SelectionResult(
                 selected_mcp=[],
                 selected_tools=[],
-                justification=f"Error during selection: {str(e)}",
+                justification=f"Error during selection: {err_tag}",
                 raw_output=None,
-                validation_errors=[str(e)]
+                validation_errors=[err_tag]
             )
 
     def _build_system_prompt(self) -> str:
@@ -212,7 +248,7 @@ class PredictionService:
 
         exemplar_block = ""
         if exemplars:
-            lines = ["", "[FEW-SHOT EXAMPLES — previously solved tasks, use as reference]"]
+            lines = ["", "[RETRIEVED EXAMPLES — previously solved tasks, use as reference]"]
             for i, ex in enumerate(exemplars, 1):
                 tools_json = json.dumps(ex.get("tools", []))
                 lines.append(

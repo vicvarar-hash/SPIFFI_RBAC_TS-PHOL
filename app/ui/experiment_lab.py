@@ -28,6 +28,7 @@ from app.services.experiment_runner import (
 from app.services.opa_comparison import run_opa_comparison
 
 LOG_DIR = os.path.join("datasets", "experiment_logs")
+REPORTS_DIR = "reports"
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,8 @@ logger = logging.getLogger(__name__)
 def _save_experiment_log(all_metrics: List, all_results: Dict,
                          mode: str, inference_mode: str,
                          llm_model: str = None,
-                         few_shot: Dict = None) -> str:
+                         llm_provider: str = None,
+                         ra_icl: Dict = None) -> str:
     """Save full experiment results to a timestamped JSON log file.
 
     Returns the path to the saved log file.
@@ -49,30 +51,31 @@ def _save_experiment_log(all_metrics: List, all_results: Dict,
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_mode = re.sub(r'[^\w\-]', '_', inference_mode)
     model_tag = f"_{re.sub(r'[^\w\-]', '_', llm_model)}" if llm_model else ""
-    fs_tag = ""
-    if few_shot and few_shot.get("enabled"):
-        fs_label = re.sub(r'[^\w\-]', '_', str(few_shot.get("label", "fs")))
-        fs_tag = f"_fs-{fs_label}_k{few_shot.get('k_resolved', 0)}"
+    ra_tag = ""
+    if ra_icl and ra_icl.get("enabled"):
+        ra_label = re.sub(r'[^\w\-]', '_', str(ra_icl.get("label", "fs")))
+        ra_tag = f"_raicl-{ra_label}_k{ra_icl.get('k_resolved', 0)}"
     # Encode prompt-context ablation flags in the filename so K-curve / ablation
     # logs are visually distinguishable at a glance.
     pc_flags = ""
-    if few_shot:
-        if few_shot.get("rbac_scoped"): pc_flags += "A"
-        if few_shot.get("cap_filtered"): pc_flags += "B"
-        if few_shot.get("bm25"): pc_flags += "C"
+    if ra_icl:
+        if ra_icl.get("rbac_scoped"): pc_flags += "A"
+        if ra_icl.get("cap_filtered"): pc_flags += "B"
+        if ra_icl.get("bm25"): pc_flags += "C"
     if pc_flags:
-        fs_tag += f"_+{pc_flags}"
-    filename = f"run_{ts}_{safe_mode}{model_tag}_{mode}{fs_tag}.json"
+        ra_tag += f"_+{pc_flags}"
+    filename = f"run_{ts}_{safe_mode}{model_tag}_{mode}{ra_tag}.json"
     filepath = os.path.join(LOG_DIR, filename)
 
-    fs_meta = few_shot or {"enabled": False}
+    ra_meta = ra_icl or {"enabled": False}
 
     log_data = {
         "timestamp": datetime.now().isoformat(),
         "inference_mode": inference_mode,
+        "llm_provider": llm_provider,
         "llm_model": llm_model,
         "evaluation_mode": mode,
-        "few_shot": fs_meta,
+        "ra_icl": ra_meta,
         "experiments": {},
     }
 
@@ -89,7 +92,7 @@ def _save_experiment_log(all_metrics: List, all_results: Dict,
             "metrics": m.to_dict(),
             "config": {
                 "description": m.description,
-                "few_shot": fs_meta,
+                "ra_icl": ra_meta,
             },
             "total_rows": len(rows),
             "rows": rows,
@@ -124,9 +127,10 @@ def render_experiment_lab(tasks, personas):
         "Run governance experiments (E1–E4) and compare against an OPA-equivalent baseline."
     )
 
-    tab_runner, tab_opa = st.tabs([
+    tab_runner, tab_opa, tab_reports = st.tabs([
         "🚀 Experiment Runner",
         "🆚 OPA Baseline Comparison",
+        "📑 Reports",
     ])
 
     with tab_runner:
@@ -134,6 +138,9 @@ def render_experiment_lab(tasks, personas):
 
     with tab_opa:
         _render_opa_comparison()
+
+    with tab_reports:
+        _render_reports()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -144,8 +151,10 @@ def _render_experiment_runner(tasks, personas):
     st.markdown("### Experiment Configurations")
     st.markdown(
         "Each experiment runs all **6 personas** across **all tasks** through the governance pipeline. "
-        "E1 is the full baseline; E2–E4 perform **subtractive ablation** — removing one layer at a time "
-        "from the top to measure each layer's marginal contribution."
+        "E1 is the full baseline; E2–E3 perform **subtractive ablation** — removing one deterministic layer "
+        "at a time to measure each layer's marginal contribution. **E4 strips all deterministic policy and "
+        "lets the LLM matcher decide alone** — the apples-to-apples baseline against ASTRA-style LLM-only "
+        "matchers (LLM-ResM)."
     )
 
     # ── Experiment cards — 2×2 grid ──
@@ -157,18 +166,23 @@ def _render_experiment_runner(tasks, personas):
         with col:
             total_evals = len(PERSONAS) * len(tasks)
 
-            # Highlight: full pipeline vs ablation vs control
+            # Highlight: full pipeline vs ablation vs LLM-only baseline
             active_layers = []
             if cfg.rbac_fn != "open":
                 active_layers.append("RBAC")
             if cfg.abac_fn != "open":
                 active_layers.append("ABAC")
-            if cfg.tsphol_fn != "open":
+            tsphol_mode = "off" if cfg.tsphol_fn == "open" \
+                else "llm" if cfg.tsphol_fn == "llm_verdict_only" \
+                else "on"
+            if tsphol_mode == "on":
                 active_layers.append("TS-PHOL")
 
             if len(active_layers) == 3:
                 icon = "🛡️"
-            elif len(active_layers) == 0:
+            elif tsphol_mode == "llm" and not active_layers:
+                icon = "🤖"
+            elif len(active_layers) == 0 and tsphol_mode == "off":
                 icon = "⚪"
             else:
                 icon = "🔬"
@@ -180,39 +194,41 @@ def _render_experiment_runner(tasks, personas):
             layers = []
             layers.append(f"RBAC: {'`on`' if cfg.rbac_fn != 'open' else '~~off~~'}")
             layers.append(f"ABAC: {'`on`' if cfg.abac_fn != 'open' else '~~off~~'}")
-            layers.append(f"TS-PHOL: {'`on`' if cfg.tsphol_fn != 'open' else '~~off~~'}")
+            if tsphol_mode == "llm":
+                layers.append("TS-PHOL: `llm-only`")
+            else:
+                layers.append(f"TS-PHOL: {'`on`' if tsphol_mode == 'on' else '~~off~~'}")
 
             st.caption(
                 f"**Tasks:** {len(tasks):,} · **Evals:** {total_evals:,}"
             )
             st.caption(" · ".join(layers))
+            if tsphol_mode == "llm":
+                st.caption("⚠️ _Validation mode only_ — the LLM verdict drives ALLOW/DENY.")
 
     st.markdown("---")
 
     # ── Inference mode selection ──
     st.markdown("### ⚙️ Inference Settings")
-    inf_col1, inf_col2 = st.columns([2, 2])
-    with inf_col1:
-        inference_mode = st.radio(
-            "Inference Mode",
-            ["🧪 Simulation (Deterministic)", "🤖 Real LLM (API)"],
-            horizontal=True,
-            help="Simulation uses deterministic passthrough (no API calls). "
-                 "Real LLM calls the OpenAI API once per unique task."
-        )
-        use_real_llm = inference_mode.startswith("🤖")
+    # Real LLM is always used in the experiment lab; simulation mode was removed
+    # because it added no signal beyond a wiring sanity check.
+    use_real_llm = True
 
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    llm_model = "gpt-4o"
-    if use_real_llm:
-        with inf_col2:
-            llm_model = st.selectbox(
-                "Model",
-                ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-                help="Model used for tool selection inference."
-            )
-        if not api_key:
-            st.warning("⚠️ Please provide your OpenAI API key in the **sidebar Settings** to run real LLM experiments.")
+    # Provider/model/key all come from the sidebar so they're shared with
+    # Prediction Lab. See app/ui/llm_settings.py.
+    from app.ui.llm_settings import get_llm_config
+    llm_cfg = get_llm_config()
+    provider = llm_cfg["provider"]
+    llm_model = llm_cfg["model"]
+    api_key = llm_cfg["api_key"]
+
+    if api_key:
+        st.success(f"Using **{provider}** / `{llm_model}` (configured in sidebar)")
+    else:
+        st.error(
+            f"⚠️ No API key found for **{provider}**. "
+            f"Add it to `.env` and restart, then choose the provider in the sidebar."
+        )
 
     # ── Run controls ──
     col_sel, col_mode, col_btn = st.columns([2, 2, 1])
@@ -229,23 +245,24 @@ def _render_experiment_runner(tasks, personas):
         st.write("")  # spacing
         run_clicked = st.button("🚀 Run", type="primary", use_container_width=True)
 
-    # ── Few-shot controls (mode-aware) ──
-    from app.ui.few_shot_widget import render_k_selector
-    fs_col1, fs_col2 = st.columns([1, 2])
-    with fs_col1:
-        use_few_shot = st.checkbox(
-            "🎓 Few-shot exemplars (70/30 split)", value=False,
-            help="When enabled: inject K exemplars from the 70% train split "
-                 "into each prompt, and evaluate ONLY on the 30% held-out test "
-                 "cohort (plus all wrong/null tasks). When disabled, the full "
-                 "dataset is evaluated with K=0 (no exemplars).",
-            key="exp_use_few_shot",
+    # ── Retrieval-augmented exemplars (RA-ICL) controls (mode-aware) ──
+    from app.ui.raicl_widget import render_k_selector
+    ra_col1, ra_col2 = st.columns([1, 2])
+    with ra_col1:
+        use_raicl = st.checkbox(
+            "📚 Retrieval-augmented exemplars (RA-ICL, 70/30 split)", value=False,
+            help="When enabled: for each query, retrieve K exemplars from the "
+                 "70% train split (random in-domain by default, or BM25 below) "
+                 "and inject them into the prompt. Evaluate ONLY on the 30% "
+                 "held-out test cohort (plus all wrong/null tasks). When "
+                 "disabled, the full dataset is evaluated with K=0 (no exemplars).",
+            key="exp_use_raicl",
         )
-    with fs_col2:
-        fs_choice = render_k_selector(
+    with ra_col2:
+        ra_choice = render_k_selector(
             key=f"exp_fs_k_{mode_str}",  # remount when mode changes
             mode=mode_str,
-            disabled=not use_few_shot,
+            disabled=not use_raicl,
         )
 
     # ── Prompt-context ablation toggles (selection mode only) ──
@@ -275,9 +292,9 @@ def _render_experiment_runner(tasks, personas):
         with pc_col3:
             use_bm25 = st.checkbox(
                 "C · BM25 exemplar retrieval", value=False,
-                help="Override the few-shot strategy to BM25 similarity ranking "
-                     "over the train pool. Requires few-shot enabled with K>0.",
-                key="exp_use_bm25", disabled=pc_disabled or not use_few_shot,
+                help="Override the exemplar retrieval strategy to BM25 similarity "
+                     "ranking over the train pool. Requires RA-ICL exemplars enabled with K>0.",
+                key="exp_use_bm25", disabled=pc_disabled or not use_raicl,
             )
 
     if run_choice == "Run All (E1–E4)":
@@ -290,16 +307,44 @@ def _render_experiment_runner(tasks, personas):
         cname = run_choice.split(":")[0].strip()
         configs_to_run = [EXPERIMENT_MAP[cname]]
 
+    # ── E4 is validation-mode only ───────────────────────────────────────
+    # In selection mode the LLM does not emit issue_codes, so the
+    # ValidationFailed predicate is always False and E4's llm_verdict_only
+    # rule never fires. The experiment degenerates to allow-all and produces
+    # no signal. Strip E4 silently from multi-config presets and surface a
+    # clear error if the user picked it explicitly.
+    e4_in_run = any(c.name == "E4" for c in configs_to_run)
+    if mode_str == "selection" and e4_in_run:
+        if len(configs_to_run) == 1:
+            st.warning(
+                "**E4 requires validation mode.** "
+                "In selection mode the LLM only picks tools — it never emits "
+                "an `is_valid` verdict, so the LLM-only matcher rule has nothing "
+                "to enforce on. Switch the Mode toggle to **Validation** to run "
+                "E4 as an ASTRA-style baseline."
+            )
+            configs_to_run = []
+        else:
+            configs_to_run = [c for c in configs_to_run if c.name != "E4"]
+            st.info(
+                "ℹ️ Skipping **E4** in selection mode (validation-mode-only "
+                "experiment). Use Validation mode if you want to include it."
+            )
+
     # ── Results area ──
     if run_clicked:
-        if use_real_llm and not api_key:
-            st.error("Please enter your OpenAI API key before running.")
+        if not configs_to_run:
+            # Already shown an error/warning above (e.g. E4 + selection mode).
+            pass
+        elif use_real_llm and not api_key:
+            st.error(f"Missing API key for {provider}. Add it to `.env` first.")
         else:
             _run_and_display(configs_to_run, tasks, personas, mode_str,
                              use_real_llm=use_real_llm, api_key=api_key,
                              llm_model=llm_model,
-                             use_few_shot=use_few_shot,
-                             fs_choice=fs_choice if use_few_shot else None,
+                             provider=provider,
+                             use_raicl=use_raicl,
+                             ra_choice=ra_choice if use_raicl else None,
                              use_rbac_scope=use_rbac_scope,
                              use_cap_filter=use_cap_filter,
                              use_bm25=use_bm25)
@@ -312,14 +357,15 @@ def _render_experiment_runner(tasks, personas):
 def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                      mode: str, use_real_llm: bool = False,
                      api_key: str = None, llm_model: str = "gpt-4o",
-                     use_few_shot: bool = False,
-                     fs_choice=None,
+                     provider: str = "openai",
+                     use_raicl: bool = False,
+                     ra_choice=None,
                      use_rbac_scope: bool = False,
                      use_cap_filter: bool = False,
                      use_bm25: bool = False):
     """Execute experiments with progress tracking and display results.
 
-    If ``use_few_shot`` is True, ``fs_choice`` (a FewShotChoice) drives
+    If ``use_raicl`` is True, ``ra_choice`` (a RAICLChoice) drives
     exemplar retrieval: a 70/30 stratified split is built (or loaded),
     K exemplars from the train pool are injected into each prompt, and
     governance evaluation is restricted to the held-out test cohort plus
@@ -332,20 +378,20 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
     status_text = st.empty()
     llm_cache = None
 
-    # ── Few-shot setup ──
+    # ── RA-ICL setup ──
     retriever = None
     test_fingerprints = None
-    fs_meta: Dict = {"enabled": False}
-    if use_few_shot and fs_choice is not None:
+    ra_meta: Dict = {"enabled": False}
+    if use_raicl and ra_choice is not None:
         from app.services.split_service import load_or_build_split, _task_fingerprint as _fp
         from app.services.exemplar_retriever import ExemplarRetriever
 
         split_info = load_or_build_split(tasks, ratio=0.7, seed=42)
         train_pool = split_info.filter_train(tasks)
-        k_resolved = fs_choice.resolve_k(len(train_pool))
+        k_resolved = ra_choice.resolve_k(len(train_pool))
         # Stage C: override strategy to BM25 similarity ranking if requested.
         # Only meaningful for K>0; K=0 has no exemplars to rank.
-        effective_strategy = "bm25" if (use_bm25 and k_resolved > 0) else fs_choice.strategy
+        effective_strategy = "bm25" if (use_bm25 and k_resolved > 0) else ra_choice.strategy
         # K=0 baseline: no retriever (no exemplars injected) but the test
         # cohort filter still applies so it is comparable to K>0 runs.
         if k_resolved > 0:
@@ -353,15 +399,15 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                 train_pool=train_pool,
                 k=k_resolved,
                 strategy=effective_strategy,
-                pad_cross_domain=fs_choice.pad_cross_domain,
+                pad_cross_domain=ra_choice.pad_cross_domain,
             )
         # Evaluate only on test cohort + wrong/null tasks (never trains).
         test_fingerprints = set(split_info.test_fingerprints) | set(split_info.other_fingerprints)
-        fs_meta = {
+        ra_meta = {
             "enabled": True,
-            "label": fs_choice.label,
+            "label": ra_choice.label,
             "strategy": effective_strategy,
-            "pad_cross_domain": fs_choice.pad_cross_domain,
+            "pad_cross_domain": ra_choice.pad_cross_domain,
             "k_resolved": k_resolved,
             "train_pool_size": len(train_pool),
             "test_cohort_size": len(split_info.test_fingerprints),
@@ -370,16 +416,16 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
             "split_seed": split_info.seed,
         }
         st.info(
-            f"🎓 Few-shot: **{fs_choice.label}** (K={k_resolved}) · "
+            f"📚 RA-ICL: **{ra_choice.label}** (K={k_resolved}) · "
             f"train={len(train_pool)} · test={len(split_info.test_fingerprints)} "
             f"(+{len(split_info.other_fingerprints)} wrong/null) · "
             f"strategy=`{effective_strategy}`"
         )
 
-    # Record prompt-context ablation flags in fs_meta so they appear in the log.
-    fs_meta["rbac_scoped"] = bool(use_rbac_scope) and mode == "selection"
-    fs_meta["cap_filtered"] = bool(use_cap_filter) and mode == "selection"
-    fs_meta["bm25"] = bool(use_bm25) and mode == "selection" and use_few_shot
+    # Record prompt-context ablation flags in ra_meta so they appear in the log.
+    ra_meta["rbac_scoped"] = bool(use_rbac_scope) and mode == "selection"
+    ra_meta["cap_filtered"] = bool(use_cap_filter) and mode == "selection"
+    ra_meta["bm25"] = bool(use_bm25) and mode == "selection" and use_raicl
 
     # Phase 1: Build LLM cache if using real inference
     if use_real_llm:
@@ -397,7 +443,7 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                 for t in tasks:
                     all_tasks_for_cache.add(_task_fingerprint(t))
 
-        # If few-shot enabled, only call LLM for tasks we'll actually evaluate
+        # If RA-ICL enabled, only call LLM for tasks we'll actually evaluate
         if test_fingerprints is not None:
             all_tasks_for_cache &= test_fingerprints
             tasks_for_cache = [t for t in tasks if _task_fingerprint(t) in all_tasks_for_cache]
@@ -422,11 +468,12 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
 
             llm_cache = build_llm_cache(
                 tasks_for_cache, personas, api_key=api_key, model=llm_model,
+                provider=provider,
                 mode=mode,
                 progress_callback=llm_progress,
                 retriever=retriever,
-                rbac_scoped=fs_meta.get("rbac_scoped", False),
-                capability_filter=fs_meta.get("cap_filtered", False),
+                rbac_scoped=ra_meta.get("rbac_scoped", False),
+                capability_filter=ra_meta.get("cap_filtered", False),
             )
 
             failed = sum(1 for v in llm_cache.values() if v.get("_failed"))
@@ -462,14 +509,14 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
                                           progress_callback=progress_cb,
                                           llm_cache=llm_cache,
                                           task_filter_fingerprints=test_fingerprints,
-                                          rbac_scoped_cache=fs_meta.get("rbac_scoped", False))
+                                          rbac_scoped_cache=ra_meta.get("rbac_scoped", False))
         all_metrics.append(metrics)
         all_results[config.name] = results
 
     progress_bar.progress(1.0, text="Complete!")
-    inference_label = f"real LLM ({llm_model})" if use_real_llm else "simulation"
-    fs_label = f" · few-shot {fs_meta.get('label', 'off')} (K={fs_meta.get('k_resolved', 0)})" if fs_meta.get("enabled") else ""
-    status_text.markdown(f"✅ **Completed {total_configs} experiment(s)** — {mode} mode, {inference_label}{fs_label}")
+    inference_label = f"real LLM ({llm_model})"
+    ra_label = f" · RA-ICL {ra_meta.get('label', 'off')} (K={ra_meta.get('k_resolved', 0)})" if ra_meta.get("enabled") else ""
+    status_text.markdown(f"✅ **Completed {total_configs} experiment(s)** — {mode} mode, {inference_label}{ra_label}")
 
     # Show LLM failure summary if any
     total_failures = sum(m.llm_failures for m in all_metrics)
@@ -481,18 +528,19 @@ def _run_and_display(configs: List[ExperimentConfig], tasks, personas,
         "metrics": all_metrics,
         "results": all_results,
         "mode": mode,
-        "inference_mode": "llm" if use_real_llm else "simulation",
-        "llm_model": llm_model if use_real_llm else None,
-        "few_shot": fs_meta,
+        "inference_mode": "llm",
+        "llm_model": llm_model,
+        "ra_icl": ra_meta,
     }
 
     # Persist full log to disk
     try:
         log_path = _save_experiment_log(
             all_metrics, all_results, mode,
-            inference_mode="llm" if use_real_llm else "simulation",
-            llm_model=llm_model if use_real_llm else None,
-            few_shot=fs_meta,
+            inference_mode="llm",
+            llm_model=llm_model,
+            llm_provider=provider,
+            ra_icl=ra_meta,
         )
         st.success(f"📄 Results log saved to `{log_path}`")
     except Exception as e:
@@ -653,9 +701,9 @@ def _display_results(data: dict):
         if has_ablation:
             st.markdown("##### 🔬 Subtractive Ablation: Layer-by-Layer Value")
             st.caption(
-                "Starting from **E4 (no governance)** and adding layers one at a time. "
-                "Each row shows the marginal contribution of adding that layer. "
-                "Δ ALLOW < 0 means the layer blocked additional unsafe requests."
+                "Starting from **E4 (LLM matcher only — ASTRA-style baseline)** and adding deterministic "
+                "layers one at a time. Each row shows the marginal contribution of adding that layer over "
+                "the pure LLM verdict. Δ ALLOW < 0 means the layer blocked additional unsafe requests."
             )
             delta_rows = []
             for from_name, to_name, desc in ablation_chain:
@@ -786,7 +834,7 @@ def _build_assessment_prompt(metrics_list: List[ExperimentMetrics],
     e3 = metrics_by_name.get("E3")
     e4 = metrics_by_name.get("E4")
     if e1 and e4:
-        ablation_text += "| Metric | E4 (None) | E3 (TS-PHOL) | E2 (ABAC+TS-PHOL) | E1 (Full) |\n"
+        ablation_text += "| Metric | E4 (LLM only) | E3 (TS-PHOL) | E2 (ABAC+TS-PHOL) | E1 (Full) |\n"
         ablation_text += "|---|---|---|---|---|\n"
         exps = [e4, e3, e2, e1]
         for label, attr in [("ALLOW", "allow_count"), ("DENY", "deny_count"),
@@ -863,13 +911,11 @@ Please provide a comprehensive assessment covering:
 
 6. **Deception Routing Analysis** — When and why does the system route to deception instead of hard-deny? Is this behavior appropriate?
 
-7. **Comparison: Simulation vs Real LLM** — If this was a real LLM run, what changed compared to simulation expectations? If simulation, what would we expect to change with a real LLM?
+7. **Key Highlights for a Research Paper** — What are the most compelling data points and narratives for publication?
 
-8. **Key Highlights for a Research Paper** — What are the most compelling data points and narratives for publication?
+8. **Recommendations** — Specific actionable improvements to the governance framework.
 
-9. **Recommendations** — Specific actionable improvements to the governance framework.
-
-10. **Limitations & Caveats** — What should readers be cautious about when interpreting these results?
+9. **Limitations & Caveats** — What should readers be cautious about when interpreting these results?
 
 Format your response in well-structured Markdown with clear headers and bullet points. Use specific numbers from the data — do not generalize.
 """
@@ -1155,3 +1201,93 @@ This represents a **fundamental architectural capability gap** in flat policy en
     ]
     st.dataframe(pd.DataFrame(arch_rows), use_container_width=True, hide_index=True)
 
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tab 3 — Reports
+# ═══════════════════════════════════════════════════════════════════════
+
+def _list_reports() -> List[str]:
+    """Return sorted (newest-first) list of report markdown filenames.
+
+    Excludes files prefixed with `_` (templates, drafts).
+    """
+    if not os.path.isdir(REPORTS_DIR):
+        return []
+    files = [
+        f for f in os.listdir(REPORTS_DIR)
+        if f.endswith(".md") and not f.startswith("_")
+    ]
+    return sorted(files, reverse=True)
+
+
+def _read_report_title(path: str) -> str:
+    """Extract the first H1 heading from a markdown file. Falls back to filename."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("# "):
+                    return line[2:].strip()
+    except Exception:
+        pass
+    return os.path.basename(path)
+
+
+def _render_reports():
+    st.subheader("📑 Experiment Reports")
+    st.caption(
+        "Curated, advisor-ready writeups of experiment runs. Reports are stored as "
+        "markdown files in `reports/`. To publish a new report, drop a `.md` file in "
+        "that directory following the format spec in `reports/_REPORT_FORMAT.md`."
+    )
+
+    files = _list_reports()
+    if not files:
+        st.info(
+            "No reports yet. Add a markdown file to the `reports/` directory "
+            "(see `reports/_REPORT_FORMAT.md` for the format spec)."
+        )
+        return
+
+    # Build dropdown options: "<H1 title>  (filename)"
+    options = []
+    file_by_label = {}
+    for fname in files:
+        full = os.path.join(REPORTS_DIR, fname)
+        title = _read_report_title(full)
+        label = f"{title}  ·  ({fname})"
+        options.append(label)
+        file_by_label[label] = full
+
+    selected = st.selectbox(
+        "Select a report",
+        options,
+        index=0,
+        key="experiment_report_picker",
+    )
+    selected_path = file_by_label[selected]
+
+    col_a, col_b = st.columns([5, 1])
+    with col_b:
+        try:
+            with open(selected_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            st.download_button(
+                "⬇️ Download .md",
+                data=raw,
+                file_name=os.path.basename(selected_path),
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        except Exception:
+            pass
+
+    st.markdown("---")
+
+    try:
+        with open(selected_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        st.markdown(content, unsafe_allow_html=False)
+    except Exception as e:
+        st.error(f"Could not read report: {e}")

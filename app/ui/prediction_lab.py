@@ -98,8 +98,14 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
     inference_svc = CapabilityInferenceService()
     intent_engine = IntentEngine(inference_svc=inference_svc)
     
-    # Initialize core services
-    llm = LLMProvider()
+    # Initialize core services using provider/model from sidebar
+    from app.ui.llm_settings import get_llm_config
+    llm_cfg = get_llm_config()
+    llm = LLMProvider(
+        api_key=llm_cfg["api_key"],
+        model=llm_cfg["model"],
+        provider=llm_cfg["provider"],
+    )
     predictor = PredictionService(llm, personas, intent_engine=intent_engine)
     validator = ValidationService(llm, personas)
     comparer = ComparisonService()
@@ -218,14 +224,14 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             st.warning("No tasks match the selected Task Category filter.")
             return
 
-        # 🎓 Few-shot toggle (must come BEFORE the task index so we can
+        # 🎓 RA-ICL toggle (must come BEFORE the task index so we can
         # restrict the index range to the held-out test cohort).
-        # Mode must be selected first so the few-shot widget can show
+        # Mode must be selected first so the RA-ICL widget can show
         # mode-appropriate options (selection-mode forbids in-domain
         # retrieval because the MCP label on every exemplar leaks the
         # answer; validation-mode permits it because the bundle already
         # declares the MCP).
-        from app.ui.few_shot_widget import render_k_selector
+        from app.ui.raicl_widget import render_k_selector
         split_info = None
         with col_c1:
             selected_mode = st.radio(
@@ -237,18 +243,20 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             _mode_key = "selection" if selected_mode.startswith("Selection") else "validation"
         st.session_state["experiment_mode"] = selected_mode
         with col_c1:
-            use_few_shot = st.checkbox(
-                "🎓 Few-shot exemplars (70/30 split)", value=False,
-                help="Inject known-good examples from the 70% train split "
-                     "into the prompt, and restrict task picker to the 30% held-out test cohort.",
+            use_raicl = st.checkbox(
+                "📚 Retrieval-augmented exemplars (RA-ICL, 70/30 split)", value=False,
+                help="For each query, retrieve K relevant exemplars from the "
+                     "70% train split and inject them into the prompt. The task "
+                     "picker is restricted to the 30% held-out test cohort to "
+                     "avoid evaluating on tasks that may have leaked into the pool.",
             )
-            fs_choice = render_k_selector(
+            ra_choice = render_k_selector(
                 key=f"pred_fs_k_{_mode_key}",  # remount when mode changes
                 mode=_mode_key,
-                disabled=not use_few_shot,
+                disabled=not use_raicl,
             )
 
-        if use_few_shot:
+        if use_raicl:
             from app.services.split_service import load_or_build_split
             split_info = load_or_build_split(tasks, ratio=0.7, seed=42)
             test_fps = set(split_info.test_fingerprints)
@@ -259,16 +267,16 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             filtered_tasks = [t for t in filtered_tasks if _fp(t) in allowed]
             if not filtered_tasks:
                 st.warning("No TEST or wrong/null tasks match the selected filters. "
-                           "Either disable few-shot or widen the MCP/category filters.")
+                           "Either disable RA-ICL exemplars or widen the MCP/category filters.")
                 return
 
-        st.session_state["use_few_shot"] = use_few_shot
-        st.session_state["fs_choice"] = fs_choice
-        st.session_state["few_shot_label"] = fs_choice.label
-        st.session_state["fs_split"] = split_info
+        st.session_state["use_raicl"] = use_raicl
+        st.session_state["ra_choice"] = ra_choice
+        st.session_state["raicl_label"] = ra_choice.label
+        st.session_state["ra_split"] = split_info
 
         with col_c2:
-            label_suffix = " · TEST cohort only" if use_few_shot else ""
+            label_suffix = " · TEST cohort only" if use_raicl else ""
             task_idx_in_filtered = st.number_input(
                 f"Task Index (0-{len(filtered_tasks)-1}){label_suffix}",
                 min_value=0, max_value=len(filtered_tasks)-1, value=0,
@@ -277,11 +285,11 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
             st.info(f"**Task Description:**  \n{task.task}")
             st.caption(f"Category: {task.match_tag if task.match_tag else 'Null'}")
 
-            if use_few_shot and split_info is not None:
+            if use_raicl and split_info is not None:
                 cohort = split_info.classify(task)
                 cohort_label = {"test": "🟩 TEST (held-out)", "other": "⬜ wrong/null"}.get(cohort, "🟦 train (?)")
                 st.caption(
-                    f"Few-shot: {fs_choice.label} · cohort: {cohort_label} · "
+                    f"RA-ICL: {ra_choice.label} · cohort: {cohort_label} · "
                     f"train pool={len(split_info.train_fingerprints)} · test={len(split_info.test_fingerprints)}"
                 )
 
@@ -343,13 +351,13 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                 if selected_mode.startswith("Selection"):
                     sel_pre_llm = decision_engine.pre_llm_check(caller_spiffe_id, None, None)
                     if sel_pre_llm["passed"]:
-                        # Build exemplars on-demand if few-shot enabled
+                        # Build exemplars on-demand if RA-ICL enabled
                         sel_exemplars = None
-                        if st.session_state.get("use_few_shot") and st.session_state.get("fs_split") is not None:
+                        if st.session_state.get("use_raicl") and st.session_state.get("ra_split") is not None:
                             from app.services.exemplar_retriever import ExemplarRetriever
-                            fs_split = st.session_state["fs_split"]
-                            train_tasks = fs_split.filter_train(tasks)
-                            _choice = st.session_state["fs_choice"]
+                            ra_split = st.session_state["ra_split"]
+                            train_tasks = ra_split.filter_train(tasks)
+                            _choice = st.session_state["ra_choice"]
                             retriever = ExemplarRetriever(
                                 train_tasks,
                                 k=_choice.resolve_k(len(train_tasks)),
@@ -384,11 +392,11 @@ def render_prediction_lab(tasks: List[AstraTask], personas: List[MCPPersona]):
                     val_pre_llm = decision_engine.pre_llm_check(caller_spiffe_id, task.candidate_mcp, task.candidate_tools)
                     if val_pre_llm["passed"]:
                         val_exemplars = None
-                        if st.session_state.get("use_few_shot") and st.session_state.get("fs_split") is not None:
+                        if st.session_state.get("use_raicl") and st.session_state.get("ra_split") is not None:
                             from app.services.exemplar_retriever import ExemplarRetriever
-                            fs_split = st.session_state["fs_split"]
-                            train_tasks = fs_split.filter_train(tasks)
-                            _choice = st.session_state["fs_choice"]
+                            ra_split = st.session_state["ra_split"]
+                            train_tasks = ra_split.filter_train(tasks)
+                            _choice = st.session_state["ra_choice"]
                             retriever = ExemplarRetriever(
                                 train_tasks,
                                 k=_choice.resolve_k(len(train_tasks)),

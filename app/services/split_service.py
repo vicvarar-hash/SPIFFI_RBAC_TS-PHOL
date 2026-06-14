@@ -1,5 +1,5 @@
 """
-Train / test split utility for in-context few-shot learning experiments.
+Train / test split utility for in-context RA-ICL learning experiments.
 
 Builds a deterministic, stratified-by-MCP split of `correct`-tagged ASTRA
 tasks. Only `correct` tasks are eligible (they have trustworthy groundtruth

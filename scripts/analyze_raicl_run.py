@@ -1,4 +1,4 @@
-"""Per-cohort breakdown of the few-shot all-in-domain experiment."""
+"""Per-cohort breakdown of the RA-ICL all-in-domain experiment."""
 import json
 from collections import defaultdict
 

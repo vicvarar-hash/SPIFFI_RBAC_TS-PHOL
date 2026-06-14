@@ -77,7 +77,7 @@ EXPERIMENT_GROUPS: Dict[str, str] = {
     "E1": "All tasks × full pipeline (RBAC + ABAC + TS-PHOL) — baseline",
     "E2": "All tasks × ABAC + TS-PHOL only (no RBAC) — isolates RBAC contribution",
     "E3": "All tasks × TS-PHOL only (no RBAC, no ABAC) — isolates TS-PHOL capability",
-    "E4": "All tasks × no pipeline — control group (everything ALLOWed)",
+    "E4": "All tasks × LLM matcher only (no deterministic policy) — ASTRA-style baseline",
 }
 
 
@@ -215,6 +215,27 @@ def tsphol_open() -> dict:
     return {"rules": []}
 
 
+def tsphol_llm_verdict_only() -> dict:
+    """LLM-matcher-only policy: enforce the LLM validator's verdict and nothing else.
+
+    Used by E4 as the ASTRA-style baseline — no structural alignment, capability
+    coverage, or write-safety rules. Only the LLM's own is_valid signal (surfaced
+    via the ValidationFailed predicate) determines ALLOW/DENY.
+
+    Note: in selection mode the LLM does not produce issue_codes, so
+    ValidationFailed is always False and this policy degenerates to allow-all.
+    The intended apples-to-apples ASTRA comparison runs in validation mode.
+    """
+    return {"rules": [
+        {"rule_name": "llm_verdict_only",
+         "description": "Deny iff the LLM matcher flagged the bundle as invalid (ASTRA LLM-ResM equivalent)",
+         "if": [{"predicate": "ValidationFailed", "equals": True}],
+         "then": "DENY",
+         "derive": "LLMMatcherDeny",
+         "priority": 100},
+    ]}
+
+
 def tsphol_minimal() -> dict:
     return {"rules": [
         {"rule_name": "destructive_write_prevention", "description": "Deny destructive ops without read",
@@ -266,6 +287,7 @@ POLICY_GENERATORS: Dict[str, Dict[str, Callable]] = {
     "abac":      {"production": abac_production, "open": abac_open, "strict": abac_strict, "extreme": abac_extreme},
     "tsphol": {
         "production": tsphol_production, "open": tsphol_open,
+        "llm_verdict_only": tsphol_llm_verdict_only,
         "minimal": tsphol_minimal,
         "strict": tsphol_strict, "relaxed": tsphol_relaxed,
         "no_hard_cap":          lambda: _tsphol_without_rule("hard_capability_violation"),
@@ -317,10 +339,14 @@ EXPERIMENTS: List[ExperimentConfig] = [
                      "All tasks × TS-PHOL only — isolates TS-PHOL capability",
                      rbac_fn="open", abac_fn="open"),
 
-    # E4: No pipeline — control group, everything ALLOWed
+    # E4: LLM matcher only — ASTRA-style baseline. No deterministic policy;
+    # the LLM validator's verdict is the sole signal driving ALLOW/DENY.
+    # Use this row when comparing against published LLM-as-matcher results
+    # (e.g. ASTRA LLM-ResM). In selection mode this degenerates to allow-all
+    # because the selection LLM does not emit issue_codes.
     ExperimentConfig("E4", "E4",
-                     "All tasks × no pipeline — control group (no governance)",
-                     rbac_fn="open", abac_fn="open", tsphol_fn="open"),
+                     "All tasks × LLM matcher only — no deterministic policy (ASTRA-style baseline)",
+                     rbac_fn="open", abac_fn="open", tsphol_fn="llm_verdict_only"),
 ]
 
 EXPERIMENT_MAP: Dict[str, ExperimentConfig] = {e.name: e for e in EXPERIMENTS}

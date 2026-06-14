@@ -1,5 +1,5 @@
 """
-Smoke tests for the in-context few-shot learning feature.
+Smoke tests for the in-context RA-ICL learning feature.
 
 Verifies:
 1. Split is deterministic, stratified by MCP, and persists/reloads cleanly.
@@ -8,12 +8,12 @@ Verifies:
 3. PredictionService and ValidationService inject exemplars into their
    prompts (verified via a recording mock LLM).
 4. build_llm_cache plumbs the retriever through and tags entries with
-   `_few_shot_k`.
+   `_raicl_k`.
 5. run_experiment honors `task_filter_fingerprints` to restrict
    evaluation to the test split.
 
 Run from repo root:
-    python scripts\test_few_shot.py
+    python scripts\test_ra_icl.py
 """
 
 import json
@@ -200,9 +200,9 @@ def test_retriever_random_any_uniform_pool():
           f"{pct_same:.0%} same as query · all-train: {len(exs_all)}")
 
 
-def test_few_shot_widget_resolver():
-    """Widget option strings should resolve to expected FewShotChoice values."""
-    from app.ui.few_shot_widget import _resolve
+def test_raicl_widget_resolver():
+    """Widget option strings should resolve to expected RAICLChoice values."""
+    from app.ui.raicl_widget import _resolve
 
     # Selection-mode percentage options use random_any
     c = _resolve("25% train")
@@ -279,12 +279,12 @@ def test_prediction_service_injects_exemplars():
 
     # No exemplars → no examples block
     svc.run_selection(task)
-    assert "FEW-SHOT EXAMPLES" not in llm.user_prompts[-1]
+    assert "RETRIEVED EXAMPLES" not in llm.user_prompts[-1]
 
     # With exemplars → examples block present
     svc.run_selection(task, exemplars=exemplars)
     last = llm.user_prompts[-1]
-    assert "FEW-SHOT EXAMPLES" in last
+    assert "RETRIEVED EXAMPLES" in last
     assert "Albert Einstein" in last
     assert "Python language" in last
     assert "[END EXAMPLES]" in last
@@ -322,11 +322,11 @@ def test_validation_service_injects_exemplars():
     ]
 
     svc.run_validation(task)
-    assert "FEW-SHOT EXAMPLES" not in llm.user_prompts[-1]
+    assert "RETRIEVED EXAMPLES" not in llm.user_prompts[-1]
 
     svc.run_validation(task, exemplars=exemplars)
     last = llm.user_prompts[-1]
-    assert "FEW-SHOT EXAMPLES" in last
+    assert "RETRIEVED EXAMPLES" in last
     assert "Marie Curie" in last
     assert "is_valid=true" in last
     print("  ✓ ValidationService prompt contains EXAMPLES block when exemplars passed")
@@ -337,7 +337,7 @@ def test_validation_service_injects_exemplars():
 # ─────────────────────────────────────────────────────────────────────────
 
 def test_build_llm_cache_uses_retriever(monkeypatch=None):
-    """Patch the LLM provider so we can observe prompts and `_few_shot_k`."""
+    """Patch the LLM provider so we can observe prompts and `_raicl_k`."""
     from app.services import experiment_runner
     from app.loaders.mcp_loader import load_mcp_personas
 
@@ -380,9 +380,9 @@ def test_build_llm_cache_uses_retriever(monkeypatch=None):
 
     assert len(cache) == 3
     for entry in cache.values():
-        assert entry.get("_few_shot_k") == 2, f"Expected _few_shot_k=2, got {entry.get('_few_shot_k')}"
+        assert entry.get("_raicl_k") == 2, f"Expected _raicl_k=2, got {entry.get('_raicl_k')}"
         assert entry.get("_mode") == "selection"
-    print(f"  ✓ build_llm_cache passes retriever + tags entries with _few_shot_k")
+    print(f"  ✓ build_llm_cache passes retriever + tags entries with _raicl_k")
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -428,7 +428,7 @@ TESTS = [
     ("Retriever: k=0",                     test_retriever_k_zero),
     ("Retriever: no-pad in-domain only",   test_retriever_no_pad_returns_in_domain_only),
     ("Retriever: random_any uniform",      test_retriever_random_any_uniform_pool),
-    ("Widget: option resolver",            test_few_shot_widget_resolver),
+    ("Widget: option resolver",            test_raicl_widget_resolver),
     ("Prompt: PredictionService inject",   test_prediction_service_injects_exemplars),
     ("Prompt: ValidationService inject",   test_validation_service_injects_exemplars),
     ("Runner: build_llm_cache retriever",  test_build_llm_cache_uses_retriever),

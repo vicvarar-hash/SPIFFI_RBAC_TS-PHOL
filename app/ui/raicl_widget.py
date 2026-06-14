@@ -1,6 +1,6 @@
-"""Shared widget for selecting few-shot exemplar count.
+"""Shared widget for selecting RA-ICL exemplar count.
 
-Returns a :class:`FewShotChoice` describing how to build the retriever.
+Returns a :class:`RAICLChoice` describing how to build the retriever.
 The widget is **mode-aware**:
 
 * ``selection`` — the model must infer both the MCP and the tools. Using
@@ -29,8 +29,8 @@ _HUGE = 10_000
 
 
 @dataclass(frozen=True)
-class FewShotChoice:
-    """Result of a few-shot selectbox render.
+class RAICLChoice:
+    """Result of a RA-ICL selectbox render.
 
     Attributes
     ----------
@@ -80,35 +80,35 @@ VALIDATION_OPTIONS = [
 ]
 
 
-def _resolve(choice: str) -> FewShotChoice:
-    """Map a raw selectbox string to a FewShotChoice."""
+def _resolve(choice: str) -> RAICLChoice:
+    """Map a raw selectbox string to a RAICLChoice."""
     # K=0 baseline (no exemplars, but caller still applies split filter)
     if choice == "0 (test cohort)":
-        return FewShotChoice("K=0 (test cohort)", "random_any", True, _k_literal=0)
+        return RAICLChoice("K=0 (test cohort)", "random_any", True, _k_literal=0)
 
     # Selection-mode percentage options
     if choice == "25% train":
-        return FewShotChoice("25% train", "random_any", True, _fraction=0.25)
+        return RAICLChoice("25% train", "random_any", True, _fraction=0.25)
     if choice == "50% train":
-        return FewShotChoice("50% train", "random_any", True, _fraction=0.50)
+        return RAICLChoice("50% train", "random_any", True, _fraction=0.50)
     if choice == "75% train":
-        return FewShotChoice("75% train", "random_any", True, _fraction=0.75)
+        return RAICLChoice("75% train", "random_any", True, _fraction=0.75)
 
     # Validation-mode literal-K options
     if choice == "3":
-        return FewShotChoice("K=3", "random_in_domain", True, _k_literal=3)
+        return RAICLChoice("K=3", "random_in_domain", True, _k_literal=3)
     if choice == "10":
-        return FewShotChoice("K=10", "random_in_domain", True, _k_literal=10)
+        return RAICLChoice("K=10", "random_in_domain", True, _k_literal=10)
     if choice == "25":
-        return FewShotChoice("K=25", "random_in_domain", True, _k_literal=25)
+        return RAICLChoice("K=25", "random_in_domain", True, _k_literal=25)
     if choice == "All in-domain":
-        return FewShotChoice("K=all-in-domain", "random_in_domain", False, _k_literal=_HUGE)
+        return RAICLChoice("K=all-in-domain", "random_in_domain", False, _k_literal=_HUGE)
 
     # Shared between modes
     if choice == "All train":
-        return FewShotChoice("K=all-train", "random_any", True, _k_literal=_HUGE)
+        return RAICLChoice("K=all-train", "random_any", True, _k_literal=_HUGE)
 
-    raise ValueError(f"unknown few-shot choice: {choice!r}")
+    raise ValueError(f"unknown RA-ICL choice: {choice!r}")
 
 
 def render_k_selector(
@@ -117,8 +117,8 @@ def render_k_selector(
     mode: str = "selection",
     default: Optional[str] = None,
     disabled: bool = False,
-) -> FewShotChoice:
-    """Render a mode-aware selectbox and return a FewShotChoice.
+) -> RAICLChoice:
+    """Render a mode-aware selectbox and return a RAICLChoice.
 
     Parameters
     ----------
@@ -133,7 +133,7 @@ def render_k_selector(
         middle-of-the-road default) for selection mode, or "3" for
         validation mode.
     disabled : bool
-        Greys out the selector (e.g., when the few-shot toggle is off).
+        Greys out the selector (e.g., when the RA-ICL toggle is off).
     """
     if mode == "selection":
         options: List[str] = SELECTION_OPTIONS

@@ -122,7 +122,7 @@ class ValidationService:
 
         exemplar_block = ""
         if exemplars:
-            lines = ["", "[FEW-SHOT EXAMPLES — known-VALID bundles for similar tasks]"]
+            lines = ["", "[RETRIEVED EXAMPLES — known-VALID bundles for similar tasks]"]
             for i, ex in enumerate(exemplars, 1):
                 tools_json = json.dumps(ex.get("tools", []))
                 lines.append(

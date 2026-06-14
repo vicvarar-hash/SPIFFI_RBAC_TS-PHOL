@@ -1,5 +1,13 @@
 import streamlit as st
 import os
+
+# Load .env into os.environ before any module reads it.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv is optional; env vars can still be set externally.
+
 from app.loaders.astra_loader import load_astra_dataset
 from app.loaders.mcp_loader import load_mcp_personas
 from app.ui.home import render_home
@@ -57,11 +65,8 @@ selection = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Settings")
-default_key = os.environ.get("OPENAI_API_KEY", "")
-api_key = st.sidebar.text_input("OpenAI API Key", value=default_key, type="password")
-if api_key:
-    os.environ["OPENAI_API_KEY"] = api_key
+from app.ui.llm_settings import render_llm_settings_sidebar
+render_llm_settings_sidebar()
 
 st.sidebar.markdown("---")
 st.sidebar.info(

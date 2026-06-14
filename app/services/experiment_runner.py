@@ -459,6 +459,7 @@ def _to_astra_task(task):
 
 def build_llm_cache(tasks: list, personas_list, api_key: str,
                     model: str = "gpt-4o",
+                    provider: str = "openai",
                     mode: str = "selection",
                     progress_callback: Optional[Callable] = None,
                     max_retries: int = 2,
@@ -475,7 +476,7 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
       judge the dataset's candidate (groundtruth) bundle. Governance later
       evaluates the candidate bundle itself (mirrors Prediction Lab).
 
-    If ``retriever`` (an :class:`ExemplarRetriever`) is provided, K few-shot
+    If ``retriever`` (an :class:`ExemplarRetriever`) is provided, K RA-ICL
     exemplars are injected into each prompt.
 
     Prompt-context optimizations (selection mode only):
@@ -498,9 +499,9 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
     from app.services.intent_engine import IntentEngine
     from app.services.experiment_config import LEGITIMATE_PAIRINGS
 
-    llm = LLMProvider(api_key=api_key, model=model)
+    llm = LLMProvider(api_key=api_key, model=model, provider=provider)
     if not llm.is_configured():
-        raise ValueError("LLM provider not configured — check API key")
+        raise ValueError(f"LLM provider {provider!r} not configured — check API key")
 
     if mode not in ("selection", "validation"):
         raise ValueError(f"Unsupported mode: {mode!r} (expected 'selection' or 'validation')")
@@ -548,7 +549,7 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
     for key, (task, allowed) in unique_jobs.items():
         astra_task = _to_astra_task(task)
         exemplars = retriever.get(task) if retriever is not None else None
-        few_shot_k = len(exemplars) if exemplars else 0
+        raicl_k = len(exemplars) if exemplars else 0
 
         for attempt in range(max_retries + 1):
             try:
@@ -563,9 +564,30 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
                         cache[key] = {"_failed": True, "_error": "LLM not configured"}
                         break
 
+                    # Surface silent in-method failures: if run_selection caught
+                    # an exception internally it returns empty tools with the
+                    # error tagged into justification. Promote that to a real
+                    # failure so llm_failed/llm_error reflect it in row logs.
+                    silent_err = None
+                    if (not sel.selected_tools) and isinstance(sel.justification, str) \
+                            and sel.justification.startswith("Error during selection:"):
+                        silent_err = sel.justification.replace("Error during selection:", "").strip()
+                    if silent_err is None and sel.validation_errors:
+                        # Heuristic: validation_errors that look like exception strings
+                        for ve in sel.validation_errors:
+                            if isinstance(ve, str) and (":" in ve and ve.split(":", 1)[0].endswith("Error")):
+                                silent_err = ve
+                                break
+                    if silent_err:
+                        cache[key] = {"_failed": True, "_error": silent_err,
+                                      "justification": sel.justification,
+                                      "validation_errors": sel.validation_errors}
+                        errors += 1
+                        break
+
                     cache[key] = {
                         "_mode": "selection",
-                        "_few_shot_k": few_shot_k,
+                        "_raicl_k": raicl_k,
                         "_rbac_scoped": bool(allowed),
                         "_cap_filtered": bool(capability_filter),
                         "_allowed_mcps": sorted(allowed) if allowed else None,
@@ -586,7 +608,7 @@ def build_llm_cache(tasks: list, personas_list, api_key: str,
 
                     cache[key] = {
                         "_mode": "validation",
-                        "_few_shot_k": few_shot_k,
+                        "_raicl_k": raicl_k,
                         "selected_tools": list(astra_task.candidate_tools),
                         "selected_mcps": list(astra_task.candidate_mcp),
                         "justification": val.reason,
@@ -651,7 +673,7 @@ def run_experiment(config: ExperimentConfig, tasks: list, personas_list,
 
     If ``task_filter_fingerprints`` is provided, only tasks whose fingerprint
     is in that set are evaluated (used to restrict governance evaluation to
-    the held-out test split when few-shot is enabled).
+    the held-out test split when RA-ICL is enabled).
 
     If ``rbac_scoped_cache`` is True, the LLM cache is assumed to be keyed by
     ``(task_fingerprint, allowed_mcps_set)`` and is looked up using the

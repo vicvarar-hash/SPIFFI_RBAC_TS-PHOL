@@ -1,14 +1,14 @@
-# Validation-Mode Experiments — Three-Model Comparison vs ASTRA
+# Validation-Mode Experiments — Four-Model Comparison vs ASTRA
 
-> **Date:** 2026-06-14 · **Author:** Victor Vargas · **Mode:** validation · **Models:** gpt-3.5-turbo-16k, gpt-4o, gpt-5.4
+> **Date:** 2026-06-14 (Gemini-2.5-pro integration added 2026-06-15) · **Author:** Victor Vargas · **Mode:** validation · **Models:** gpt-3.5-turbo-16k, gpt-4o, gpt-5.4, gemini-2.5-pro
 
 ---
 
 ## 1. TL;DR / Headline Result
 
-- The PALADIN deterministic stack (E1) drives the **security failure rate to ≤ 1%** across all three LLMs (F1 ≈ 0.86 in PALADIN's security-view metric), versus **28–68%** when the LLM alone is the authorizer (E4). The stack — not the LLM — is what makes the system secure.
+- The PALADIN deterministic stack (E1) drives the **security failure rate to ≤ 1%** across all four LLMs (F1 ≈ 0.856 in PALADIN's security-view metric), versus **28–100%** when the LLM alone is the authorizer (E4). The stack — not the LLM — is what makes the system secure. The pattern transfers to a non-OpenAI vendor (Gemini-2.5-pro).
 - We **independently reproduced ASTRA's central LLM-ResM finding** on a harder per-bundle evaluation. Our GPT-4o E4 lands at **F1 = 0.595** (ASTRA-permissivity view) against ASTRA's published F1 = 0.67 — within 0.075 F1, with the same precision-recall-undersoping signature.
-- **Newer ≠ better.** Across the OpenAI line, E4 F1 (ASTRA view) is *monotonically decreasing* with model recency: gpt-3.5-turbo-16k (**0.756**) > gpt-5.4 (0.688) > gpt-4o (0.595).
+- **Newer ≠ better.** Across the OpenAI line, E4 F1 (ASTRA view) is *monotonically decreasing* with model recency: gpt-3.5-turbo-16k (**0.756**) > gpt-5.4 (0.688) > gpt-4o (0.595). Gemini-2.5-pro E4 collapses to a near-total yes-machine (F1 = 0.004, allow rate 99.7%) — the most extreme E1→E4 swing in the panel.
 
 ---
 
@@ -20,11 +20,11 @@
 | Personas | 6 (one per MCP server domain) |
 | Evaluation cohort | 1,157 tasks × 6 personas = **6,942 (task, persona) rows** |
 | Evaluation mode | `validation` — the LLM is given the request **and** the candidate tool bundle, and must judge appropriateness |
-| Models tested | gpt-3.5-turbo-16k (OpenAI 2023), gpt-4o (OpenAI 2024), gpt-5.4 (OpenAI 2026 via Microsoft Foundry) |
+| Models tested | gpt-3.5-turbo-16k (OpenAI 2023), gpt-4o (OpenAI 2024), gpt-5.4 (OpenAI 2026 via Microsoft Foundry), gemini-2.5-pro (Google 2025) |
 | Inference config | temperature = 0.0, JSON schema response format, single retry on parse failure |
 | `match_tag` distribution | correct = 3,474 rows (50.0%) · wrong = 2,778 rows (40.0%) · null = 690 rows (10.0%) |
 | `is_legitimate` distribution | True = 1,752 rows · False = 5,190 rows (a row is `is_legitimate` only if the persona is in `LEGITIMATE_PAIRINGS` for the task AND `match_tag == correct`) |
-| Source log files | `datasets/experiment_logs/run_20260612_191843_*gpt-5_4_validation.json`, `run_20260613_005419_*gpt-4o_validation.json`, `run_20260613_141204_*gpt-35-turbo-16k_validation.json` |
+| Source log files | `datasets/experiment_logs/run_20260612_191843_*gpt-5_4_validation.json`, `run_20260613_005419_*gpt-4o_validation.json`, `run_20260613_141204_*gpt-35-turbo-16k_validation.json`, `run_20260612_160439_*gemini-2_5-pro_validation.json` |
 
 ### Experiment definitions (E1 – E4)
 
@@ -41,6 +41,19 @@
 
 > **Important: two conventions appear in this report.** Be aware which one is being
 > used at any moment. They differ in how they label the "positive" class.
+
+> **Plain-English version.** Both conventions score the *same* ALLOW/DENY decisions; they
+> only disagree on what counts as the "positive" (the thing you're trying to detect).
+> - **Convention A = security guard** — positive = the *bad* request. *"Did we catch the bad
+>   stuff?"* `sec_fail` is the miss rate (bad requests that slipped through). Its ground truth
+>   (`is_legitimate`) includes the **authorization** check (correct bundle **and** authorized
+>   persona). → this is the *authorization* score.
+> - **Convention B = quality inspector** — positive = the *good* request (`match_tag = correct`).
+>   *"Did we allow the good stuff?"* Pure tool-matching that **ignores** persona; used only for
+>   the apples-to-apples ASTRA comparison. → this is the *tool-selection* score.
+>
+> Same decisions, opposite "positive," so the metrics differ on purpose (e.g. gpt-4o E4:
+> F1 = 0.763 in A vs 0.595 in B). Not a contradiction — two different questions.
 
 Every (task, persona, experiment) row produces a decision: `ALLOW` or `DENY`
 (`DECEPTION_ROUTED` is grouped with `DENY` for classification purposes).
@@ -118,6 +131,17 @@ is_legitimate = True rows (1,752) → 880 ALLOW (TN), 872 DENY (FP).
 
 Both numbers are correct. They answer different questions.
 
+**What this example is telling us.** E4 is the LLM *alone* — no deterministic stack — so it's
+the "before" picture. GPT-4o is both **leaky** (allows 20.7% of hard same-MCP `wrong` bundles)
+and **over-restrictive** (denies ~half of legitimate work → FP = 872). Crucially, of its 1,454
+security misses (FN in Convention A), only **606 are tool-matching failures** (`wrong`+`null`
+allowed); the other **848 are authorization failures** — *correct* bundles requested by an
+*unauthorized* persona (1,728 correct-allowed − 880 authorized = 848). That's **~58% of all
+misses, and the LLM cannot catch them**: the validation prompt shows it the task and tools but
+**never the persona**. RBAC/ABAC *do* see the persona, so they catch exactly these. Under the
+full stack (E1) the same model's sec_fail drops **0.280 → 0.005 (56×)**. Takeaway: **the LLM is
+a decent tool-matcher but a poor authorizer; the deterministic stack is the security guarantee.**
+
 ---
 
 ## 4. Methodology Details
@@ -154,6 +178,14 @@ A request is allowed only if all active layers approve. E4 disables all three de
 
 ## 5. Results
 
+> **How to read §5 — three views of the same four runs.** §5.1 (Convention A) is the security
+> scorecard: the full stack (E1) holds sec_fail ≤ 1% on *every* model, while the LLM alone (E4)
+> ranges 28–100% — a **56–170× swing the stack, not the model, produces**. §5.2 (Convention B)
+> re-scores the *LLM-alone* runs as tool-matchers and surfaces the uncomfortable pattern:
+> **newer ≠ safer** (gpt-3.5 0.756 > gpt-5.4 0.688 > gpt-4o 0.595). §5.3 drops both conventions
+> and just shows raw allow rates per slice. The through-line: **E1 numbers cluster tightly (the
+> stack equalizes wildly different models); E4 numbers scatter all over the place.**
+
 ### 5.1 PALADIN security view (Convention A) — what the logs report
 
 All metrics measured against `is_legitimate` ground truth. Positive class = illegitimate request. Higher F1 = better at catching threats while sparing legitimate work.
@@ -166,6 +198,8 @@ All metrics measured against `is_legitimate` ground truth. Positive class = ille
 | gpt-4o | E4 | 6,942 | 0.763 | 0.811 | 0.720 | 0.280 | 0.336 |
 | gpt-5.4 | E1 | 6,942 | 0.856 | 0.750 | 0.996 | **0.004** | 0.007 |
 | gpt-5.4 | E4 | 6,942 | 0.466 | 0.856 | 0.321 | 0.679 | 0.720 |
+| gemini-2.5-pro | E1 | 6,942 | 0.855 | 0.752 | 0.991 | **0.009** | 0.016 |
+| gemini-2.5-pro | E4 | 6,942 | 0.004 | 0.417 | 0.002 | 0.998 | 0.997 |
 
 **E1 → E4 security multiplier** (sec_fail reduction when adding the deterministic stack on top of the LLM):
 
@@ -174,8 +208,9 @@ All metrics measured against `is_legitimate` ground truth. Positive class = ille
 | gpt-3.5-turbo-16k | 50.0% | 0.5% | **100 ×** |
 | gpt-4o            | 28.0% | 0.5% | **56 ×** |
 | gpt-5.4           | 67.9% | 0.4% | **170 ×** |
+| gemini-2.5-pro    | 99.8% | 0.9% | **111 ×** |
 
-All three E1 numbers are essentially identical (F1 ≈ 0.856, sec_fail ≈ 0.5%) — **the deterministic stack is what produces security guarantees, not the LLM.**
+All four E1 numbers are essentially identical (F1 ≈ 0.855–0.856, sec_fail 0.4–0.9%) across one Google and three OpenAI models — **the deterministic stack is what produces security guarantees, not the LLM.**
 
 ### 5.2 ASTRA permissivity view (Convention B) — recomputed for direct ASTRA comparison
 
@@ -186,6 +221,9 @@ E4 only. Positive class = legitimate (`match_tag == correct`). Negatives = `wron
 | gpt-3.5-turbo-16k | 0.736 | 0.704 | **0.815** | **0.756** | 0.343 |
 | gpt-4o | 0.661 | **0.740** | 0.497 | 0.595 | **0.175** |
 | gpt-5.4 | 0.620 | 0.583 | 0.839 | 0.688 | 0.600 |
+| gemini-2.5-pro | 0.504 | 0.501 | 0.993 | 0.666 | 0.998 |
+
+(Gemini-2.5-pro's E4 is a near-total yes-machine — it allows essentially every bundle — so its precision-recall pair sits at a degenerate corner of the space. Convention B F1 = 0.666 is meaningless as a "validator" score; the FPR of 0.998 is the operative number, and it explains why deterministic E1 → E4 is the largest swing in the panel.)
 
 ### 5.3 Per-slice allow rates (convention-independent — just counts)
 
@@ -196,6 +234,14 @@ Useful diagnostic: what fraction of each ground-truth slice does the LLM allow? 
 | gpt-3.5-turbo-16k | 0.815 | 0.419 | 0.035 |
 | gpt-4o | 0.497 | 0.207 | 0.043 |
 | gpt-5.4 | 0.839 | 0.739 | 0.043 |
+| gemini-2.5-pro | 0.993 | 1.000 | 1.000 |
+
+> **What this reveals.** Against the ideal (1.000 / 0.000 / 0.000): the OpenAI models are
+> *under-permissive on `correct`* (gpt-4o allows just 49.7% of correct bundles) yet still
+> *leak hard `wrong` negatives* (gpt-5.4 allows 73.9%), while **Gemini-2.5-pro is a pure
+> yes-machine** — ~100% allow on *everything*, including all `null`. The `null` column (gross
+> cross-MCP) is easy for OpenAI (3–4% leak) but catastrophic for Gemini (100%) — exactly the
+> model-specific blind spot the deterministic stack masks in E1.
 
 ---
 
@@ -215,7 +261,7 @@ For multi-tool tasks (N ≥ 2), only LLM-ResM is evaluated. The matcher is calle
 | Dimension | ASTRA | Ours |
 |---|---|---|
 | Matcher call granularity | **Per-tool** (called 3× per N=3 task, AND-ed) | **Per-bundle** (called 1× per task on the full N=3 tool set) |
-| Models | GPT-4o only | gpt-3.5-turbo-16k, gpt-4o, gpt-5.4 |
+| Models | GPT-4o only | gpt-3.5-turbo-16k, gpt-4o, gpt-5.4, gemini-2.5-pro |
 | `wrong` construction | Single-tool swaps within an otherwise-correct bundle | Whole-bundle alternative selections |
 | Persona dimension | None (1 agent per task) | **6 personas per task** — adds cross-persona pairings as additional negatives |
 | Layers above the LLM | None (LLM is the system) | Three deterministic layers (RBAC + ABAC + TS-PHOL) in E1 |
@@ -235,6 +281,7 @@ ASTRA Table II, N = 3 rows (lines 684–690 of the paper) vs our E4 in Conventio
 | **Ours** | **gpt-4o** | **0.661** | **0.740** | **0.497** | **0.595** |
 | Ours | gpt-3.5-turbo-16k | 0.736 | 0.704 | 0.815 | 0.756 |
 | Ours | gpt-5.4 | 0.620 | 0.583 | 0.839 | 0.688 |
+| Ours | gemini-2.5-pro (degenerate; yes-machine) | 0.504 | 0.501 | 0.993 | 0.666 |
 
 ### Direct GPT-4o-to-GPT-4o replication
 
@@ -265,13 +312,13 @@ Even in validation mode (where the LLM only judges, not selects), three dataset 
 
 ## 8. Learnings
 
-1. **The deterministic stack is the security guarantee.** Across all three LLMs, E1 sec_fail collapses to **≤ 1%** — a **56× to 170×** reduction over E4. The headline F1 = 0.856 in Convention A is essentially provider-independent because the stack does the work, not the LLM.
+1. **The deterministic stack is the security guarantee.** Across all four LLMs — three OpenAI generations plus Gemini-2.5-pro (Google) — E1 sec_fail collapses to **≤ 1%** with a **56× to 170×** reduction over E4. The headline F1 ≈ 0.856 in Convention A is essentially provider-independent because the stack does the work, not the LLM. The Gemini run is the strongest single demonstration: E4 collapses to a yes-machine (99.8% sec_fail), yet the same stack pulls E1 back to 0.9%.
 
-2. **ASTRA's result generalizes.** The LLM-only validator plateaus at F1 ≈ 0.60 – 0.76 (Convention B) across three OpenAI LLMs spanning 2023 → 2026. This is a *task-intrinsic* ceiling, not a model-capability issue.
+2. **ASTRA's result generalizes.** The LLM-only validator plateaus at F1 ≈ 0.60 – 0.76 (Convention B) across three OpenAI LLMs spanning 2023 → 2026. This is a *task-intrinsic* ceiling, not a model-capability issue. Gemini-2.5-pro is excluded from this comparison because its E4 is degenerate.
 
-3. **Newer is not better.** Within OpenAI's line, F1 (Conv. B) decreases monotonically with model recency: gpt-3.5 (0.756) → gpt-5.4 (0.688) → gpt-4o (0.595). RLHF helpfulness optimization appears to actively reduce a model's suitability for adversarial validation.
+3. **Newer is not better.** Within OpenAI's line, F1 (Conv. B) decreases monotonically with model recency: gpt-3.5 (0.756) → gpt-5.4 (0.688) → gpt-4o (0.595). RLHF helpfulness optimization appears to actively reduce a model's suitability for adversarial validation. Gemini-2.5-pro is an extreme case of the same hypothesis (full yes-machine).
 
-4. **`null` separability is provider-independent.** All three OpenAI models reject 95.7% – 96.5% of cross-MCP-server (`null`) requests. The hard part of the task is same-MCP `wrong` vs `correct`, where the models vary wildly (21% → 74% allow).
+4. **`null` separability is provider-dependent for E4.** The three OpenAI models reject 95.7% – 96.5% of cross-MCP-server (`null`) requests in E4. Gemini-2.5-pro rejects **0%** in E4 — it allows literally every null bundle. This is the kind of LLM-specific blind spot the deterministic stack is designed to mask, and it does: Gemini E1 catches null bundles at the same rate as the OpenAI panel.
 
 5. **GPT-4o is the right model for "we replicate ASTRA."** Our GPT-4o F1 = 0.595 is within 0.08 of ASTRA's published 0.67 with the same precision-recall pattern. The story to tell isn't "we beat ASTRA" — it's "we reproduce ASTRA and then show the deterministic stack matters."
 
@@ -281,7 +328,7 @@ Even in validation mode (where the LLM only judges, not selects), three dataset 
 
 - We do not run ASTRA's **per-tool AND-aggregation** variant, so the −0.075 F1 gap to ASTRA's published GPT-4o cannot be cleanly decomposed between (a) the per-tool aggregation effect and (b) the dataset/persona difficulty difference.
 - We do not run **SemSimM** (semantic-similarity matcher), so we have no comparison for the SemSimM rows of ASTRA's Table II.
-- The three-model panel is **observational, not controlled**: we cannot causally attribute the "newer ≠ better" pattern to RLHF specifically without a controlled fine-tune.
+- The four-model panel is **observational, not controlled**: we cannot causally attribute the "newer ≠ better" pattern to RLHF specifically without a controlled fine-tune.
 - gpt-5.4 was accessed via **Azure AI Foundry**, which may apply system prompts or safety filters different from the OpenAI-direct API.
 - All eval is at **temperature = 0.0** with **single-shot** prompting; no self-consistency, no chain-of-thought scaffolding.
 
@@ -294,3 +341,19 @@ Even in validation mode (where the LLM only judges, not selects), three dataset 
 - Audit the **~30 likely-mislabeled null bundles** identified in §7 and re-tag them; rerun E4 on the cleaned set to measure the F1 ceiling lift.
 - Replicate gpt-3.5-turbo-16k via the **OpenAI-direct API** to rule out Foundry-side modifications as a cause of its surprise win.
 - Add a **always-allow / always-deny baseline** row to the table to show how far above-trivial each model is.
+
+---
+
+## 11. Figures
+
+### Figure 1 — The stack, not the LLM, makes it secure
+![Convergence of sec_fail from E4 to E1 across the four models](figs/validation_convergence.png "width=520")
+
+***How to read it:*** *each coloured line is one model. The left dot is its security-failure rate when the **LLM decides alone** (E4); the right dot is the **same model once PALADIN's deterministic stack is switched on** (E1). Lower = safer; the y-axis is log-scaled, so each gridline is a 10× change.*
+***What it's telling us:*** *on the left the four models are scattered across two orders of magnitude (`sec_fail` 0.28 → 0.998) — they wildly disagree about what is safe. On the right they **all collapse into one tight band (~0.005)**, a **56×–170×** improvement, and their confidence intervals overlap (statistically indistinguishable). Because the models differ enormously on their own but become identical under the stack, **the security comes from the deterministic stack, not from the LLM.** (Validation mode, n = 6,942 per model.)*
+
+### Figure 2 — Newer ≠ safer
+![LLM-only validation F1 by model release year](figs/newer_not_better.png "width=520")
+
+***How to read it:*** *each dot is one OpenAI model placed at its release year. The y-axis is how good that model is **on its own** (no deterministic stack) at flagging bad tool bundles — E4 F1 in the ASTRA permissivity view. Higher = better. The dashed line marks the 2023 model's score.*
+***What it's telling us:*** *the trend is **not** "newer = better." F1 drops from gpt-3.5 (2023, **0.756**) to gpt-4o (2024, **0.595**), then only partly recovers with gpt-5.4 (2026, **0.688**) — which still sits **below** the three-year-old model. More recent, more capable LLMs are **not** automatically safer validators (consistent with RLHF tuning them to be more eager to please). This is exactly why you can't trust the model alone — you need the deterministic stack from Figure 1. Gemini-2.5-pro is excluded: its E4 says "yes" to almost everything, so its F1 is meaningless as a validator score.*

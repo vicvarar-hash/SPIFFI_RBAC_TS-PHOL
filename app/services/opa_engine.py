@@ -3,7 +3,7 @@ OPA-equivalent policy engine for baseline comparison.
 
 Provides two evaluation modes:
   - Flat:    All rules evaluated simultaneously, deny-wins (OPA default semantics)
-  - Layered: Sequential RBAC → ABAC → TS-PHOL with short-circuit, but binary DENY/ALLOW only
+  - Layered: Sequential RBAC → ABAC → TRAC with short-circuit, but binary DENY/ALLOW only
 
 Both modes lack PALADIN's DECEPTION_ROUTED third outcome.
 Formal Rego translations live in policies/rego/ for paper reference.
@@ -150,7 +150,7 @@ class _ABACEvaluator:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TS-PHOL evaluation (mirrors tsphol_interpreter)
+# TRAC evaluation (mirrors tsphol_interpreter)
 # ═══════════════════════════════════════════════════════════════════════
 
 class _TSPHOLEvaluator:
@@ -167,14 +167,14 @@ class _TSPHOLEvaluator:
             action = rule.get("then", "ALLOW")
             conditions = rule.get("if", [])
 
-            is_alignment = rule_name == "low_task_alignment"
+            is_alignment = rule_name == "capability_coverage_partial"
             if is_alignment and skip_alignment:
                 continue
 
             if self._conditions_match(conditions, predicates) and action.upper() == "DENY":
                 return {
                     "decision": "DENY",
-                    "denial_source": "TS-PHOL",
+                    "denial_source": "TRAC",
                     "matched_rule": rule_name,
                 }
         return {"decision": "ALLOW", "denial_source": None}
@@ -213,7 +213,7 @@ class OPAEngine:
     """
     OPA-equivalent policy evaluator.
 
-    Implements the same RBAC, ABAC, and TS-PHOL rules from PALADIN's YAML
+    Implements the same RBAC, ABAC, and TRAC rules from PALADIN's YAML
     using OPA's flat evaluation semantics (deny-wins, no deception routing).
     Formal Rego translations are in policies/rego/.
     """
@@ -239,7 +239,7 @@ class OPAEngine:
         if abac_res["decision"] == "DENY":
             denial_sources.append("ABAC")
         if tsphol_res["decision"] == "DENY":
-            denial_sources.append("TS-PHOL")
+            denial_sources.append("TRAC")
 
         if denial_sources:
             return {
@@ -251,7 +251,7 @@ class OPAEngine:
 
     def evaluate_layered(self, inp: Dict[str, Any]) -> Dict[str, Any]:
         """
-        OPA-Layered: Sequential RBAC → ABAC → TS-PHOL with short-circuit.
+        OPA-Layered: Sequential RBAC → ABAC → TRAC with short-circuit.
         Same layer ordering as PALADIN, but binary ALLOW/DENY only.
         No deception routing.
         """
@@ -265,6 +265,6 @@ class OPAEngine:
 
         tsphol_res = self.tsphol.evaluate(inp["predicates"], inp.get("mode", "selection"))
         if tsphol_res["decision"] == "DENY":
-            return {"decision": "DENY", "denial_source": "TS-PHOL", "denial_sources": ["TS-PHOL"]}
+            return {"decision": "DENY", "denial_source": "TRAC", "denial_sources": ["TRAC"]}
 
         return {"decision": "ALLOW", "denial_source": None, "denial_sources": []}

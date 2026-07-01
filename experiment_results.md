@@ -13,9 +13,9 @@ This subtractive ablation study proves that **each governance layer in the PALAD
 
 | Experiment | Governance Stack | ALLOWs | Denials | SecFail | F₁ |
 |---|---|---|---|---|---|
-| **E1** (Baseline) | RBAC + ABAC + TS-PHOL | 2,488 | 4,454 | 0.271 | 0.785 |
-| **E2** (−RBAC) | ABAC + TS-PHOL | 4,873 | 2,069 | 0.679 | 0.459 |
-| **E3** (−RBAC −ABAC) | TS-PHOL only | 6,660 | 282 | 0.952 | 0.090 |
+| **E1** (Baseline) | RBAC + ABAC + TRAC | 2,488 | 4,454 | 0.271 | 0.785 |
+| **E2** (−RBAC) | ABAC + TRAC | 4,873 | 2,069 | 0.679 | 0.459 |
+| **E3** (−RBAC −ABAC) | TRAC only | 6,660 | 282 | 0.952 | 0.090 |
 | **E4** (Control) | No governance | 6,942 | 0 | 1.000 | 0.000 |
 
 **Removing any single layer causes measurable security degradation.** The full pipeline reduces the Security Failure Rate from 100% to 27.1%.
@@ -59,16 +59,16 @@ Six SPIFFE-authenticated personas with distinct RBAC roles, trust scores, and cl
 
 ### 2.4 Experiment Configurations
 
-| ID | Layers Active | RBAC | ABAC | TS-PHOL | Purpose |
+| ID | Layers Active | RBAC | ABAC | TRAC | Purpose |
 |---|---|---|---|---|---|
 | **E1** | Full Pipeline | ✅ Production | ✅ Production | ✅ Production | Baseline — maximum governance |
-| **E2** | ABAC + TS-PHOL | ❌ Open | ✅ Production | ✅ Production | Isolate RBAC's contribution |
-| **E3** | TS-PHOL only | ❌ Open | ❌ Open | ✅ Production | Isolate TS-PHOL's capability |
+| **E2** | ABAC + TRAC | ❌ Open | ✅ Production | ✅ Production | Isolate RBAC's contribution |
+| **E3** | TRAC only | ❌ Open | ❌ Open | ✅ Production | Isolate TRAC's capability |
 | **E4** | No governance | ❌ Open | ❌ Open | ❌ Open | Control group — zero enforcement |
 
 - **"Open"** = permissive pass-through (all requests automatically ALLOW at that layer)
 - Each layer enforces **independently** — RBAC and ABAC both short-circuit the pipeline on DENY
-- The pipeline flow is: RBAC → ABAC → TS-PHOL (sequential, short-circuiting)
+- The pipeline flow is: RBAC → ABAC → TRAC (sequential, short-circuiting)
 
 ### 2.5 Evaluation Metrics
 
@@ -98,7 +98,7 @@ Six SPIFFE-authenticated personas with distinct RBAC roles, trust scores, and cl
 
 ### 3.1 Full Results Table
 
-| Metric | E1 (Full) | E2 (−RBAC) | E3 (TS-PHOL) | E4 (None) |
+| Metric | E1 (Full) | E2 (−RBAC) | E3 (TRAC) | E4 (None) |
 |---|---|---|---|---|
 | **Total Evaluations** | 6,942 | 6,942 | 6,942 | 6,942 |
 | **ALLOW** | 2,488 | 4,873 | 6,660 | 6,942 |
@@ -118,7 +118,7 @@ Six SPIFFE-authenticated personas with distinct RBAC roles, trust scores, and cl
 | | | | | |
 | **RBAC Denials** | 4,164 | 0 | 0 | 0 |
 | **ABAC Denials** | 262 | 1,954 | 0 | 0 |
-| **TS-PHOL Denials** | 28 | 115 | 282 | 0 |
+| **TRAC Denials** | 28 | 115 | 282 | 0 |
 | | | | | |
 | **Tool Accuracy (exact)** | 4.75% | 4.75% | 4.75% | 4.75% |
 | **Tool Jaccard (avg)** | 0.178 | 0.178 | 0.178 | 0.178 |
@@ -129,14 +129,14 @@ Starting from E4 (no governance) and adding layers one at a time:
 
 ```
 E4 (No governance)  ████████████████████████████████████████  6,942 ALLOWs (100%)  SecFail=1.000
-E3 (+ TS-PHOL)      ██████████████████████████████████████░░  6,660 ALLOWs (95.9%) SecFail=0.952
+E3 (+ TRAC)      ██████████████████████████████████████░░  6,660 ALLOWs (95.9%) SecFail=0.952
 E2 (+ ABAC)         ████████████████████████████░░░░░░░░░░░░  4,873 ALLOWs (70.2%) SecFail=0.679
 E1 (+ RBAC)         ██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  2,488 ALLOWs (35.8%) SecFail=0.271
 ```
 
 | Layer Added | Δ ALLOW | Δ SecFail | Δ F₁ | Interpretation |
 |---|---|---|---|---|
-| **TS-PHOL** (E4→E3) | −282 | −0.048 | +0.090 | Surgical: catches 282 requests via logic rules and deception routing |
+| **TRAC** (E4→E3) | −282 | −0.048 | +0.090 | Surgical: catches 282 requests via logic rules and deception routing |
 | **ABAC** (E3→E2) | −1,787 | −0.274 | +0.369 | **Largest single-layer impact**: 27.4% security improvement from attribute-based rules |
 | **RBAC** (E2→E1) | −2,385 | −0.408 | +0.325 | Workhorse: blocks 2,385 role-unauthorized requests, 40.8% security improvement |
 | **Total** (E4→E1) | −4,454 | −0.729 | +0.785 | Full pipeline: 72.9% of illegitimate requests now caught |
@@ -149,20 +149,20 @@ Each layer addresses a distinct threat category:
 |---|---|---|---|
 | **RBAC** | Role mismatch | Finance agent requesting DevOps tools, Research agent accessing Grafana | 4,164 (93.5%) |
 | **ABAC** | Contextual/attribute risk | Correct role but insufficient clearance for high-risk writes, trust level violation | 262 (5.9%) |
-| **TS-PHOL** | Logical inconsistency | Domain mismatch, capability gap, destructive write prevention, deception routing | 28 (0.6%) |
+| **TRAC** | Logical inconsistency | Domain mismatch, capability gap, destructive write prevention, deception routing | 28 (0.6%) |
 
 ### 3.4 Deception Routing
 
-TS-PHOL's **DECEPTION_ROUTED** mode redirects suspicious requests to a honeypot/sandbox rather than hard-denying:
+TRAC's **DECEPTION_ROUTED** mode redirects suspicious requests to a honeypot/sandbox rather than hard-denying:
 
 | Experiment | Deception Routes | % of Total | Context |
 |---|---|---|---|
-| E1 (Full) | 28 | 0.4% | Only the most suspicious cases reach TS-PHOL (RBAC/ABAC already filtered) |
-| E2 (−RBAC) | 115 | 1.7% | More requests reach TS-PHOL without RBAC filtering |
-| E3 (TS-PHOL only) | 282 | 4.1% | All 282 TS-PHOL denials are deception routes — it's the only enforcement |
+| E1 (Full) | 28 | 0.4% | Only the most suspicious cases reach TRAC (RBAC/ABAC already filtered) |
+| E2 (−RBAC) | 115 | 1.7% | More requests reach TRAC without RBAC filtering |
+| E3 (TRAC only) | 282 | 4.1% | All 282 TRAC denials are deception routes — it's the only enforcement |
 | E4 (None) | 0 | 0.0% | No governance = no deception routing |
 
-**Key observation:** In E3, ALL of TS-PHOL's 282 denials are deception-routed (DECEPTION = DENY count). This confirms that TS-PHOL's primary enforcement mode is deception routing, not hard denial.
+**Key observation:** In E3, ALL of TRAC's 282 denials are deception-routed (DECEPTION = DENY count). This confirms that TRAC's primary enforcement mode is deception routing, not hard denial.
 
 ### 3.5 Per-Persona Breakdown (E1 — Full Pipeline)
 
@@ -220,7 +220,7 @@ Validation mode bypasses LLM tool selection and feeds the **groundtruth tool bun
 
 ### 4.1 Full Results Table (Validation)
 
-| Metric | E1 (Full) | E2 (−RBAC) | E3 (TS-PHOL) | E4 (None) |
+| Metric | E1 (Full) | E2 (−RBAC) | E3 (TRAC) | E4 (None) |
 |---|---|---|---|---|
 | **Total Evaluations** | 6,942 | 6,942 | 6,942 | 6,942 |
 | **ALLOW** | 534 | 915 | 1,146 | 6,942 |
@@ -240,13 +240,13 @@ Validation mode bypasses LLM tool selection and feeds the **groundtruth tool bun
 | | | | | |
 | **RBAC Denials** | 4,202 | 0 | 0 | 0 |
 | **ABAC Denials** | 276 | 1,986 | 0 | 0 |
-| **TS-PHOL Denials** | 1,930 | 4,041 | 5,796 | 0 |
+| **TRAC Denials** | 1,930 | 4,041 | 5,796 | 0 |
 
 ### 4.2 Validation Subtractive Ablation
 
 | Layer Added | Δ ALLOW | Δ SecFail | Δ F₁ | Interpretation |
 |---|---|---|---|---|
-| **TS-PHOL** (E4→E3) | −5,796 | −0.841 | +0.795 | **Dominant layer**: catches 5,796 requests via domain/capability/logic rules |
+| **TRAC** (E4→E3) | −5,796 | −0.841 | +0.795 | **Dominant layer**: catches 5,796 requests via domain/capability/logic rules |
 | **ABAC** (E3→E2) | −231 | −0.043 | +0.023 | Moderate: 231 additional attribute-based catches |
 | **RBAC** (E2→E1) | −381 | −0.071 | +0.037 | Targeted: 381 role-based catches on top |
 | **Total** (E4→E1) | −6,408 | −0.955 | +0.855 | Full pipeline: 95.5% of illegitimate requests caught |
@@ -274,25 +274,25 @@ This is the most revealing analysis — comparing how governance behaves when th
 |---|---|---|---|---|---|---|
 | **E1** (Full) | 2,488 | 534 | 0.271 | 0.045 | 0.785 | 0.855 |
 | **E2** (−RBAC) | 4,873 | 915 | 0.679 | 0.116 | 0.459 | 0.818 |
-| **E3** (TS-PHOL) | 6,660 | 1,146 | 0.952 | 0.159 | 0.090 | 0.795 |
+| **E3** (TRAC) | 6,660 | 1,146 | 0.952 | 0.159 | 0.090 | 0.795 |
 | **E4** (None) | 6,942 | 6,942 | 1.000 | 1.000 | 0.000 | 0.000 |
 
 ### 5.2 Key Differences
 
-**1. TS-PHOL is dramatically more effective with groundtruth tools:**
-- Selection E3: 282 TS-PHOL denials (4.1% of requests)
-- Validation E3: **5,796 TS-PHOL denials** (83.5% of requests) — a **20× increase**
-- This is because `wrong`-tagged tasks use intentionally mismatched tools that trigger TS-PHOL's domain mismatch and capability gap rules. The LLM, by contrast, picks domain-appropriate tools even for "wrong" tasks.
+**1. TRAC is dramatically more effective with groundtruth tools:**
+- Selection E3: 282 TRAC denials (4.1% of requests)
+- Validation E3: **5,796 TRAC denials** (83.5% of requests) — a **20× increase**
+- This is because `wrong`-tagged tasks use intentionally mismatched tools that trigger TRAC's domain mismatch and capability gap rules. The LLM, by contrast, picks domain-appropriate tools even for "wrong" tasks.
 
 **2. The LLM "sanitizes" adversarial task bundles:**
 - In selection mode, the LLM picks reasonable tools regardless of the task's `wrong` tag, effectively neutralizing the adversarial test cases
-- In validation mode, the groundtruth `wrong` tools hit the governance pipeline as-designed, and TS-PHOL catches them
+- In validation mode, the groundtruth `wrong` tools hit the governance pipeline as-designed, and TRAC catches them
 - This means Selection mode measures **governance over real LLM behavior**, while Validation mode measures **governance over the intended threat model**
 
-**3. RBAC is consistent; TS-PHOL diverges:**
+**3. RBAC is consistent; TRAC diverges:**
 - RBAC denials are similar: 4,164 (selection) vs 4,202 (validation) — RBAC evaluates persona-level permissions, mostly independent of which tools are selected
 - ABAC is similar: 262 vs 276 — attribute rules are also tool-independent
-- TS-PHOL diverges massively: 28 (selection) vs 1,930 (validation) — TS-PHOL's logic rules are highly sensitive to the actual tool set
+- TRAC diverges massively: 28 (selection) vs 1,930 (validation) — TRAC's logic rules are highly sensitive to the actual tool set
 
 **4. Security failure rate floor:**
 - Selection mode achieves SecFail = 0.271 (27.1% of threats missed) — bounded by LLM picking "plausible" tools that pass governance
@@ -307,9 +307,9 @@ The relative importance of layers **reverses** between modes:
 |---|---|---|---|
 | **RBAC** | −0.408 (largest) | −0.071 (smallest) | Dominant when LLM picks diverse tools across domains |
 | **ABAC** | −0.274 (middle) | −0.043 (middle) | Consistent middle-layer contribution in both modes |
-| **TS-PHOL** | −0.048 (smallest) | −0.841 (largest) | Dominant when tools are intentionally mismatched |
+| **TRAC** | −0.048 (smallest) | −0.841 (largest) | Dominant when tools are intentionally mismatched |
 
-This reversal is a critical finding: **RBAC is the workhorse for real LLM behavior, while TS-PHOL is the workhorse for adversarial/mismatched inputs.** Together they provide complementary defense profiles.
+This reversal is a critical finding: **RBAC is the workhorse for real LLM behavior, while TRAC is the workhorse for adversarial/mismatched inputs.** Together they provide complementary defense profiles.
 
 ### 5.4 Per-Persona Impact
 
@@ -333,7 +333,7 @@ In validation mode, **three personas are completely locked out** (0% ALLOW) — 
 Removing any single layer causes measurable security degradation:
 - Without RBAC (E2): SecFail jumps from 0.271 to 0.679 (+150%) in selection mode
 - Without ABAC (E3 vs E2): SecFail jumps from 0.679 to 0.952 (+40%) in selection mode
-- Without TS-PHOL (E4 vs E3): SecFail jumps from 0.952 to 1.000 (+5%) in selection mode
+- Without TRAC (E4 vs E3): SecFail jumps from 0.952 to 1.000 (+5%) in selection mode
 
 In validation mode the pattern holds: E1 SecFail = 0.045 → E2 = 0.116 → E3 = 0.159 → E4 = 1.000.
 
@@ -341,18 +341,18 @@ In validation mode the pattern holds: E1 SecFail = 0.045 → E2 = 0.116 → E3 =
 
 **This is the most important cross-modal finding:**
 - When the LLM selects tools (selection mode): **RBAC is the dominant defender** (Δ SecFail = −0.408), because the LLM picks tools from various domains that cross role boundaries
-- When groundtruth tools are used (validation mode): **TS-PHOL is the dominant defender** (Δ SecFail = −0.841), because adversarial tool bundles trigger logic-level rules (domain mismatch, capability gaps)
+- When groundtruth tools are used (validation mode): **TRAC is the dominant defender** (Δ SecFail = −0.841), because adversarial tool bundles trigger logic-level rules (domain mismatch, capability gaps)
 - **ABAC provides consistent middle-layer value** in both modes (Δ SecFail ≈ −0.04 to −0.27)
 
 This proves the layers are **complementary, not redundant** — each excels against different threat vectors.
 
 ### Finding 3: The LLM "Sanitizes" Adversarial Inputs
 
-In selection mode, the LLM picks domain-appropriate tools even for `wrong`-tagged tasks, effectively bypassing the adversarial test design. This causes TS-PHOL to fire only 28 times (selection) vs 1,930 times (validation) in E1 — a **69× difference**.
+In selection mode, the LLM picks domain-appropriate tools even for `wrong`-tagged tasks, effectively bypassing the adversarial test design. This causes TRAC to fire only 28 times (selection) vs 1,930 times (validation) in E1 — a **69× difference**.
 
 This is a double-edged finding:
 - **Positive**: LLMs naturally resist cross-domain tool selection, providing a baseline safety layer
-- **Negative**: Governance evaluation on LLM-selected tools underestimates TS-PHOL's true value against adversarial inputs
+- **Negative**: Governance evaluation on LLM-selected tools underestimates TRAC's true value against adversarial inputs
 
 ### Finding 4: Full Pipeline Achieves 95.5% Threat Catch Rate (Validation)
 
@@ -363,7 +363,7 @@ With groundtruth tools, the full pipeline (E1) catches **95.5% of all illegitima
 The denial sources are **disjoint** — each layer catches threats the others cannot:
 - RBAC: 4,164–4,202 role-based denials (consistent across modes)
 - ABAC: 262–276 attribute-based denials (consistent across modes)
-- TS-PHOL: 28–1,930 logic-based denials (highly mode-dependent)
+- TRAC: 28–1,930 logic-based denials (highly mode-dependent)
 
 ### Finding 6: Deception Routing Scales with Exposure
 
@@ -372,7 +372,7 @@ The denial sources are **disjoint** — each layer catches threats the others ca
 | Selection | 28 | 115 | 282 |
 | Validation | 192 | 1,152 | 2,604 |
 
-Deception routing increases as: (a) governance layers are removed (more requests reach TS-PHOL), and (b) groundtruth tools are used (more flaggable mismatches). In validation E3, **45% of all TS-PHOL denials are deception-routed** rather than hard-denied.
+Deception routing increases as: (a) governance layers are removed (more requests reach TRAC), and (b) groundtruth tools are used (more flaggable mismatches). In validation E3, **45% of all TRAC denials are deception-routed** rather than hard-denied.
 
 ### Finding 7: Governance Quality Is Independent of LLM Quality
 
@@ -384,12 +384,12 @@ Tool selection accuracy (4.75% exact, 17.8% Jaccard) is identical across all exp
 
 ### Core Claim (Supported by Data)
 
-> A composable, layered governance framework (RBAC → ABAC → TS-PHOL) with independent enforcement and formal semantics provides measurably superior security over any individual mechanism for LLM-based agentic tool selection. Layer roles are complementary: RBAC dominates against real LLM behavior, TS-PHOL dominates against adversarial inputs, and ABAC provides consistent middle-layer coverage in both scenarios.
+> A composable, layered governance framework (RBAC → ABAC → TRAC) with independent enforcement and formal semantics provides measurably superior security over any individual mechanism for LLM-based agentic tool selection. Layer roles are complementary: RBAC dominates against real LLM behavior, TRAC dominates against adversarial inputs, and ABAC provides consistent middle-layer coverage in both scenarios.
 
 ### Paper Contributions
 
-1. **PALADIN Framework**: First published layered policy stack (RBAC → ABAC → TS-PHOL) specifically designed for agentic tool-use governance
-2. **TS-PHOL Type System**: Typed Security Policy Higher-Order Logic — a formal rule language for expressing security predicates over LLM inference outputs
+1. **PALADIN Framework**: First published layered policy stack (RBAC → ABAC → TRAC) specifically designed for agentic tool-use governance
+2. **TRAC Type System**: Typed, Staged, Predicate-Hierarchical Ordered Logic — a typed rule language with deterministic ordered evaluation for expressing security predicates over LLM inference outputs
 3. **Independent Layer Enforcement**: Each layer enforces its own denials with short-circuit semantics — composable and independently testable
 4. **Deception Routing**: Novel enforcement mode enabling honeypot-based threat containment as a third alternative to ALLOW/DENY
 5. **Dual-Mode Evaluation**: Selection mode (LLM-driven) and validation mode (groundtruth-driven) reveal complementary defense profiles
@@ -400,7 +400,7 @@ Tool selection accuracy (4.75% exact, 17.8% Jaccard) is identical across all exp
 ### Ablation Narrative for the Paper
 
 ```
-E4 (No governance) → E3 (+ TS-PHOL)  → E2 (+ ABAC)     → E1 (+ RBAC)
+E4 (No governance) → E3 (+ TRAC)  → E2 (+ ABAC)     → E1 (+ RBAC)
 SecFail: 1.000     → 0.952 (−4.8%)   → 0.679 (−27.4%)  → 0.271 (−40.8%)
 F₁:      0.000     → 0.090 (+0.090)  → 0.459 (+0.369)  → 0.785 (+0.325)
 Denials:  0         → 282             → 2,069            → 4,454
@@ -412,10 +412,10 @@ Each layer provides a monotonic improvement in security. The cumulative effect r
 
 ## 8. OPA Baseline Comparison
 
-To validate PALADIN's layered approach against the industry-standard policy engine, we translated all RBAC, ABAC, and TS-PHOL rules into **Open Policy Agent (OPA) Rego** and replayed the same experiment logs through two OPA evaluation modes:
+To validate PALADIN's layered approach against the industry-standard policy engine, we translated all RBAC, ABAC, and TRAC rules into **Open Policy Agent (OPA) Rego** and replayed the same experiment logs through two OPA evaluation modes:
 
 - **OPA-Flat**: All rules evaluated simultaneously (standard OPA pattern — no short-circuit, no layer ordering)
-- **OPA-Layered**: Rules evaluated in RBAC → ABAC → TS-PHOL order with short-circuit semantics (simulating PALADIN's architecture in OPA)
+- **OPA-Layered**: Rules evaluated in RBAC → ABAC → TRAC order with short-circuit semantics (simulating PALADIN's architecture in OPA)
 
 ### 8.1 Selection Mode Comparison (E1)
 
@@ -428,7 +428,7 @@ To validate PALADIN's layered approach against the industry-standard policy engi
 | **Deception Routed** | 28 | — | — |
 | **Agreement w/ PALADIN** | — | 97.9% | 97.9% |
 
-**Denial source visibility (OPA-Flat):** RBAC=4,164 · ABAC=2,086 · TS-PHOL=84
+**Denial source visibility (OPA-Flat):** RBAC=4,164 · ABAC=2,086 · TRAC=84
 
 ### 8.2 Validation Mode Comparison (E1)
 
@@ -441,15 +441,15 @@ To validate PALADIN's layered approach against the industry-standard policy engi
 | **Deception Routed** | 192 | — | — |
 | **Agreement w/ PALADIN** | — | 77.2% | 77.2% |
 
-**Denial source visibility (OPA-Flat):** RBAC=4,202 · ABAC=2,123 · TS-PHOL=972
+**Denial source visibility (OPA-Flat):** RBAC=4,202 · ABAC=2,123 · TRAC=972
 
 ### 8.3 Key Findings
 
 1. **Selection mode: near-identical security** — 97.9% agreement, F₁ within 0.001. When the LLM dominates tool selection, OPA's flat evaluation reaches essentially the same binary outcomes as PALADIN's layered pipeline.
 
 2. **Validation mode: PALADIN dramatically more restrictive** — only 77.2% agreement. PALADIN allows 534 tasks vs. OPA's 2,088. SecFail drops from 20.9% (OPA) to 4.5% (PALADIN) — a **4.6× improvement**. This gap is driven by:
-   - **TS-PHOL predicates** that evaluate richer context than OPA can express (alignment scores, capability coverage, risk thresholds)
-   - **Deception routing** (192 cases) — PALADIN converts high-risk TS-PHOL denials into honeypot containment; OPA can only binary-deny
+   - **TRAC predicates** that evaluate richer context than OPA can express (alignment scores, capability coverage, risk thresholds)
+   - **Deception routing** (192 cases) — PALADIN converts high-risk TRAC denials into honeypot containment; OPA can only binary-deny
    - **Short-circuit denial attribution** — PALADIN's layered architecture catches threats at the earliest possible layer
 
 3. **OPA-Flat reveals hidden ABAC coverage** — Flat evaluation shows ABAC fires on 2,086–2,123 rows, but PALADIN's RBAC short-circuit means only 262 reach ABAC enforcement. This proves ABAC is a genuine defense-in-depth layer, not redundant with RBAC.
@@ -465,14 +465,14 @@ To validate PALADIN's layered approach against the industry-standard policy engi
 | Per-layer denial attribution | ✅ Short-circuit | ❌ Flat only |
 | Deception routing | ✅ DECEPTION_ROUTED | ❌ Binary ALLOW/DENY |
 | Subtractive ablation | ✅ Native (disable layers) | ⚠️ Requires Rego rewrite |
-| Formal predicate logic | ✅ TS-PHOL typed predicates | ⚠️ Rego functions (untyped) |
+| Formal predicate logic | ✅ TRAC typed predicates | ⚠️ Rego functions (untyped) |
 | LLM inference context | ✅ Alignment scores, risk | ❌ Static attributes only |
 | Industry adoption | Research | ✅ CNCF graduated project |
 | Performance | 1.6s / 6,942 rows | 1.6s / 6,942 rows (Python) |
 
 ### 8.5 Implication
 
-OPA is an excellent baseline for static RBAC/ABAC policy enforcement. However, **PALADIN's layered architecture with TS-PHOL provides measurably superior security** (4.6× lower SecFail in validation mode) through capabilities that OPA's policy model cannot express: deception routing, typed predicate logic over LLM inference, and per-layer attribution with short-circuit semantics. The 97.9% agreement in selection mode confirms that PALADIN's RBAC+ABAC rules are correctly implemented and equivalent to OPA; the 77.2% divergence in validation mode proves that TS-PHOL and deception routing provide genuine additional security value.
+OPA is an excellent baseline for static RBAC/ABAC policy enforcement. However, **PALADIN's layered architecture with TRAC provides measurably superior security** (4.6× lower SecFail in validation mode) through capabilities that OPA's policy model cannot express: deception routing, typed predicate logic over LLM inference, and per-layer attribution with short-circuit semantics. The 97.9% agreement in selection mode confirms that PALADIN's RBAC+ABAC rules are correctly implemented and equivalent to OPA; the 77.2% divergence in validation mode proves that TRAC and deception routing provide genuine additional security value.
 
 ---
 
@@ -513,7 +513,7 @@ The full 6,942-row decision matrix (6 personas × 1,157 tasks) is available at `
 |---|---|---|
 | RBAC | 4,536 | 93.0% |
 | ABAC | 294 | 6.0% |
-| TS-PHOL | 47 | 1.0% |
+| TRAC | 47 | 1.0% |
 
 ---
 
@@ -522,19 +522,19 @@ The full 6,942-row decision matrix (6 personas × 1,157 tasks) is available at `
 Each governance layer enforces its own denials with **short-circuit semantics**:
 
 ```
-Request → RBAC → ABAC → TS-PHOL → Decision
+Request → RBAC → ABAC → TRAC → Decision
            ↓       ↓       ↓
           DENY    DENY    DENY/DECEPTION
          (stop)  (stop)   (stop)
 ```
 
-- **RBAC DENY** → immediate return, ABAC and TS-PHOL are NOT_EVALUATED
-- **ABAC DENY** → immediate return, TS-PHOL is NOT_EVALUATED
-- **TS-PHOL DENY/DECEPTION** → final enforcement for logic-level threats
+- **RBAC DENY** → immediate return, ABAC and TRAC are NOT_EVALUATED
+- **ABAC DENY** → immediate return, TRAC is NOT_EVALUATED
+- **TRAC DENY/DECEPTION** → final enforcement for logic-level threats
 
 This architecture ensures:
 - Each layer is **independently testable** (disable others with "open" mode)
-- No layer depends on another for enforcement (ABAC enforces directly, not through TS-PHOL)
+- No layer depends on another for enforcement (ABAC enforces directly, not through TRAC)
 - The subtractive ablation design cleanly isolates each layer's contribution
 
 ---

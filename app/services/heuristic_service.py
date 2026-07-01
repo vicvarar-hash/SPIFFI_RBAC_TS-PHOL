@@ -26,23 +26,6 @@ class HeuristicService:
             return True
         return False
 
-    def infer_actions(self, tool: str) -> Tuple[List[str], str]:
-        """
-        Evaluates prefix rules to determine tool actions.
-        Returns: (actions_list, matched_rule_id)
-        """
-        t_low = tool.lower()
-        rules = self.policy.get("action_rules", [])
-        
-        for rule in rules:
-            prefix = rule.get("prefix")
-            # Improved matching: startswith OR contains as a separated part (e.g. jira_get_issue)
-            if prefix and (t_low.startswith(prefix) or f"_{prefix}" in t_low or f".{prefix}" in t_low):
-                return rule.get("actions", ["unknown"]), rule.get("id", rule.get("id", "prefix_match"))
-                
-        # Default fallback if no prefix matches
-        return ["unknown"], "no_matching_prefix"
-
     def infer_capabilities(self, tool: str, actions: List[str] = None) -> Tuple[List[str], str]:
         """
         Evaluates keyword rules to determine tool capabilities.

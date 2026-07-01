@@ -47,3 +47,10 @@ datasets/prediction_logs/
 # Azure Developer CLI environment (contains local config)
 .azure/
 
+
+bin/opa.exe
+
+# Editor/session backup copies
+*.bak
+*.bak2
+*.bak_*

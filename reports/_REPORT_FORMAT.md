@@ -2,7 +2,7 @@
 
 > Read this before writing a new report. Every report in `reports/*.md` (excluding
 > files prefixed with `_`) appears as a selectable entry in **Experiment Lab → 📑 Reports**.
-> The Reports tab simply renders the markdown — no other parsing happens.
+> The Reports tab renders the markdown text and any local `figs/` images (via `st.image`).
 
 ## File naming
 
@@ -66,8 +66,10 @@ but keep the numbering stable so reviewers can reference sections across reports
 - **Define before use** for every acronym (RBAC, ABAC, TS-PHOL, RA-ICL, BM25,
   E1/E2/E3/E4, sec_fail, etc.).
 - **No emojis in section headers** (they break markdown TOCs).
-- **No external image links** (the report must render in the Streamlit panel
-  without a network round-trip). Inline tables and ASCII diagrams only.
+- **Local figures only** — embed as `![alt](figs/<name>.png)` with the PNG stored
+  in `reports/figs/`. The Reports tab renders these via `st.image`. **No network
+  image links** (the report must render without a network round-trip). Use inline
+  tables / ASCII for simple data; reserve figures for headline visuals.
 - **Always cite the log file** the numbers came from
   (`datasets/experiment_logs/run_YYYYMMDD_HHMMSS_*.json`).
 
@@ -78,7 +80,9 @@ but keep the numbering stable so reviewers can reference sections across reports
 1. Scans `reports/*.md`.
 2. Excludes files starting with `_` (this template, future drafts).
 3. Sorts the list descending (newest filename first).
-4. Renders the selected file via `st.markdown(..., unsafe_allow_html=False)`.
+4. Renders the selected file via `_render_report_markdown()`: text through
+   `st.markdown(..., unsafe_allow_html=False)`, and any local `![](figs/...)`
+   image through `st.image` (`st.markdown` cannot load local files).
 
-No code changes are needed to publish a new report — drop the `.md` file into
-`reports/` and refresh the page.
+No code changes are needed to publish a new report—drop the `.md` file into
+`reports/` (store any figures in `reports/figs/`) and refresh the page.

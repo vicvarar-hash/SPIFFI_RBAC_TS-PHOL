@@ -672,7 +672,7 @@ def _render_phase_2(result: Any, mode: str, task: Any = None):
 def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "validation", inference: Any = None):
     """
     PHASE 3: VERIFIED LOGIC TRACE (POST-LLM)
-    Displays the final grounding, TS-PHOL audit, and verified decision.
+    Displays the final grounding, TRAC audit, and verified decision.
     """
     st.markdown("### 🚦 Phase III: Verified Logic Trace (Post-LLM)")
     with st.container(border=True):
@@ -697,7 +697,7 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
         
         if mode == "selection":
             st.divider()
-            st.markdown("#### E.2 Governance Pipeline (RBAC → ABAC → TS-PHOL)")
+            st.markdown("#### E.2 Governance Pipeline (RBAC → ABAC → TRAC)")
             st.caption(
                 "Each layer enforces independently. If any layer denies, "
                 "the pipeline short-circuits — downstream layers are not reached."
@@ -713,34 +713,34 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
             # ABAC
             abac_icon = "✅" if abac_status == "ALLOW" else ("❌" if abac_status == "DENY" else "⏭️")
             c2.metric(f"{abac_icon} ABAC (Attributes)", abac_status)
-            # TS-PHOL
+            # TRAC
             tsphol_icon = "✅" if tsphol_quick == "ALLOW" else ("❌" if tsphol_quick == "DENY" else "⏭️")
-            c3.metric(f"{tsphol_icon} TS-PHOL (Logic)", tsphol_quick)
+            c3.metric(f"{tsphol_icon} TRAC (Logic)", tsphol_quick)
 
             if rbac_status == "DENY":
                 st.error(f"🛑 **RBAC Denial** — {decision.reason}")
-                st.caption("Pipeline short-circuited at RBAC. ABAC and TS-PHOL were not evaluated.")
+                st.caption("Pipeline short-circuited at RBAC. ABAC and TRAC were not evaluated.")
             elif abac_status == "DENY":
                 st.error(f"🛑 **ABAC Denial** — {decision.reason}")
-                st.caption("Pipeline short-circuited at ABAC. TS-PHOL was not evaluated.")
+                st.caption("Pipeline short-circuited at ABAC. TRAC was not evaluated.")
             
             _render_authorization_trace(decision)
 
         st.divider()
-        st.markdown("#### E. TS-PHOL Final Authority")
+        st.markdown("#### E. TRAC Final Authority")
         tsphol_status = decision.evaluation_states.get("tsphol", "NOT_EVALUATED")
         summary = decision.context.get("tsphol_summary", {})
         
         if tsphol_status == "NOT_EVALUATED":
-            # Determine why TS-PHOL was not reached
+            # Determine why TRAC was not reached
             rbac_s = decision.evaluation_states.get("rbac", "NOT_EVALUATED")
             abac_s = decision.evaluation_states.get("abac", "NOT_EVALUATED")
             if rbac_s == "DENY":
-                st.info("TS-PHOL not reached — pipeline short-circuited at **RBAC**.")
+                st.info("TRAC not reached — pipeline short-circuited at **RBAC**.")
             elif abac_s == "DENY":
-                st.info("TS-PHOL not reached — pipeline short-circuited at **ABAC**.")
+                st.info("TRAC not reached — pipeline short-circuited at **ABAC**.")
             else:
-                st.info("TS-PHOL not reached (Pre-LLM Block).")
+                st.info("TRAC not reached (Pre-LLM Block).")
         else:
             c1, c2, c3 = st.columns(3)
             c1.metric("Rules Evaluated", summary.get("evaluated_rules", 0))
@@ -759,10 +759,10 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
 
         st.divider()
         st.markdown("#### F. Final Result")
-        color_map = {"ALLOW": "green", "DENY": "red", "DECEPTION_ROUTED": "#FF8C00"}
+        color_map = {"ALLOW": "green", "DENY": "red"}
         bg_color = color_map.get(decision.final_decision, "gray")
-        display_text = "SANDBOXED / DECEIVED" if decision.deception_routed else decision.final_decision
-        
+        display_text = decision.final_decision
+
         st.markdown(f"""
         <div style="background-color: {bg_color}; padding: 15px; border-radius: 8px; text-align: center;">
             <h2 style="color: white; margin: 0;">{display_text}</h2>
@@ -779,9 +779,7 @@ def _render_phase_3(decision: DecisionResult, comparison: Any, mode: str = "vali
 
         with st.expander("View Full Pipeline Trace"):
             for step in decision.trace:
-                if "DECEPTION" in step:
-                    st.warning(step)
-                elif "❌" in step or "DENY" in step:
+                if "❌" in step or "DENY" in step:
                     st.error(step)
                 elif "⚠️" in step or "FLAG" in step:
                     st.warning(step)

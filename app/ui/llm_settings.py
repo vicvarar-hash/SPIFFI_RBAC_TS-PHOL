@@ -1,7 +1,7 @@
 """Shared sidebar widget for LLM provider/model selection.
 
 Renders once in the sidebar and writes the user's choice to ``st.session_state``
-under three keys consumed by both the Experiment Lab and the Prediction Lab:
+under three keys consumed by both the Experiment LLM Lab and the Prediction Lab:
 
 * ``llm_provider`` — canonical key: ``openai`` / ``anthropic`` / ``google`` / ``azure_foundry``
 * ``llm_model``    — model id (e.g. ``gpt-4o``, ``claude-sonnet-4-6``)
@@ -67,7 +67,7 @@ def render_llm_settings_sidebar() -> dict:
         _PROVIDER_LABELS,
         index=_PROVIDER_LABELS.index(default_label),
         key="sidebar_llm_provider_label",
-        help="Used by both Experiment Lab and Prediction Lab. "
+        help="Used by both Experiment LLM Lab and Prediction Lab. "
              "Key is read from .env (OPENAI_API_KEY / ANTHROPIC_API_KEY / "
              "GOOGLE_API_KEY / AZURE_FOUNDRY_API_KEY + AZURE_FOUNDRY_ENDPOINT).",
     )

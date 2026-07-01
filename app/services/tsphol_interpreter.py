@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 class TSPHOLInterpreter:
     """
-    Generic predicate-rule interpreter for TS-PHOL.
+    Generic predicate-rule interpreter for TRAC.
     Evaluates declarative JSON rules against session predicates.
     Refined in Iteration 4K to support full evaluation traces (audit transparency).
     """
@@ -33,9 +33,12 @@ class TSPHOLInterpreter:
             conditions = rule.get("if", [])
             action = rule.get("then", "ALLOW")
             derivation = rule.get("derive")
+            # Composition mode: enforcing rules can DENY; advisory rules (enforce: false)
+            # raise an alert in the trace but never block — the assurance-layer model.
+            enforce = rule.get("enforce", True)
 
             # 4R: Handle Alignment Evaluation Predicate specifically for transparency
-            is_alignment_rule = rule_name == "low_task_alignment"
+            is_alignment_rule = rule_name == "capability_coverage_partial"
             alignment_eval = predicates.get("AlignmentEvaluated", True)
             
             # 4K: Evaluate and get structured reason
@@ -87,15 +90,27 @@ class TSPHOLInterpreter:
                     rule_res["derived"] = derivation
 
                 if action.upper() == "DENY":
-                    final_decision = "DENY"
+                    if enforce:
+                        # The first enforced deny sets the decision, but we DON'T stop: advisory
+                        # rules must still assess this bundle so the audit trail — and OPA, which
+                        # evaluates every rule independently — stay consistent (assurance model).
+                        if final_decision != "DENY":
+                            final_decision = "DENY"
+                            rule_res["status"] = "ENFORCED"
+                            trace.append(rule_res)
+                        continue
+                    # Advisory: record the alert but do not block, and keep evaluating so
+                    # the audit trail captures every assessment on this bundle.
+                    rule_res["advisory"] = True
+                    rule_res["passed"] = True
+                    rule_res["status"] = "ADVISORY"
                     trace.append(rule_res)
-                    # Stop on first DENY, but we have recorded all evaluations up to this point
-                    break
-            
+                    continue
+
             trace.append(rule_res)
 
         # Phase 2: Probabilistic Hardening
-        # Mathematical certainty derived from TS-PHOL facts (no LLM-reported confidence).
+        # Mathematical certainty derived from TRAC facts (no LLM-reported confidence).
         certainty = 1.0
 
         # Penalize certainty for skipped safeguards or multiple derived warnings
@@ -104,7 +119,7 @@ class TSPHOLInterpreter:
             warnings = len([d for d in derived if d in ["UnsafeWrite"]])
             penalty = (safeguards_skipped * 0.05) + (warnings * 0.1)
             certainty = max(0.5, certainty - penalty)
-        # If TS-PHOL mathematically denies, fail-secure: certainty stays at 1.0
+        # If TRAC mathematically denies, fail-secure: certainty stays at 1.0
 
         return final_decision, derived, trace, round(certainty, 2)
 

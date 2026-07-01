@@ -16,6 +16,7 @@ from app.ui.mcp_explorer import render_mcp_explorer
 from app.ui.prediction_lab import render_prediction_lab
 from app.ui.policy_studio import render_policy_studio
 from app.ui.experiment_lab import render_experiment_lab
+from app.ui.post_experiment_lab import render_post_experiment_lab
 
 # Page configuration
 st.set_page_config(
@@ -60,7 +61,8 @@ selection = st.sidebar.radio(
         "🤖 MCP Domain Explorer",
         "🔍 ASTRA Task Explorer",
         "🔮 Prediction Lab",
-        "🧪 Experiment Lab",
+        "🧪 Experiment LLM Lab",
+        "📊 Post-Experiment Lab",
     ]
 )
 
@@ -72,7 +74,7 @@ st.sidebar.markdown("---")
 st.sidebar.info(
     """
     **PALADIN v3.0**
-    - Layered Governance (RBAC/ABAC/TS-PHOL)
+    - Layered Governance (RBAC/ABAC/TRAC)
     - Capability-Aware LLM Inference
     - Experiment Framework
     - Policy Studio Configuration
@@ -90,8 +92,10 @@ elif selection == "🔍 ASTRA Task Explorer":
     render_astra_explorer(tasks, personas)
 elif selection == "🔮 Prediction Lab":
     render_prediction_lab(tasks, personas)
-elif selection == "🧪 Experiment Lab":
+elif selection == "🧪 Experiment LLM Lab":
     render_experiment_lab(tasks, personas)
+elif selection == "📊 Post-Experiment Lab":
+    render_post_experiment_lab(tasks, personas)
 
 # Footer
 st.sidebar.markdown("---")

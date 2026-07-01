@@ -16,17 +16,16 @@ def render_policy_studio():
     st.title("🛡️ Policy Studio")
     st.markdown("Configure identity, access control, and reasoning policies for the agentic system.")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "1. SPIFFE Registry",
         "2. Transport Allowlist",
         "3. MCP Attributes",
         "4. RBAC (Identity-Based)",
         "5. ABAC (Attribute-Based)",
-        "6. Domain Catalog",
-        "7. Capability Ontology",
-        "8. Heuristic Logic",
-        "9. TS-PHOL Rules",
-        "10. Experiments"
+        "6. Action Classification",
+        "7. TRAC Rules",
+        "8. Experiments",
+        "9. OPA / Rego"
     ])
 
     registry_svc = SpiffeRegistryService()
@@ -35,7 +34,6 @@ def render_policy_studio():
     abac_svc = ABACRuleService()
     tsphol_svc = TSPHOLRuleService()
     attribute_svc = MCPAttributeService()
-    cap_inf_svc = CapabilityInferenceService()
     workload_svc = SpiffeWorkloadService()
 
     with tab1:
@@ -54,21 +52,19 @@ def render_policy_studio():
         _render_abac_baseline(abac_svc)
 
     with tab6:
-        _render_domain_catalog(cap_inf_svc)
+        # Single deterministic action layer: the VerbNet-grounded verb lexicon classifies every
+        # tool as read / write / destructive from (name + MCP description). Agnostic, standards-based,
+        # no per-MCP vocabulary and no editable name-prefix rules.
+        _render_action_classification()
 
     with tab7:
-        _render_capability_ontology()
-
-    with tab8:
-        from app.services.heuristic_service import HeuristicService
-        h_svc = HeuristicService()
-        _render_heuristic_logic(h_svc)
-
-    with tab9:
         _render_tsphol(tsphol_svc)
 
-    with tab10:
+    with tab8:
         _render_experiment_policies()
+
+    with tab9:
+        _render_opa_compliance()
 
 
 def _render_experiment_policies():
@@ -79,8 +75,8 @@ def _render_experiment_policies():
 
     st.header("Experiment Policies")
     st.markdown(
-        "Browse the security policies generated for each experiment configuration. "
-        "These are the exact policy bundles used in the Experiment Lab evaluations."
+        "Browse the security policies that govern tool-use decisions. "
+        "These are the exact policy bundles the Post-Experiment Lab replays."
     )
 
     # Group filter
@@ -115,14 +111,14 @@ def _render_experiment_policies():
         st.markdown(f"**Allowlist**: `{config.allowlist_fn}`")
         st.markdown(f"**RBAC**: `{config.rbac_fn}`")
         st.markdown(f"**ABAC**: `{config.abac_fn}`")
-        st.markdown(f"**TS-PHOL**: `{config.tsphol_fn}`")
+        st.markdown(f"**TRAC**: `{config.tsphol_fn}`")
 
     st.markdown("---")
 
     # Generate and display policies
     policies = config.get_policies()
 
-    policy_tabs = st.tabs(["RBAC", "ABAC", "TS-PHOL", "Registry", "Allowlist"])
+    policy_tabs = st.tabs(["RBAC", "ABAC", "TRAC", "Registry", "Allowlist"])
 
     with policy_tabs[0]:
         st.subheader("RBAC Policy")
@@ -137,7 +133,7 @@ def _render_experiment_policies():
         st.code(yaml.dump(abac, default_flow_style=False, sort_keys=False), language="yaml")
 
     with policy_tabs[2]:
-        st.subheader("TS-PHOL Rules")
+        st.subheader("TRAC Rules")
         tsphol = policies.get("tsphol", {})
         st.metric("Rules defined", len(tsphol.get("rules", [])))
         st.code(yaml.dump(tsphol, default_flow_style=False, sort_keys=False), language="yaml")
@@ -153,6 +149,126 @@ def _render_experiment_policies():
         allowlist = policies.get("allowlist", {})
         st.metric("Entries", len(allowlist.get("allowed_transports", [])))
         st.code(json.dumps(allowlist, indent=2), language="json")
+
+
+def _render_opa_compliance():
+    """OPA/Rego compliance view: show the generic Rego + rules-as-data, verify parity
+    against the Python engines with real `opa eval`, and optionally drive a live OPA server."""
+    from app.services import opa_runtime as opa
+
+    st.header("⚖️ OPA / Rego Compliance")
+    st.markdown(
+        "PALADIN's access control is **policy-as-code on the CNCF-graduated "
+        "[Open Policy Agent (OPA)](https://www.openpolicyagent.org/)**. Following OPA's "
+        "Document Model, **policy logic lives in generic Rego** while the RBAC allow-lists "
+        "and ABAC attribute rules are loaded as **`data` documents** — the very same YAML "
+        "this Studio edits. There is **no code generation**: edit a rule and both the Python "
+        "engine and OPA evaluate the identical rule set."
+    )
+
+    status = opa.opa_status()
+    if status["available"]:
+        st.success(f"✅ OPA binary detected — v{status['version']}  ·  `{status['path']}`")
+    else:
+        st.warning(
+            "⚠️ The `opa` binary was not found, so live verification and the OPA server are "
+            "disabled (the Rego sources below still render). To enable: install OPA "
+            "(https://www.openpolicyagent.org/docs/latest/#running-opa) and either put "
+            "`opa`/`opa.exe` on your PATH or in `./bin`, or set the `OPA_PATH` env var."
+        )
+
+    # ── Policies (generic Rego) + rules (data) ──────────────────────────────
+    st.subheader("Policies (generic Rego) + rules (data)")
+    layer_caption = {
+        "rbac": "RBAC — identity → permitted tools",
+        "abac": "ABAC — attribute deny rules",
+        "tsphol": "TRAC — capability coverage + write-safety",
+    }
+    ltabs = st.tabs([layer_caption[l] for l in ("rbac", "abac", "tsphol")])
+    for tab, layer in zip(ltabs, ("rbac", "abac", "tsphol")):
+        with tab:
+            src = opa.policy_sources(layer)
+            st.caption(f"`opa eval` query: `{src['query']}`")
+            if src.get("data_path"):
+                st.markdown(f"**Rules as data** — `{src['data_path']}` (loaded as `data`)")
+                st.code(src["data_text"] or "(missing)", language="yaml")
+            st.markdown(f"**Generic policy** — `{src['rego_path']}`")
+            st.code(src["rego_text"] or "(missing)", language="rego")
+
+    # ── Verify parity ───────────────────────────────────────────────────────
+    st.subheader("Verify parity — `opa eval` vs the Python engine")
+    st.caption(
+        "Replays a bounded sample through real `opa eval` and the isolated Python engines "
+        "and checks they agree (0 mismatches expected). The full exhaustive check is "
+        "`python scripts/run_validation_suite.py`."
+    )
+    n = st.slider("Sample tasks (× 6 personas)", 2, 25, 6, key="opa_verify_n")
+    if st.button("▶ Verify RBAC + ABAC parity", disabled=not status["available"]):
+        with st.spinner(f"Evaluating {n} tasks × personas through OPA and Python…"):
+            st.session_state["opa_verify_res"] = opa.verify_rbac_abac(sample_tasks=n)
+    res = st.session_state.get("opa_verify_res")
+    if res and res.get("available"):
+        cols = st.columns(2)
+        for col, layer in zip(cols, ("rbac", "abac")):
+            r = res[layer]
+            with col:
+                if r.get("ok"):
+                    st.success(f"{layer.upper()}: ✅ 0 mismatches · {r['evals']} evals")
+                else:
+                    st.error(f"{layer.upper()}: ❌ {r['mismatches']} / {r['evals']} mismatches")
+                    if r.get("examples"):
+                        st.json(r["examples"])
+        st.caption(f"completed in {res.get('seconds', '?')}s")
+
+    # ── Live OPA server (optional) ──────────────────────────────────────────
+    st.subheader("Live OPA server (optional)")
+    st.caption(
+        "Start a standard `opa run --server` loaded with the identical policies and query "
+        "its REST Data API — proof the same rules run on a live OPA runtime. This does NOT "
+        "affect the replay decision path (the Python engines stay authoritative there)."
+    )
+    srv = opa.server_status()
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        if st.button("▶ Start server", disabled=not status["available"] or srv["running"]):
+            with st.spinner("Starting opa run --server…"):
+                out = opa.start_server()
+            (st.toast(out["message"]) if out.get("ok") else st.error(out["message"]))
+            st.rerun()
+    with c2:
+        if st.button("⏹ Stop server", disabled=not srv["running"]):
+            opa.stop_server()
+            st.rerun()
+    with c3:
+        st.success(f"running · {opa.server_base()}") if srv["running"] else st.info("not running")
+
+    if srv["running"]:
+        st.markdown("**Interactive query** — POST an input to the live server")
+        qlayer = st.selectbox("Layer", ["rbac", "abac", "tsphol"], key="opa_q_layer")
+        defaults = {
+            "rbac": {"spiffe_id": "spiffe://demo.local/agent/research",
+                     "mcps": ["stripe"], "tools": ["create_invoice"]},
+            "abac": {"subject": {"attributes": {"department": "Engineering",
+                                                "clearance_level": "L3", "trust_score": 0.5}},
+                     "resource": {"risk_level": "low", "compliance_tier": "General"},
+                     "action": {"contains_write": True}},
+            "tsphol": {"predicates": {"HardCapabilityMissing": True, "ContainsDelete": False,
+                                      "ContainsReadBeforeWrite": False}},
+        }
+        raw = st.text_area("input JSON", json.dumps(defaults[qlayer], indent=2),
+                           height=200, key=f"opa_q_input_{qlayer}")
+        if st.button("Query live server"):
+            try:
+                inp = json.loads(raw)
+            except json.JSONDecodeError as e:
+                st.error(f"invalid JSON: {e}")
+            else:
+                ok, result = opa.query_server(qlayer, inp)
+                if ok:
+                    st.success("decision from the live OPA server:")
+                    st.json(result)
+                else:
+                    st.error(result)
 
 
 def _render_spire_deploy_controls(workload_svc: SpiffeWorkloadService):
@@ -421,7 +537,7 @@ def _render_rbac(svc: RBACService, reg_svc: SpiffeRegistryService):
 
 
 def _render_tsphol(svc: TSPHOLRuleService):
-    st.header("TS-PHOL Declarative Policies")
+    st.header("TRAC Declarative Policies")
     st.markdown("Define reasoning policies as declarative rules (JSON-driven interpretation).")
     
     rules = svc.get_all()
@@ -534,7 +650,7 @@ def _render_abac_baseline(svc: ABACRuleService):
         
         st.markdown("**Rule JSON (Attributes & Action)**")
         st.caption('Example: `{"condition": "trust_score < 0.5", "action": "deny"}` or `{"multi_domain_limit": true, "action": "deny"}`')
-        rule_text = st.text_area("Rule Body", value='{"condition": "after_hours == true", "action": "deny"}')
+        rule_text = st.text_area("Rule Body", value='{"condition": "trust_score < 0.8", "action": "deny"}')
         
         if st.form_submit_button("Save ABAC Rule"):
             try:
@@ -592,124 +708,63 @@ def _render_domain_catalog(svc: CapabilityInferenceService):
                     else: st.error("Capabilities must be a JSON list.")
                 except: st.error("Invalid JSON for capabilities.")
 
-def _render_heuristic_logic(svc: Any):
-    st.header("🧠 Heuristic Inference Rules")
-    st.markdown("Expose and edit the keyword-based inference rules used for tool classification.")
-    
-    policy = svc.get_all()
-    
-    # 1. Action Rules
-    st.subheader("1. Action Inference Rules (Prefix-based)")
-    action_rules = policy.get("action_rules", [])
-    
-    for i, rule in enumerate(action_rules):
-        rule_label = f"Rule: {rule.get('id')}"
-        with st.expander(rule_label):
-            with st.form(f"edit_action_rule_{i}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    u_id = st.text_input("Rule ID", value=rule.get("id"))
-                    u_prefix = st.text_input("Prefix", value=rule.get("prefix"))
-                with col2:
-                    u_actions = st.text_input("Actions (comma separated)", value=", ".join(rule.get("actions", [])))
-                
-                if st.form_submit_button("Update Action Rule"):
-                    action_rules[i] = {
-                        "id": u_id,
-                        "prefix": u_prefix,
-                        "actions": [a.strip() for a in u_actions.split(",") if a.strip()]
-                    }
-                    policy["action_rules"] = action_rules
-                    if svc.save_policy(policy): st.success("Saved."); st.rerun()
+def _render_action_classification(svc: Any = None):
+    """Single deterministic action layer: the VerbNet-grounded verb lexicon classifies every tool
+    as read / write / destructive from (tool name + MCP description) — agnostic and standards-based.
+    There are no editable name-prefix rules and no per-tool action map; the lexicon is the source."""
+    from app.services.verb_action_classifier import (
+        classify_action, lexicon_groups, READ_NOUNS,
+    )
 
-            if st.button("🗑️ Delete Action Rule", key=f"del_action_{i}"):
-                action_rules.pop(i)
-                policy["action_rules"] = action_rules
-                if svc.save_policy(policy): st.success("Rule Deleted."); st.rerun()
+    st.header("🔤 Action Classification")
+    st.markdown(
+        "The **only** tool knowledge the stack uses: every tool is classified as "
+        "**read / write / destructive** deterministically and agnostically from its **name + MCP "
+        "description** — no per-MCP vocabulary, no name-prefix rules, no per-tool action map. This "
+        "single signal feeds ABAC (`contains_write`, `contains_destructive_write`), TRAC "
+        "(`ContainsDelete`, `write_safety`, `action_coherence`) and the agnostic `{domain}:{action}` "
+        "capability."
+    )
 
-    st.markdown("#### ➕ Add New Action Rule")
-    with st.form("add_action_rule_form", clear_on_submit=True):
-        a_id = st.text_input("New Rule ID (e.g. prefix:audit_)")
-        a_prefix = st.text_input("Prefix (e.g. audit_)")
-        a_actions = st.text_input("Actions (comma separated, e.g. read, audit)")
-        if st.form_submit_button("Add Action Rule"):
-            if not a_id or not a_prefix:
-                st.error("Rule ID and Prefix are required.")
-            else:
-                new_rule = {
-                    "id": a_id,
-                    "prefix": a_prefix,
-                    "actions": [a.strip() for a in a_actions.split(",") if a.strip()]
-                }
-                action_rules.append(new_rule)
-                policy["action_rules"] = action_rules
-                if svc.save_policy(policy): st.success("Rule Added."); st.rerun()
+    # ── Live classifier ────────────────────────────────────────────────────
+    st.subheader("🔬 Classify a tool")
+    c1, c2 = st.columns(2)
+    name = c1.text_input("Tool name", "drop_collection", key="ac_name")
+    desc = c2.text_input("MCP description", "Remove a collection from the database", key="ac_desc")
+    is_write, is_destr, verb = classify_action(name, desc)
+    op = "destructive" if is_destr else ("write" if is_write else "read")
+    badge = {"destructive": "🔴", "write": "🟠", "read": "🟢"}[op]
+    st.markdown(f"### {badge} `{op}`  ·  matched verb: `{verb or '—'}`")
+    st.caption(
+        f"is_write={is_write}, is_destructive={is_destr}  ·  read by default when no write / "
+        "destructive verb is found (availability-safe)."
+    )
 
     st.divider()
 
-    # 2. Capability Rules
-    st.subheader("2. Capability Inference Rules (Keyword-based)")
-    cap_rules = policy.get("capability_rules", [])
-    
-    for i, rule in enumerate(cap_rules):
-        with st.expander(f"Rule: {rule.get('id')}"):
-            with st.form(f"edit_cap_rule_{i}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    u_id = st.text_input("Rule ID", value=rule.get("id"))
-                    u_kw = st.text_input("Keyword", value=rule.get("keyword"))
-                with col2:
-                    u_caps = st.text_input("Capabilities (comma separated)", value=", ".join(rule.get("capabilities", [])))
-                
-                if st.form_submit_button("Update Cap Rule"):
-                    cap_rules[i] = {
-                        "id": u_id,
-                        "keyword": u_kw,
-                        "capabilities": [c.strip() for c in u_caps.split(",") if c.strip()]
-                    }
-                    policy["capability_rules"] = cap_rules
-                    if svc.save_policy(policy): st.success("Saved."); st.rerun()
-
-            if st.button("🗑️ Delete Cap Rule", key=f"del_cap_{i}"):
-                cap_rules.pop(i)
-                policy["capability_rules"] = cap_rules
-                if svc.save_policy(policy): st.success("Rule Deleted."); st.rerun()
-
-    st.markdown("#### ➕ Add New Capability Rule")
-    with st.form("add_cap_rule_form", clear_on_submit=True):
-        c_id = st.text_input("New Rule ID (e.g. domain:stripe)")
-        c_kw = st.text_input("Keyword (e.g. stripe)")
-        c_caps = st.text_input("Capabilities (comma separated, e.g. PaymentRead)")
-        if st.form_submit_button("Add Capability Rule"):
-            if not c_id or not c_kw:
-                st.error("Rule ID and Keyword are required.")
-            else:
-                new_rule = {
-                    "id": c_id,
-                    "keyword": c_kw,
-                    "capabilities": [c.strip() for c in c_caps.split(",") if c.strip()]
-                }
-                cap_rules.append(new_rule)
-                policy["capability_rules"] = cap_rules
-                if svc.save_policy(policy): st.success("Rule Added."); st.rerun()
-
-    st.divider()
-
-    # 3. Fallbacks
-    st.subheader("3. Fallback Registry")
-    fallbacks = policy.get("fallbacks", {})
-    with st.form("fallback_form"):
-        f_read = st.text_input("Read-like Fallback", value=fallbacks.get("read_like", ""))
-        f_write = st.text_input("Write-like Fallback", value=fallbacks.get("write_like", ""))
-        f_default = st.text_input("Default Fallback", value=fallbacks.get("default", ""))
-        
-        if st.form_submit_button("Save Fallbacks"):
-            policy["fallbacks"] = {
-                "read_like": f_read,
-                "write_like": f_write,
-                "default": f_default
-            }
-            if svc.save_policy(policy): st.success("Saved."); st.rerun()
+    # ── VerbNet-grounded verb lexicon (the single source) ──────────────────
+    st.subheader("VerbNet-grounded verb lexicon")
+    st.markdown(
+        "Each operation class is anchored to an established lexical-semantic verb class "
+        "(Beth Levin 1993 / VerbNet) and the corresponding FrameNet frame, then mapped onto "
+        "the read/write/destructive safety taxonomy (CRUD; HTTP safe/unsafe, RFC 9110). "
+        "This lexicon is **fixed by design** (its value is being principled, not hand-tuned) and "
+        "is mirrored verbatim to OPA as `policies/rego/data/action_lexicon.json` — see the "
+        "**OPA / Rego** tab. Validated **100% write / 98.8% destructive** vs. independent MCP "
+        "author annotations."
+    )
+    badges = {"destructive": "🔴", "write": "🟠", "read": "🟢", "ambiguous": "🟡"}
+    for g in lexicon_groups():
+        st.markdown(
+            f"{badges.get(g['op'], '•')} **{g['op']} · {g['subclass']}**  "
+            f"<span style='color:gray'>— {g['grounding']}</span>",
+            unsafe_allow_html=True,
+        )
+        st.code(", ".join(g["verbs"]), language=None)
+    st.caption(
+        "Read-guard (ambiguous verbs resolve to **read** when their object is an information "
+        "artifact, e.g. *execute a query*). Read-noun heads: " + ", ".join(sorted(READ_NOUNS))
+    )
 
 
 def _render_capability_ontology():

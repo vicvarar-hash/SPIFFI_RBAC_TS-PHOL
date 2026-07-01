@@ -126,6 +126,8 @@ class ABACEngine:
             if op == "!=": return actual != expected
             if op == ">": return float(actual) > float(expected)
             if op == "<": return float(actual) < float(expected)
+            if op == ">=": return float(actual) >= float(expected)
+            if op == "<=": return float(actual) <= float(expected)
             if op == "in": return actual in expected if isinstance(expected, list) else expected in str(actual)
             return False
         except (ValueError, TypeError):

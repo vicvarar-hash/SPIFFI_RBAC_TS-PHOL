@@ -22,8 +22,8 @@ This creates a critical **governance gap**: probabilistic LLM decisions must be 
 
 | # | Question |
 |---|----------|
-| **RQ1** | Does a composable governance stack (RBAC → ABAC → TS-PHOL) provide measurably superior security over any single layer alone? |
-| **RQ2** | Can Typed Security Policy Higher-Order Logic (TS-PHOL) provide a deterministic safety floor for probabilistic LLM inferences, including deception routing? |
+| **RQ1** | Does a composable governance stack (RBAC → ABAC → TRAC) provide measurably superior security over any single layer alone? |
+| **RQ2** | Can a typed, ordered task-relational rule engine (TRAC) provide a deterministic safety floor for probabilistic LLM tool selection? |
 | **RQ3** | Does PALADIN produce complete predicate traces sufficient for post-hoc audit of every tool-use decision? *(Evidence: trace logs in the Experiment Lab detail every predicate evaluation per task.)* |
 
 ---
@@ -35,8 +35,8 @@ This creates a critical **governance gap**: probabilistic LLM decisions must be 
 | Layer | Full Name | What It Does |
 |-------|-----------|--------------|
 | **RBAC** | Role-Based Access Control | Grants or denies access based on the caller's assigned role. Answers: *"Is this agent's role allowed to use this tool?"* |
-| **ABAC** | Attribute-Based Access Control | Evaluates contextual attributes (time of day, risk level, confidence score, action type) to enforce fine-grained conditions beyond role membership. Answers: *"Given the current context, should this action be permitted?"* |
-| **TS-PHOL** | Typed, Staged Predicate Higher-Order Logic | A formal logic layer that evaluates whether the selected tool bundle satisfies the mission's capability requirements with correct domain alignment and sufficient confidence. Operates post-inference, pre-execution. Answers: *"Is this the right set of tools for this task — and is the selection logically sound?"* |
+| **ABAC** | Attribute-Based Access Control | Evaluates contextual attributes (clearance, department, trust score, risk level, action type) to enforce fine-grained conditions beyond role membership. Answers: *"Given the current context, should this action be permitted?"* |
+| **TRAC** | Task-Relational Access Control | A typed-fact-base rule engine with deterministic ordered evaluation that judges whether the selected tool bundle satisfies the task's capability requirements with correct domain alignment and task-tool relevance. Rules compose via derived predicates and fire in a policy-declared order with short-circuit denial. Operates post-inference, pre-execution. Answers: *"Is this the right set of tools for this task — and is the selection logically sound?"* |
 
 ### 1. Composable Layered Governance
 Unlike flat RBAC systems, PALADIN enforces three complementary security layers
@@ -46,46 +46,55 @@ with distinct failure modes — each catching threats the others miss:
 |---|---|---|
 | **RBAC** | Identity mismatches | Finance agent → DevOps tools |
 | **ABAC** | Contextual risk | Right role but after-hours + high-risk write |
-| **TS-PHOL** | Logical inconsistency | Domain mismatch, capability gaps |
+| **TRAC** | Logical inconsistency | Domain mismatch, capability gaps |
 
 Ablation experiments prove each layer provides **irreplaceable value** —
 removing any one leaves exploitable gaps.
 
-### 2. TS-PHOL: Typed Formal Logic for Agentic Security
-TS-PHOL doesn't just ask *"Can this agent use this tool?"* — it asks:
+### 2. TRAC: Task-Relational Access Control for Agentic Security
+TRAC doesn't just ask *"Can this agent use this tool?"* — it asks:
 > *"Does the selected tool bundle satisfy the mission's capability requirements
 > with sufficient confidence and domain alignment?"*
 
 - **Post-inference, pre-execution** verification gate
-- **Deception routing** — a third enforcement mode beyond ALLOW/DENY that honeypots
-  suspicious requests for threat intelligence.
-  Current evaluation measures detection accuracy; false-positive impact on availability
-  is noted as a limitation and future work direction.
+- **Advisory alerts** — TRAC can raise a non-blocking audit alert on an admitted
+  bundle (e.g. a destructive write without a verifying read) without changing the
+  ALLOW/DENY decision.
 - **Complete predicate traces** — every decision is formally auditable
 
 ### 3. OPA Baseline Validation
 PALADIN is validated against **Open Policy Agent (OPA)** — the CNCF-graduated
-industry standard — by translating all rules into Rego and replaying
-the same evaluations through a flat policy engine:
+industry standard. Following OPA's Document Model, **policy logic lives in
+generic Rego** while the RBAC allow-lists and ABAC attribute rules are loaded
+as **`data` documents** — the very same YAML the Python engines read, with no
+code generation. Real `opa eval` is then replayed against the Python engines:
 
-- **Rule equivalence** — high agreement on RBAC/ABAC confirms correct implementation
-- **Layered advantage** — PALADIN's TS-PHOL predicates catch threats OPA's flat model misses
-- **Deception routing gap** — OPA's binary ALLOW/DENY cannot express honeypot containment
+- **Rule equivalence** — `opa eval` matches the Python RBAC / ABAC / TRAC
+  decisions with **0 mismatches** (see `scripts/run_validation_suite.py`)
+- **Single source of truth** — rules-as-data means OPA and Python evaluate the
+  identical rule set; editing a rule (or Policy Studio) updates both at once
+- **Layered advantage** — TRAC's deterministic capability / destructiveness
+  predicates add an auditable safety-net on top of the flat allow/deny model
+- **In-app proof** — Policy Studio's **OPA / Rego** tab shows the generic Rego +
+  rules-as-data for every layer, runs a one-click **Verify parity** (`opa eval`
+  vs the Python engine), and can start a live `opa run --server` to query the
+  identical policies over OPA's REST API (`app/services/opa_runtime.py`)
 
 ### 4. Mission-Permission Decoupling
 Unlike every existing RBAC/ABAC framework — which asks *"Is this caller allowed
 to invoke this tool?"* — PALADIN evaluates tool selections against **task intent
 and capability requirements**, not just caller identity.
 
-TS-PHOL predicates verify that the *selected tool bundle* satisfies the
+TRAC predicates verify that the *selected tool bundle* satisfies the
 *mission's capability profile*: correct domain alignment, sufficient action
 coverage, and adequate confidence — independently of who the caller is.
 This means a legitimately authorized agent can still be denied if its tool
 choice is wrong *for the task at hand*, closing a class of over-privilege
 vulnerabilities that identity-only models cannot detect.
 
-> **Limitations:** Single-model evaluation (GPT-4o), purpose-built dataset (ASTRA),
-> and no production-scale latency benchmarks. See paper §7 for full discussion.
+> **Limitations:** LLM panel is three OpenAI generations plus a blind Claude Opus 4.8
+> probe, a purpose-built dataset (ASTRA), and no production-scale latency benchmarks.
+> See the paper for full discussion.
 
 ---
 
@@ -102,12 +111,12 @@ evaluates and can deny or redirect the request:
 │  ◆ SPIFFE ID     │     │  ◆ Tool Selection │     │  ◆ RBAC Check     │
 │  ◆ Registry      │     │  ◆ Confidence     │     │  ◆ ABAC Rules     │
 │  ◆ Allowlist     │     │  ◆ Justification  │     │  ◆ Fact Extraction│
-│                  │     │                   │     │  ◆ TS-PHOL Rules  │
+│                  │     │                   │     │  ◆ TRAC Rules  │
 └─────────────────┘     └──────────────────┘     └──────────────────┘
                                                           │
-                                                ┌────────┼────────┐
-                                                ▼        ▼        ▼
-                                              ALLOW    DENY   DECEPTION
+                                                    ┌────┴────┐
+                                                    ▼         ▼
+                                                  ALLOW     DENY
 ```
 
 ### Unified Decision Engine (6-Step Sequence)
@@ -116,7 +125,7 @@ evaluates and can deny or redirect the request:
 3. **Fact Extraction (Tool Audit & Intent Decomposition)** — Tool-centric action classification, capability mapping, and intent inference
 4. **RBAC** — Evaluates the caller's allowed/denied permissions against requested MCP tools
 5. **ABAC Baseline** — Evaluates attribute-based contextual rules (role, MCP, action, confidence, risk)
-6. **TS-PHOL Reasoning** — Executes formal predicate logic to reach the final authoritative decision
+6. **TRAC Reasoning** — Executes formal predicate logic to reach the final authoritative decision
 
 ---
 
@@ -132,7 +141,7 @@ evaluates and can deny or redirect the request:
 | 6 | Domain Catalog | `policies/domain_capability_catalog.json` | Tool → domain → action classification |
 | 7 | Capability Ontology | `policies/domain_capability_ontology.json` | Intent → required capabilities mapping |
 | 8 | Heuristic Logic | `policies/heuristic_policy.json` | Fallback tool classification via verb-prefix matching |
-| 9 | TS-PHOL Rules | `policies/tsphol_rules.yaml` | Formal logic safety predicates (10 typed rules + DECEPTION mode) |
+| 9 | TRAC Rules | `policies/trac_rules.yaml` | Task-relational safety predicates (4 rules: 2 enforcing + 2 advisory) |
 
 All policies are editable through the **Policy Studio** UI — changes take effect immediately.
 
@@ -251,7 +260,7 @@ Infrastructure is defined in `infra/` using Bicep (ACR + Container Apps Environm
 │   │   ├── policy_loader.py         # Policy file loader
 │   │   ├── rbac_service.py          # RBAC evaluation
 │   │   ├── abac_rule_service.py     # ABAC evaluation
-│   │   ├── tsphol_rule_service.py   # TS-PHOL formal logic engine
+│   │   ├── tsphol_rule_service.py   # TRAC rule engine (loads trac_rules.yaml)
 │   │   ├── spiffe_registry_service.py   # SPIFFE identity management
 │   │   ├── spiffe_workload_service.py   # SPIRE integration (sidecar + Docker)
 │   │   ├── capability_inference_service.py  # Capability mapping
@@ -269,15 +278,16 @@ Infrastructure is defined in `infra/` using Bicep (ACR + Container Apps Environm
 │   ├── spiffe_allowlist.json
 │   ├── rbac.yaml
 │   ├── abac_rules.yaml
-│   ├── tsphol_rules.yaml
+│   ├── trac_rules.yaml
 │   ├── mcp_attributes.yaml
 │   ├── domain_capability_catalog.json
 │   ├── domain_capability_ontology.json
 │   ├── heuristic_policy.json
-│   └── rego/                        # OPA Rego translations
-│       ├── rbac.rego
-│       ├── abac.rego
-│       └── tsphol.rego
+│   └── rego/                        # Generic OPA/Rego evaluators (rules-as-data)
+│       ├── rbac.rego               #   evaluates data.policies (from rbac.yaml)
+│       ├── abac.rego               #   evaluates data.rules    (from abac_rules.yaml)
+│       ├── tsphol.rego             #   evaluates data.tsphol_rules (from trac_rules.yaml)
+│       └── data/                   #   verb lexicon as OPA data (action_lexicon.json)
 │
 ├── datasets/                        # ASTRA dataset & generated artifacts
 │   ├── astra_tasks.json             # 1,157 tasks across 8 MCP domains

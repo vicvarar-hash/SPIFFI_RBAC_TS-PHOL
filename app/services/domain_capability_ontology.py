@@ -27,6 +27,25 @@ def _save_ontology(data: dict) -> bool:
 
 _ontology_cache = None
 
+def _resolve_key(mapping: dict, key):
+    """Case-insensitive key resolution.
+
+    The engine canonicalises domain (and intent) names to lower case
+    (e.g. ``atlassian``) while the ontology is authored in title case
+    (``Atlassian``). Resolve the lookup case-insensitively so the two never
+    drift — a mismatch silently routed every domain to the abstract
+    ``GenericRead`` fallback, blanket-denying even correct bundles.
+    """
+    if not isinstance(mapping, dict) or key is None:
+        return None
+    if key in mapping:
+        return mapping[key]
+    low = str(key).lower()
+    for k in mapping:
+        if str(k).lower() == low:
+            return mapping[k]
+    return None
+
 def _get_ontology():
     global _ontology_cache
     if _ontology_cache is None:
@@ -59,8 +78,8 @@ class DomainCapabilityOntology:
         Returns: {"required": [...], "optional": [...]}
         """
         caps = get_domain_capabilities()
-        domain_intents = caps.get(domain, {})
-        data = domain_intents.get(intent)
+        domain_intents = _resolve_key(caps, domain) or {}
+        data = _resolve_key(domain_intents, intent)
         if isinstance(data, dict):
             return data
         return {"required": [], "optional": []}
@@ -73,9 +92,14 @@ class DomainCapabilityOntology:
         """
         ontology = _get_ontology()
         fallbacks = ontology.get("domain_fallbacks", {})
-        if domain in fallbacks:
-            return fallbacks[domain]
-        return {"required": ["GenericRead"], "optional": [], "hard": ["GenericRead"], "soft": []}
+        hit = _resolve_key(fallbacks, domain)
+        if hit is not None:
+            return hit
+        # Genuinely unknown domain: impose NO hard capability requirement. The
+        # abstract ``GenericRead`` is implied by no concrete capability, so using
+        # it here blanket-denied every bundle whose domain failed to resolve.
+        # Domain-match and write-safety rules govern unknown domains instead.
+        return {"required": [], "optional": [], "hard": [], "soft": []}
 
     @staticmethod
     def get_hard_capabilities(domain: str, intent: str) -> Set[str]:
@@ -84,8 +108,8 @@ class DomainCapabilityOntology:
         Missing a hard capability = DENY. Missing a soft capability = audit warning.
         """
         caps = get_domain_capabilities()
-        domain_intents = caps.get(domain, {})
-        data = domain_intents.get(intent)
+        domain_intents = _resolve_key(caps, domain) or {}
+        data = _resolve_key(domain_intents, intent)
         if isinstance(data, dict) and "hard" in data:
             return set(data["hard"])
         if isinstance(data, dict):

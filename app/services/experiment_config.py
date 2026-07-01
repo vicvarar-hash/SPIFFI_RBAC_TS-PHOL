@@ -55,7 +55,7 @@ PERSONAS: Dict[str, dict] = {
     "security_engine": {
         "display_name": "Security Engine",
         "spiffe_id": "spiffe://demo.local/service/security",
-        "description": "Evaluates transport, RBAC, and TS-PHOL rules",
+        "description": "Evaluates transport, RBAC, and TRAC rules",
         "attributes": {"clearance_level": "L3", "department": "Security", "trust_score": 1.0},
     },
 }
@@ -73,10 +73,22 @@ LEGITIMATE_PAIRINGS: Dict[str, Set[str]] = {
                            "notion", "hummingbot-mcp", "wikipedia-mcp", "paper-search"},
 }
 
+# The raw keys above double as canonical MCP names (rbac_complete/rbac_scoped emit them
+# directly as `mcp:` rule targets), so they keep their hyphenated form. The is_legitimate
+# derivation, however, compares against ``normalize_mcp_name(candidate_mcp)`` — which
+# lowercases and underscores (e.g. ``hummingbot-mcp`` -> ``hummingbot_mcp``). Comparing a
+# normalized domain against the hyphenated set silently fails for hummingbot/wikipedia/
+# paper-search, mislabelling those rightful pairings as illegitimate. Always check
+# legitimacy against this normalized view.
+LEGITIMATE_PAIRINGS_NORMALIZED: Dict[str, Set[str]] = {
+    persona: {normalize_mcp_name(d) for d in domains}
+    for persona, domains in LEGITIMATE_PAIRINGS.items()
+}
+
 EXPERIMENT_GROUPS: Dict[str, str] = {
-    "E1": "All tasks × full pipeline (RBAC + ABAC + TS-PHOL) — baseline",
-    "E2": "All tasks × ABAC + TS-PHOL only (no RBAC) — isolates RBAC contribution",
-    "E3": "All tasks × TS-PHOL only (no RBAC, no ABAC) — isolates TS-PHOL capability",
+    "E1": "All tasks × full pipeline (RBAC + ABAC + TRAC) — baseline",
+    "E2": "All tasks × ABAC + TRAC only (no RBAC) — isolates RBAC contribution",
+    "E3": "All tasks × TRAC only (no RBAC, no ABAC) — isolates TRAC capability",
     "E4": "All tasks × LLM matcher only (no deterministic policy) — ASTRA-style baseline",
 }
 
@@ -206,9 +218,12 @@ def abac_extreme() -> dict:
     ]}
 
 
-# --- TS-PHOL ---
+# --- TRAC ---
 def tsphol_production() -> dict:
-    return _load_from_backup_or_current("tsphol_rules.yaml")
+    d = _load_from_backup_or_current("trac_rules.yaml")
+    # Normalise to the uniform in-memory policy shape ({"rules": [...]}) regardless of
+    # the file's top-level key (tsphol_rules for OPA-data namespacing; rules for legacy).
+    return {"rules": d.get("tsphol_rules", d.get("rules", []))}
 
 
 def tsphol_open() -> dict:
@@ -238,23 +253,24 @@ def tsphol_llm_verdict_only() -> dict:
 
 def tsphol_minimal() -> dict:
     return {"rules": [
-        {"rule_name": "destructive_write_prevention", "description": "Deny destructive ops without read",
-         "if": [{"predicate": "ContainsDelete", "equals": True}, {"predicate": "ContainsRead", "equals": False}],
-         "then": "DENY", "derive": "UnsafeDestructiveWrite", "priority": 100},
-        {"rule_name": "task_bundle_domain_mismatch", "description": "Deny domain mismatch",
-         "if": [{"predicate": "TaskBundleDomainMismatch", "equals": True},
+        {"rule_name": "capability_coverage", "description": "Deny when a hard capability the task requires is missing",
+         "if": [{"predicate": "HardCapabilityMissing", "equals": True},
                 {"predicate": "SelectionToleranceActive", "equals": False}],
-         "then": "DENY", "priority": 120},
+         "then": "DENY", "derive": "CapabilityGap", "priority": 105},
+        {"rule_name": "write_safety", "description": "Deny high-risk mutation without a preceding read",
+         "if": [{"predicate": "ContainsWrite", "equals": True},
+                {"predicate": "ContainsReadBeforeWrite", "equals": False},
+                {"predicate": "HighestRiskLevel", "equals": "high"}],
+         "then": "DENY", "derive": "UnsafeBlindMutation", "priority": 100},
     ]}
 
 
 def tsphol_strict() -> dict:
     base = tsphol_production()
     for rule in base["rules"]:
-        rn = rule.get("rule_name", "")
-        if rn == "low_task_alignment":
+        if rule.get("rule_name") == "capability_coverage_partial":
             for c in rule["if"]:
-                if c.get("predicate") == "TaskAlignmentScore" and "lt" in c:
+                if c.get("predicate") == "CapabilityCoverageScore" and "lt" in c:
                     c["lt"] = 0.6
     return base
 
@@ -262,11 +278,10 @@ def tsphol_strict() -> dict:
 def tsphol_relaxed() -> dict:
     base = tsphol_production()
     for rule in base["rules"]:
-        rn = rule.get("rule_name", "")
-        if rn == "low_task_alignment":
+        if rule.get("rule_name") == "capability_coverage_partial":
             for c in rule["if"]:
-                if c.get("predicate") == "TaskAlignmentScore" and "lt" in c:
-                    c["lt"] = 0.3
+                if c.get("predicate") == "CapabilityCoverageScore" and "lt" in c:
+                    c["lt"] = 0.4
     return base
 
 
@@ -290,9 +305,9 @@ POLICY_GENERATORS: Dict[str, Dict[str, Callable]] = {
         "llm_verdict_only": tsphol_llm_verdict_only,
         "minimal": tsphol_minimal,
         "strict": tsphol_strict, "relaxed": tsphol_relaxed,
-        "no_hard_cap":          lambda: _tsphol_without_rule("hard_capability_violation"),
-        "no_destructive":       lambda: _tsphol_without_rule("destructive_write_prevention"),
-        "no_domain_mismatch":   lambda: _tsphol_without_rule("task_bundle_domain_mismatch"),
+        "no_capability":          lambda: _tsphol_without_rule("capability_coverage"),
+        "no_partial_capability":  lambda: _tsphol_without_rule("capability_coverage_partial"),
+        "no_write_safety":        lambda: _tsphol_without_rule("write_safety"),
     },
 }
 
@@ -327,16 +342,16 @@ class ExperimentConfig:
 EXPERIMENTS: List[ExperimentConfig] = [
     # E1: Full pipeline — baseline governance (all layers active)
     ExperimentConfig("E1", "E1",
-                     "All tasks × full pipeline (RBAC + ABAC + TS-PHOL) — baseline"),
+                     "All tasks × full pipeline (RBAC + ABAC + TRAC) — baseline"),
 
     # E2: No RBAC — isolates RBAC's contribution (subtractive ablation step 1)
     ExperimentConfig("E2", "E2",
-                     "All tasks × ABAC + TS-PHOL only — isolates RBAC contribution",
+                     "All tasks × ABAC + TRAC only — isolates RBAC contribution",
                      rbac_fn="open"),
 
-    # E3: TS-PHOL only — isolates TS-PHOL's solo capability (subtractive step 2)
+    # E3: TRAC only — isolates TRAC's solo capability (subtractive step 2)
     ExperimentConfig("E3", "E3",
-                     "All tasks × TS-PHOL only — isolates TS-PHOL capability",
+                     "All tasks × TRAC only — isolates TRAC capability",
                      rbac_fn="open", abac_fn="open"),
 
     # E4: LLM matcher only — ASTRA-style baseline. No deterministic policy;

@@ -16,7 +16,7 @@ from app.services.abac_engine import ABACEngine
 from app.services.tsphol_interpreter import TSPHOLInterpreter
 from app.services.tool_classifier import ToolClassifier
 
-from app.services.normalization import normalize_mcp_name, normalize_tool_name, normalize_domain_name
+from app.services.normalization import normalize_mcp_name, normalize_tool_name
 from app.models.domain import resolve_domain
 import json
 import os
@@ -221,6 +221,8 @@ class DecisionEngine:
                 "tools": tools,
                 "tool_count": len(tools),
                 "contains_write": intent_info["intent_properties"].get("contains_write", False),
+                "contains_destructive_write": tool_aggregates.get("ContainsDelete", False),
+                "write_tool_count": sum(1 for d in tool_audit if d.get("is_write")),
                 "multi_domain": intent_info["intent_properties"].get("multi_domain", False)
             },
             "environment": {
@@ -240,33 +242,24 @@ class DecisionEngine:
                                   abac_result.get("failure_reason", "ABAC attribute-based denial"),
                                   "ABAC", trace, eval_context, True, True, llm_outputs, None)
 
-        # --- Step 6: TS-PHOL Policy-Driven Reasoning (Iteration 4E) ---
+        # --- Step 6: TRAC Policy-Driven Reasoning (Iteration 4E) ---
         evaluation_states["tsphol"] = "DENY"
         
-        # 4R: Hierarchical Domain Inference
+        # 4R: Domain inference for the agnostic capability check (capability_coverage).
+        # An explicit MCP scope (Prediction Lab "Filter by MCP Server") wins. Otherwise infer the
+        # task's domain leak-free with the SAME resolver the Post-Experiment replay uses —
+        # ``resolve_required_domain`` (BM25 over the public MCP catalog + the CAPCOV_TOPK gate) — so a
+        # single Prediction-Lab run and the batch replay reach the IDENTICAL capability_coverage
+        # verdict (the corroborated rescue, tool_relevance and VerbNet actions are already shared via
+        # the predicate engine). Abstains ("uncertain") on ambiguity, exactly like the replay — no
+        # gold/LLM domain leak.
         if mcp_filter and mcp_filter != "All":
             expected_domain = normalize_mcp_name(mcp_filter)
-        elif intent_info.get("domain") and intent_info.get("domain") != "Unknown":
-            expected_domain = normalize_domain_name(intent_info.get("domain"))
         else:
-            expected_domain = llm_outputs.get("expected_domain", "uncertain")
-            
-        expected_domain = resolve_domain(expected_domain)
-        
-        # Explicit tolerance loading
-        tolerance_policy = {"enabled": False}
-        heur_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "policies", "heuristic_policy.json")
-        if os.path.exists(heur_path):
-            try:
-                with open(heur_path, "r") as f:
-                    heur_data = json.load(f)
-                    tolerance_policy = heur_data.get("selection_tolerance_policy", {"enabled": False})
-            except Exception:
-                pass
+            from app.services.task_domain_classifier import resolve_required_domain
+            expected_domain = resolve_required_domain(task_text, mcps) or "uncertain"
 
-        applying_tolerance = False
-        if mode == "selection" and tolerance_policy.get("enabled"):
-            applying_tolerance = True
+        expected_domain = resolve_domain(expected_domain)
 
         # Resolve Actual Domain
         if mcps:
@@ -287,52 +280,46 @@ class DecisionEngine:
         
         # 4T/4V: Deterministic Alignment Score Computation (Weighted Formula)
         domain_match = (expected_domain == actual_domain) if expected_domain not in ["uncertain", "unknown"] else True
-        
-        if not domain_match and applying_tolerance and tolerance_policy.get("allow_domain_mismatch_if_readonly"):
-            if not intent_info["intent_properties"].get("contains_write"):
-                domain_match = True
-                trace.append("Tolerance Policy Applied: Domain mismatch bypassed for read-only selection request. ⚠️")
         domain_match_score = 1.0 if domain_match else 0.0
         
-        req_caps = set(intent_info.get("task_required_capabilities", []))
-        optional_caps = set(intent_info.get("task_optional_capabilities", []))
-        has_caps = set(capabilities)
-        
+        # ─── AGNOSTIC capability model (domain + action; write ⊇ read) ───────
+        # TRAC is task/MCP-agnostic: a capability is {domain}:{action} derived from
+        # each tool's MCP + read/write — no per-MCP vocabulary, catalog, ontology, or
+        # curated tool→capability map. The task needs its declared domain at the action
+        # its text implies; a write tool also satisfies the read.
+        from app.services.agnostic_capability import bundle_capabilities, required_capability
+        has_caps = bundle_capabilities(tool_audit, mcps)
+        req_caps = required_capability(expected_domain)
+        optional_caps = set()
+        hard_caps = set(req_caps)
+
         # 4V: Capability Score Guard (Generalized Refinement)
         from app.services.domain_capability_ontology import DomainCapabilityOntology
         concrete_required = [c for c in req_caps if DomainCapabilityOntology.is_concrete(c)]
         concrete_has = [c for c in has_caps if DomainCapabilityOntology.is_concrete(c)]
         missing_concrete = [c for c in concrete_required if c not in concrete_has]
 
-        if concrete_required:
-            cap_score = len([c for c in concrete_required if c in concrete_has]) / len(concrete_required)
-        elif req_caps:
-            # Fallback requirements only (GenericRead, etc.) -> Cap proportionally
-            cap_score = 0.5 if all(c in has_caps for c in req_caps) else 0.0
-            trace.append("Alignment Alert: Capped capability score due to fallback-only requirements. ⚠️")
+        if req_caps:
+            cap_score = len([c for c in req_caps if c in has_caps]) / len(req_caps)
         else:
             cap_score = 0.0 # No requirements found -> Low mission signal
-            
+
         # 4T/4V: New Heuristic Semantic Score
         semantic_score = self._compute_semantic_score(task_text, tool_audit, intent_info)
-        
+
         # 40% Domain, 40% Cap, 20% Semantic
         final_alignment_score = (0.4 * domain_match_score) + (0.4 * cap_score) + (0.2 * semantic_score)
-        
-        # 4T: Filter for SSOT (Concrete only for UI/Audit)
-        from app.services.domain_capability_ontology import DomainCapabilityOntology
-        concrete_required = [c for c in req_caps if DomainCapabilityOntology.is_concrete(c)]
-        concrete_has = [c for c in has_caps if DomainCapabilityOntology.is_concrete(c)]
-        missing_concrete = [c for c in concrete_required if c not in concrete_has]
-        
+
         pred_context = {
             "spiffe_id": caller_spiffe_id,
             "role": persona_key,
             "mcps": mcps,
             "tools": tools,
+            "task_text": task_text,
             "has_capabilities": list(has_caps),
-            "task_required_capabilities": list(req_caps), # Minimal Required (from Ontology)
+            "task_required_capabilities": list(req_caps), # Agnostic: {domain}:{action}
             "task_optional_capabilities": list(optional_caps),
+            "hard_capabilities": list(hard_caps), # Agnostic hard requirement (injected)
             "concrete_has": concrete_has, # SSOT Display set
             "concrete_required": concrete_required, # SSOT Display set (Minimal)
             "missing_concrete": missing_concrete, # Strictly Required Missing
@@ -340,7 +327,7 @@ class DecisionEngine:
             "intent_info": intent_info,
             "tool_aggregates": tool_aggregates, # 4I: Direct aggregate sync
             "highest_risk": highest_risk,
-            "HighestRiskLevel": highest_risk, # Direct predicate injection for TS-PHOL
+            "HighestRiskLevel": highest_risk, # Direct predicate injection for TRAC
             # 4M: Validation-Aware Context
             "expected_domain": expected_domain,
             "actual_domain": actual_domain,
@@ -352,7 +339,6 @@ class DecisionEngine:
             },
             "issue_codes": llm_outputs.get("issue_codes", []),
             "mode": mode, # 4R
-            "selection_tolerance_active": applying_tolerance,
             "evaluation_states": evaluation_states
         }
         
@@ -381,7 +367,7 @@ class DecisionEngine:
         eval_context["tsphol_logic_trace"] = logic_trace
         eval_context["tsphol_derived_predicates"] = list(derived_set)
         
-        # 4K: TS-PHOL Rule Summary for audit
+        # 4K: TRAC Rule Summary for audit
         eval_context["tsphol_summary"] = {
             "evaluated_rules": len(logic_trace),
             "triggered_rules": len([r for r in logic_trace if r["triggered"]]),
@@ -424,22 +410,20 @@ class DecisionEngine:
             eval_context["tsphol_summary"]["positive_findings"] = findings
             eval_context["tsphol_derived_predicates"] = list(derived_set)
 
-        # 4S: Synthesis - TS-PHOL IS THE FINAL AUTHORITY
+        # 4S: Synthesis - TRAC IS THE FINAL AUTHORITY
         evaluation_states["tsphol"] = final_status
-        reason = "TS-PHOL approved access" if final_status == "ALLOW" else "TS-PHOL formal logical denial"
+        reason = "TRAC approved access" if final_status == "ALLOW" else "TRAC formal logical denial"
         
-        # TS-PHOL denial attribution (ABAC denials are handled upstream now)
+        # TRAC denial attribution (ABAC denials are handled upstream now)
         denial_source = None
         if final_status == "DENY":
-            denial_source = "TS-PHOL"
+            denial_source = "TRAC"
         
-        trace.append(f"[Phase III] TS-PHOL evaluated {len(tsphol_rules)} declarative rules. FINAL STATUS: {final_status}")
-        trace.append(f"[Phase III] Authority Check: TS-PHOL overrides context. Decision: {final_status}")
-        # Phase 3: Deception Routing (Sandbox Response)
-        if final_status == "DENY" and all_predicates.get("ContainsWrite"):
-            final_status = "DECEPTION_ROUTED"
-            reason = "High-risk write denied; agent logically routed to sandbox deception environment."
-            trace.append("DECEPTION TRIGGERED: High risk write operation sandboxed. 🛡️")
+        trace.append(f"[Phase III] TRAC evaluated {len(tsphol_rules)} declarative rules. FINAL STATUS: {final_status}")
+        trace.append(f"[Phase III] Authority Check: TRAC overrides context. Decision: {final_status}")
+        # Deception routing (DECEPTION_ROUTED) was removed: the stack is now a pure
+        # ALLOW/DENY decision (+ advisory alerts), so every layer is expressible in
+        # standard OPA/Rego. A denied high-risk write stays DENY.
 
         # Finalize phase summaries
         eval_context["phases"]["phase_3_logic"] = {

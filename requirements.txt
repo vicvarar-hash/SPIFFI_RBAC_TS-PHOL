@@ -9,3 +9,4 @@ python-dotenv>=1.0.0
 pyyaml>=6.0.0
 spiffe>=0.2.6
 grpcio>=1.78.0
+rank-bm25>=0.2.2

@@ -3,11 +3,11 @@ from app.services.policy_loader import PolicyLoader
 from app.services.policy_logger_service import PolicyLoggerService
 
 class TSPHOLRuleService:
-    def __init__(self, filepath: str = "policies/tsphol_rules.yaml"):
+    def __init__(self, filepath: str = "policies/trac_rules.yaml"):
         self.filepath = filepath
         self.logger = PolicyLoggerService()
         data = PolicyLoader.load_yaml(filepath)
-        self.rules = data.get("rules", [])
+        self.rules = data.get("tsphol_rules", data.get("rules", []))
 
     def get_all(self) -> List[Dict[str, Any]]:
         return self.rules
@@ -57,4 +57,4 @@ class TSPHOLRuleService:
         return False, "Failed to save to disk."
 
     def _save(self) -> bool:
-        return PolicyLoader.save_yaml(self.filepath, {"rules": self.rules})
+        return PolicyLoader.save_yaml(self.filepath, {"tsphol_rules": self.rules})

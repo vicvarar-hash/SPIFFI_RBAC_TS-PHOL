@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 class PredicateEngine:
     """
-    The Brain of TS-PHOL.
+    The Brain of TRAC.
     Converts session context into logical predicates for reasoning.
     Refined in Iteration 4I to ensure strict ToolAggregate consistency.
     """
@@ -68,15 +68,34 @@ class PredicateEngine:
         
         # Metadata
         p["HighestRiskLevel"] = context.get("highest_risk", "low")
+
+        # Action-coherence (advisory): a read-intent task paired with destructive tools.
+        # The task half is a conservative, abstain-by-default text heuristic (task phrasing
+        # is noisier than tool descriptions) — so this feeds an ADVISORY rule, never a deny.
+        from app.services.task_intent_classifier import task_readonly_intent
+        p["ReadIntentMutatingBundle"] = (
+            task_readonly_intent(context.get("task_text", "")) and bool(p.get("ContainsDelete"))
+        )
+
+        # Tool-relevance (advisory): are the selected tools lexically relevant to the task? Mean BM25
+        # of each tool's catalog description vs the task text, below a threshold. Agnostic + leak-free
+        # (no gold, no hardcoded domains). ADVISORY only: ~15% of correct bundles use tools that don't
+        # share words with the task, so this warns but never denies.
+        from app.services.tool_relevance import tools_irrelevant
+        p["BundleToolsIrrelevant"] = tools_irrelevant(
+            list(context.get("tools", []) or []), context.get("task_text", "")
+        )
         
         # 4M: Task/Bundle Alignment Predicates
         p["TaskDomainExpected"] = context.get("expected_domain", "Uncertain")
         p["BundleDomainActual"] = context.get("actual_domain", "Uncertain")
         p["TaskAlignmentScore"] = context.get("task_alignment_score", 0.0)
         
-        # 4R: Alignment Reliability & Tolerance
+        # 4R: Alignment Reliability
         p["AlignmentEvaluated"] = (p["TaskDomainExpected"] != "Uncertain")
-        p["SelectionToleranceActive"] = context.get("selection_tolerance_active", False)
+        # Always False: the selection-tolerance policy was retired, but some alternate rule
+        # sets / the OPA parity check still read this predicate, so it is kept as a constant.
+        p["SelectionToleranceActive"] = False
         
         evaluation_states = context.get("evaluation_states", {})
         p["ABACDenied"] = evaluation_states.get("abac") == "DENY"
@@ -103,11 +122,28 @@ class PredicateEngine:
         # Two-tier: hard obligations are mission-critical, soft are advisory
         expected_domain = context.get("expected_domain", "Uncertain")
         primary_intent = intent_info.get("primary_intent", "Unknown")
-        hard_caps = DomainCapabilityOntology.get_hard_capabilities(expected_domain, primary_intent)
+        if "hard_capabilities" in context:
+            # Agnostic model: hard capability is supplied directly ({domain}:{action}).
+            hard_caps = set(context["hard_capabilities"])
+        else:
+            hard_caps = DomainCapabilityOntology.get_hard_capabilities(expected_domain, primary_intent)
         hard_missing = hard_caps - p["HasCapabilities"]
         
         p["HardCapabilityMissing"] = len(hard_missing) > 0
         p["MissingHardCapabilities"] = list(hard_missing)
+
+        # Corroborated coverage rescue: a domain-mismatch denial is reversed when the selected
+        # tools are *strongly* relevant to the task (mean BM25 >= RESCUE_RELEVANCE) — independent
+        # evidence the bundle fits the task that legit, domain-mis-inferred bundles have and
+        # wrong-domain/null attacks lack. Disabled when the threshold is <= 0 (original behaviour).
+        if p["HardCapabilityMissing"]:
+            from app.services.tool_relevance import bundle_tool_relevance, RESCUE_RELEVANCE
+            if RESCUE_RELEVANCE > 0:
+                _rel = bundle_tool_relevance(list(context.get("tools", []) or []),
+                                             context.get("task_text", ""))
+                if _rel is not None and _rel >= RESCUE_RELEVANCE:
+                    p["HardCapabilityMissing"] = False
+                    p["MissingHardCapabilities"] = []
         
         # Graduated coverage score (ratio of satisfied/total required)
         if p["RequiredCapabilities"]:

@@ -1,0 +1,713 @@
+\documentclass[sigconf,review,anonymous]{acmart}
+
+\makeatletter
+\@ACM@balancefalse
+\makeatother
+\let\Bbbk\relax
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{amsthm}
+\newtheorem{proposition}{Proposition}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{listings}
+\usepackage{adjustbox}
+
+% acmart pre-loads natbib, hyperref, xcolor, graphicx, microtype, geometry, fontenc, inputenc.
+% Do not re-load them here.
+
+\hfuzz=2pt
+\emergencystretch=3em
+\hbadness=10000
+\vbadness=10000
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  language=Python,
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red!70!black},
+  showstringspaces=false
+}
+
+%==============================================================================
+% ACM CONFERENCE METADATA
+%==============================================================================
+\acmConference[SACMAT '27]{The 32nd ACM Symposium on Access Control Models and Technologies}{June 2027}{To be announced}
+\acmYear{2027}
+\copyrightyear{2027}
+\acmISBN{978-1-4503-XXXX-X/27/06}
+\acmDOI{10.1145/XXXXXXX.XXXXXXX}
+\setcopyright{acmlicensed}
+
+%==============================================================================
+% CCS CONCEPTS (REQUIRED BY ACM)
+%==============================================================================
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10002978.10003006.10003013</concept_id>
+       <concept_desc>Security and privacy~Access control</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10002978.10003006.10003007</concept_id>
+       <concept_desc>Security and privacy~Authorization</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10010147.10010178.10010224</concept_id>
+       <concept_desc>Computing methodologies~Multi-agent systems</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10002978.10003001.10003003</concept_id>
+       <concept_desc>Security and privacy~Logic and verification</concept_desc>
+       <concept_significance>100</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Security and privacy~Access control}
+\ccsdesc[300]{Security and privacy~Authorization}
+\ccsdesc[300]{Computing methodologies~Multi-agent systems}
+\ccsdesc[100]{Security and privacy~Logic and verification}
+
+\keywords{access control, RBAC, ABAC, typed predicates, Model Context Protocol, agentic AI, LLM safety, policy enforcement, zero trust}
+
+\title{PALADIN: Policy-Aware Layered Agentic Decision Intelligence over the Model Context Protocol}
+
+%==============================================================================
+% AUTHORS (ANONYMISED FOR DOUBLE-BLIND REVIEW)
+%==============================================================================
+% The "anonymous" class option suppresses author names, affiliations, and emails
+% in the rendered PDF. Author metadata is retained below for the camera-ready.
+\author{Author One}
+\affiliation{%
+  \institution{Anonymous Institution}
+  \city{Anonymous City}
+  \country{Anonymous Country}
+}
+\email{anon1@example.com}
+
+\author{Author Two}
+\affiliation{%
+  \institution{Anonymous Institution}
+  \city{Anonymous City}
+  \country{Anonymous Country}
+}
+\email{anon2@example.com}
+
+\author{Author Three}
+\affiliation{%
+  \institution{Anonymous Institution}
+  \city{Anonymous City}
+  \country{Anonymous Country}
+}
+\email{anon3@example.com}
+
+\renewcommand{\shortauthors}{Anon.}
+
+\begin{document}
+
+%==============================================================================
+% ABSTRACT
+%==============================================================================
+\begin{abstract}
+\begin{sloppypar}
+Autonomous LLM agents invoke external tools through the Model Context Protocol (MCP), opening an authorisation surface the protocol does not govern, and the agent-safety field lacks a principled way to separate what the \emph{model} contributes to safety from what the surrounding \emph{policy stack} contributes. We reframe agentic tool selection as an \emph{authorisation} problem---semantic correctness is not authorisation correctness---contribute a task-relational admission primitive enforcing it, and add a \textbf{measurement framework for access control at the invocation boundary}: a dual-mode protocol separating the LLM \emph{judging} a candidate tool bundle from \emph{generating} one; two metric conventions that disagree on layer importance; paired task-level bootstrap CIs on layer-marginal SecFail; and a dataset-ceiling analysis. We instantiate it as \textsc{PALADIN}---SPIFFE/SPIRE identity, RBAC, ABAC, and a typed ordered production-rule engine (TRAC)---an admission \emph{floor} composing with, not replacing, prompt-injection and output-filter defences. On ASTRA v0.3~\cite{elhelou2025astra} across three OpenAI generations ($\sim$$114$K decisions): \textbf{(i)} the deterministic stack's security profile is \emph{identical} across models by construction while LLM-only $F_1$ ranges over $0.28$, a blind non-OpenAI validator (Claude Opus 4.8) falling within that band; \textbf{(ii)} all three layers are load-bearing, removing any one raising SecFail $20$--$30$pp; \textbf{(iii)} first-firing attribution misranks layers, hiding a near-silent layer's largest marginal contribution; \textbf{(iv)} BM25 retrieval-augmented in-context learning improves paired-cohort security (CI excludes zero). The leak-free pipeline consumes no ground-truth label, so a benchmark-correct bundle may still be inadmissible under enterprise RBAC, ABAC, and task-coherence constraints. We report an operating-point sweep rather than a single point; all policies, raw logs, and analysis scripts are released.
+\end{sloppypar}
+\end{abstract}
+
+\maketitle
+
+%==============================================================================
+% SECTION 1: INTRODUCTION
+%==============================================================================
+\section{Introduction}
+\label{sec:introduction}
+
+\subsection{Motivation}
+\label{sec:motivation}
+
+LLM agents that autonomously select and invoke external tools have proliferated across enterprise and consumer domains~\cite{wang2024survey, xi2025rise}, building on tool-augmented language models~\cite{schick2023toolformer} and ReAct-style reasoning-and-acting loops~\cite{yao2023react}. They now standardise on the Model Context Protocol (MCP)~\cite{anthropic2024mcp} as the de facto tool-invocation interface. MCP deployments typically assume a trusted execution environment with no native identity verification, permission scoping, or deterministic predicate evaluation. The security gap is consequential: an agent tasked with ``investigating anomalous metrics'' might autonomously select tools that modify production alert rules, mutate database state, or initiate financial transactions far outside its intended mission. Recent analyses catalogue 16 MCP-lifecycle threat categories~\cite{gupta2025security} and document exploits including credential theft, tool poisoning, and remote code execution~\cite{jamshidi2025securing}.
+
+Existing LLM-security work addresses fragments. Prompt-injection defences~\cite{liu2024formalizing, zhan2024injecagent} target adversarial reasoning manipulation; output filters such as Llama Guard~\cite{inan2023llamaguard} constrain generation content; agent-safety benchmarks~\cite{zhang2024agentsafetybench, yuan2024rjudge} evaluate behaviour in controlled environments. None reasons about the security properties of \emph{individual tool invocations} within a multi-domain operational context. Chu et al.~\cite{chu2026stateless} identify a layered attack-surface model but provide no enforcement mechanism; we instantiate one as a staged invocation-time pipeline.
+
+This exposes a reframing the agentic-AC literature has largely missed: \emph{task-tool semantic correctness is not authorisation correctness}. A bundle a task-tool benchmark scores as ``correct''---the tools that best accomplish the task---may still be \emph{inadmissible} under the agent's role, attribute, and task-coherence constraints; conversely a benchmark-incorrect bundle may be perfectly admissible. Authorising agentic tool use is therefore an access-control problem, not a retrieval-accuracy one, and it needs an enforcement primitive that conditions on the task$\leftrightarrow$bundle relation---an axis RBAC and ABAC structurally cannot express.
+
+\subsection{Contributions}
+\label{sec:contributions}
+
+Our contributions are threefold: a \emph{reformulation} of agentic tool selection as an authorisation problem (semantic correctness $\neq$ authorisation correctness); a modest \emph{task-relational} access-control primitive that enforces it; and a \emph{measurement methodology}, with empirical findings, quantifying how deterministic policy and LLM judgement compose. We make no claim of novel rule-engine machinery---the contributions are conceptual, methodological, and empirical, and the system we evaluate (PALADIN) exists to make them concrete and reproducible.
+
+\begin{enumerate}
+  \item A \textbf{dual-mode measurement framework}: (a) the validation/selection protocol separating ``the LLM judges a candidate bundle'' from ``the LLM generates one,'' which most task-tool benchmarks conflate; (b) two metric conventions (security- vs.\ permissivity-view) that systematically disagree on layer importance and must be reported jointly; (c) paired task-level bootstrap CIs on layer-marginal $\Delta\mathrm{SecFail}$; and (d) a dataset-ceiling analysis. That analysis places the practical exact-match upper bound at $30$--$40\%$, against which $39\%$ retrieval-augmented selection accuracy must be read (\S\ref{sec:methodology},~\ref{sec:conventions},~\ref{sec:ceiling}).
+
+  \item A \textbf{task-relational admission primitive and its instantiation, PALADIN}: a predicate that authorises a tool invocation on the \emph{semantic coherence between the task and the proposed bundle}---in-domain coverage, mutation safety, and task--tool relevance---realised as the TRAC stage of an invocation-time pipeline (SPIFFE/SPIRE identity, RBAC, ABAC, fact extraction, and TRAC over an \emph{agnostic} $\{$domain$\}{:}\{$action$\}$ capability model). This is a distinct authorisation axis from RBAC (caller$\to$tool), ABAC (attributes), TBAC (workflow lifecycle~\cite{thomas1997tbac}), and ReBAC (entity relationships~\cite{fong2011rebac}) (\S\ref{sec:related}); we claim no novel rule-\emph{engine} machinery---and \emph{demonstrate} it: the RBAC, ABAC, and TRAC layers are rules-as-data that run unchanged on a standard OPA/Rego runtime with decisions verified bit-identical to our reference engine (\S\ref{sec:substrate_portability}, Table~\ref{tab:substrate_comparison}). The pipeline consumes \emph{no ground-truth label}: the task domain is inferred from task text by BM25 (\S\ref{sec:domain_inference}), closing the only oracle dependency. A SecFail-vs-eligible-correct-admission sweep is computable from released logs without further LLM calls (\S\ref{sec:architecture}--\ref{sec:layers},~\ref{sec:operating_sweep}).
+
+  \item \textbf{Model-invariant deterministic floor}: across three OpenAI generations the deterministic stack returns an \emph{identical} security profile ($F_1\!=\!0.844$, SecFail $=10.7\%$, eligible-correct admission $=43.9\%$)---by construction, since it conditions on the bundle, not the model---while LLM-only $F_1$ ranges over $0.28$ on the same inputs. Composing the model's own verdict gate sharpens the floor to $2.1\%$ (gpt-4o) and never exceeds it for a weak judge: the policy bounds the worst case. A blind non-OpenAI validator (Claude Opus 4.8, $N\!=\!45$) falls within the OpenAI LLM-only band, with the composed pipeline converging across both vendors (\S\ref{sec:stack_guarantee},~\ref{sec:cross_vendor},~\ref{sec:newer_not_better}).
+
+  \item \textbf{All three layers are load-bearing, in both modes}, with paired CIs: removing RBAC raises validation SecFail by $20.7$pp and selection by $30.3$pp; removing ABAC a further $23.6$/$22.9$pp; the agnostic TRAC floor alone leaves $55$/$75\%$ SecFail. Unlike identity-only or single-predicate designs, no layer can be dropped without a large security loss---direct empirical support for composable layered governance (\S\ref{sec:reversal},~\ref{sec:per_domain}).
+
+  \item \textbf{Attribution paradox, corroborated coverage, and an RA-ICL safety result}: (a) first-firing denial attribution misleads---RBAC, firing first, claims $82\%$ of denials, yet ABAC (claiming $4\%$) carries the \emph{largest} marginal contribution ($-23.6$pp $\Delta\mathrm{SecFail}$)---a methodological pitfall in much of the agent-safety literature; (b) \emph{corroborated coverage}, a leak-free Pareto refinement that reverses a domain-mismatch denial when the tools are strongly task-relevant, recovers legitimate work at near-zero security cost; (c) BM25 RA-ICL yields a paired-cohort security \emph{improvement} ($\Delta\mathrm{SecFail}\!=\!-0.064$, CI excludes zero), contradicting the assumption that richer prompting trades safety for capability. We also reproduce ASTRA's LLM-ResM~\cite{elhelou2025astra} under a stricter per-bundle protocol (\S\ref{sec:astra_replication},~\ref{sec:attribution_paradox},~\ref{sec:corroborated},~\ref{sec:raicl}).
+\end{enumerate}
+
+\noindent\textbf{What this paper is not.} PALADIN governs invocation-time authorisation and is a security-first floor, not an end-to-end agent-security solution. Prompt-injection defences, tool-output exfiltration, MCP supply-chain, and side-channel attacks are out of scope and intended to compose with PALADIN (\S\ref{sec:deployment_envelope}).
+
+\noindent\textbf{Organisation.} \S\ref{sec:related} surveys access control, agent identity, and MCP security. \S\ref{sec:architecture}--\ref{sec:framework} specify the pipeline, threat model, and request-composition semantics. \S\ref{sec:layers} details the RBAC/ABAC layers and the TRAC substrate. \S\ref{sec:methodology} defines the dual-mode protocol, ablations, two metric conventions, and reproducibility configuration. \S\ref{sec:results} reports the eight result blocks; \S\ref{sec:discussion} discusses operating-point trade-offs, policy dependence, limitations, and artefact availability.
+
+%==============================================================================
+% SECTION 2: RELATED WORK
+%==============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Access Control, Policy Languages, and Task-Tool Benchmarks}
+\label{sec:access_control}
+
+Five decades of access-control foundations span lattice models~\cite{bell1973secure}, RBAC~\cite{sandhu1996role,ferraiolo2001proposed}, ABAC~\cite{hu2014guide}, and policy languages with decidable analysis (Cedar~\cite{cutler2024cedar}, XACML~\cite{oasis2013xacml}, Margrave~\cite{fisler2005verification}). These were designed for human principals on static boundaries; agents construct invocations dynamically via probabilistic reasoning, span multiple domains per task, and produce confidence scores carrying security-relevant signal.
+
+Two AC lineages model structure beyond the subject and are the natural reference points for a ``task-relational'' claim. \emph{Task-Based Access Control} (TBAC)~\cite{thomas1997tbac} ties permission \emph{activation} to a task's workflow lifecycle---permissions are granted and revoked just-in-time as a task advances through its steps. \emph{Relationship-Based Access Control} (ReBAC)~\cite{fong2011rebac} authorises on \emph{relationships among entities} (owner-of, member-of, $\dots$). Our task-relational predicate is orthogonal to both: it gates on the \emph{semantic coherence between the task's intent and the proposed tool bundle}---is this bundle in-domain and sufficient for what the task asks?---not on a workflow position (TBAC) or an entity graph (ReBAC). It is complementary, not a replacement: an agent could be scoped by TBAC over a workflow \emph{and} checked by a task-relational coverage predicate at each invocation.
+
+Relative to Cedar and HashiCorp Sentinel---the substrates most often proposed for agentic authorisation---TRAC adds (i) typed predicates over LLM-emitted continuous confidence/trust scores with thresholds revisable as policy, (ii) a \emph{task-relational} coverage predicate---whether the proposed bundle covers the inferred task domain---conditioning on the task$\leftrightarrow$bundle relation rather than on caller or resource attributes alone, and (iii) bundle-level decision points composing over the full emitted tool set. We \emph{do} provide a head-to-head OPA/Rego re-implementation: the RBAC, ABAC, and TRAC layers run as rules-as-data on a standard Open Policy Agent runtime with decisions verified bit-identical to our reference engine (\S\ref{sec:substrate_portability}). This confirms our novelty is the task-relational \emph{predicate} and the measurement framework, not the rule engine---which is substrate-portable.
+
+The closest task-tool benchmark is ASTRA~\cite{elhelou2025astra}, whose LLM reasoning matcher (LLM-ResM, per-tool GPT-4o with AND-aggregation) reports $F_1\!\approx\!0.67$ on the $N\!=\!3$ multi-tool test split. We re-use ASTRA's corpus and labels, reproduce LLM-ResM under a stricter per-bundle protocol (\S\ref{sec:astra_replication}), and evaluate what a deterministic stack composed on top achieves on the same inputs.
+
+\subsection{Zero-Trust, Agent Identity, and MCP Security}
+\label{sec:zero_trust}
+\label{sec:agent_safety}
+
+NIST Zero Trust~\cite{rose2020zero} and SPIFFE~\cite{spiffe2022} establish cryptographic workload identity but have not been applied to AI-agent identity; recent delegation work~\cite{south2025authenticated,rampalli2026pedigree} and defence-in-depth surveys~\cite{chu2026stateless,jangam2024comprehensive,muhammad2024integrative} map the layered attack surface without providing formal enforcement.
+
+The agent-safety community has produced evaluation frameworks---Agent-SafetyBench~\cite{zhang2024agentsafetybench}, ToolEmu~\cite{ruan2024toolemu}, GuardAgent~\cite{xiang2024guardagent}, R-Judge~\cite{yuan2024rjudge}, ALMITA~\cite{arcadinho2024almita}, Constitutional AI~\cite{bai2022constitutional}, deceptive-alignment analyses~\cite{hubinger2024sleeper}---and prompt-injection defences~\cite{liu2024formalizing,zhan2024injecagent,debenedetti2024agentdojo,kim2025promptflow,inan2023llamaguard}. These treat the agent monolithically and do not enforce authorisation at the invocation boundary. MCP-specific work has begun mapping the landscape (16 threat categories~\cite{gupta2025security}, practical exploits~\cite{jamshidi2025securing}, cross-server tool poisoning~\cite{invariantlabs2025toolpoisoning}); multi-agent and behavioural-trust efforts~\cite{patil2026sentinelagent,schroederdewitt2025open,xu2025master,wu2023autogen,rao1995bdi,csa2025fortifying,cisco2025redefining} establish the problem space but offer ad-hoc rather than staged enforcement. Foundational tool-augmented architectures~\cite{schick2023toolformer,yao2023react,wang2023voyager,wang2024survey,xi2025rise} provide the agents but no governance for their invocations; PALADIN is architecture-agnostic and composes on top.
+
+%==============================================================================
+% SECTION 3: SYSTEM ARCHITECTURE
+%==============================================================================
+\section{System Architecture}
+\label{sec:architecture}
+
+\subsection{Pipeline Overview}
+\label{sec:pipeline_overview}
+
+The Unified Decision Engine executes six sequential stages with short-circuit semantics: any \texttt{DENY} from stages S1--S4 terminates the pipeline immediately (Figure~\ref{fig:pipeline}). S5 extracts typed facts; S6 (TRAC) consumes them for predicate-level evaluation.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/pf1.png}
+\caption{PALADIN's six‑stage admission pipeline (short‑circuit S1–S4; S5 fact transformer → S6 TRAC). The deterministic stages are model‑independent; the LLM verdict gate (between ABAC and TRAC) is present only in validation, while in selection the LLM instead generates the bundle.}
+\Description{Flow diagram showing an MCP tool request passing through identity, registration, RBAC, ABAC, fact extraction, and TRAC stages before allow or deny.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Evaluation State and Short-Circuit Semantics}
+\label{sec:state_model}
+
+Each stage records \texttt{ALLOW}, \texttt{DENY}, or \texttt{NOT\_EVALUATED}; the final decision is the conjunction of evaluated stages. A \texttt{DecisionResult} carries the per-stage map, final decision (\texttt{ALLOW}/\texttt{DENY}), denial source, and audit trace. Short-circuiting yields three benefits: computational efficiency (S6 is skipped when cheaper checks suffice), security hardening (later stages cannot mask upstream denials), and audit clarity (the denial source unambiguously identifies the triggering concern).
+
+Beyond the per-stage states, the pipeline returns a single binary admission decision: $\Pi(r)=\text{ALLOW}$ only if every evaluated stage allows, and $\text{DENY}$ otherwise. There is no third outcome---a denied high-risk write simply stays \texttt{DENY}---which keeps every layer expressible as a standard ALLOW/DENY policy (\S\ref{sec:substrate_portability}). Advisory TRAC rules (\S\ref{sec:trac}) may additionally raise non-blocking alerts on an admitted bundle, but these never change the admission decision and are excluded from the security metrics.
+
+\subsection{Threat Model and Deployment Envelope}
+\label{sec:threat_model}
+
+\textbf{Adversary.} A \emph{semi-honest agent}: an authenticated LLM-driven workload that follows MCP mechanically but may emit invocations that exceed scope, cross domains, target writes without prior reads, or otherwise violate policy. It controls only the natural-language task and the emitted bundle, not the policy or pipeline. This subsumes (i) prompt-injected agents, (ii) hallucinating agents, and (iii) over-helpful helpfulness-optimised agents.
+
+\textbf{Trust assumptions.} We trust the SPIFFE/SPIRE identity substrate, policy YAML/JSON integrity at load, the MCP tool registry, and the deterministic pipeline; we do \emph{not} trust LLM-emitted bundles, confidence scores, or natural-language justifications.
+
+\textbf{In-scope.} Within-domain mis-scoping, cross-domain capability leakage, mutation-without-read, hard-capability gaps, and trust-state misalignments (operationalised by ASTRA's \texttt{wrong}/\texttt{null} negatives). \textbf{Out of scope:} policy-file compromise, side channels, DoS, MCP supply-chain attacks, active adversarial prompts crafted to evade specific predicates, and tool-output exfiltration. \textbf{Security objective:} minimise SecFail (Eq.~\ref{eq:secfail}) subject to a bounded reduction in eligible-correct admission; the trade-off point is set by policy, not architecture.
+
+\textbf{Deployment envelope.} PALADIN is an invocation-time authorisation layer, not an end-to-end agent-security solution. The exclusions above are not minor: each is an active research area, and production deployment composes PALADIN with output filters (e.g., Llama Guard~\cite{inan2023llamaguard}), signed registries, network-layer rate limiting, and prompt-injection defences~\cite{liu2024formalizing}. Contribution claims are scoped to that envelope.
+
+
+\section{Mathematical Framework}
+\label{sec:framework}
+
+\subsection{Request Model and Short-Circuit Composition}
+\label{sec:request_model}
+\label{sec:composition}
+
+A tool invocation request is modelled as a 6-tuple
+\begin{equation}
+r = \langle \iota, \tau, T, M, c, \delta \rangle
+\label{eq:request}
+\end{equation}
+where $\iota$ is the agent identity (SPIFFE ID), $\tau$ the task description, $T=\{t_1,\dots,t_n\}$ and $M=\{m_1,\dots,m_n\}$ the selected tools and their MCP servers, $c\in[0,1]$ the LLM confidence, and $\delta$ the environmental context (timestamp, compliance tier).
+
+The short-circuit composition operator $\rhd$ between stages is
+\begin{equation}
+\begin{aligned}
+(S_i \rhd S_j)(r) &= \\
+&\begin{cases}
+\text{DENY}_i, & \text{if } S_i(r) = \text{DENY}, \\
+S_j(r), & \text{otherwise.}
+\end{cases}
+\end{aligned}
+\label{eq:composition}
+\end{equation}
+$S_5$ is not a decision stage but a deterministic \emph{fact-transformer} $\phi\!:\!r\!\mapsto\!\Phi(r)$ that materialises the typed fact base consumed by $S_6$; it cannot return DENY. The full pipeline is therefore
+\begin{equation}
+\Pi(r) = \bigl(S_1 \rhd S_2 \rhd S_3 \rhd S_4 \rhd S_6\bigr)\!\bigl(r,\phi(r)\bigr),
+\label{eq:pipeline}
+\end{equation}
+i.e. $\phi$ runs once when $S_1$--$S_4$ all admit, and $S_6$'s predicates evaluate over $\Phi(r)$.
+
+\subsection{Stage Definitions}
+\label{sec:stage_definitions}
+
+\textbf{S1--S2} are deterministic set-membership checks: $S_1$ admits iff $\iota \in \mathcal{I}_{\text{valid}}$, and $S_2$ admits iff every $t\in T$ is in the registry $\mathcal{R}(m_t)$. \textbf{S3 (RBAC)} evaluates role-based permissions:
+\begin{equation}
+S_3(r) = \begin{cases}
+\text{ALLOW} & \text{if } \forall (m_j, t_j) \in \text{zip}(M,T)\!: (m_j, t_j) \in \rho(\iota) \\
+\text{DENY} & \text{otherwise}
+\end{cases}
+\label{eq:rbac}
+\end{equation}
+where $\rho(\iota)$ maps an identity to its permitted (domain, tool) pairs. \textbf{S4 (ABAC)} implements first-match semantics over attribute conditions,
+\begin{equation}
+S_4(r) = \text{first-match}(\mathcal{P}_{\text{ABAC}}, \text{attrs}(r)),
+\label{eq:abac}
+\end{equation}
+with $\mathcal{P}_{\text{ABAC}}$ the ordered policy set and $\text{attrs}(r)$ extracting subject, resource, action, and environment attributes. \textbf{S5} is the fact-transformer $\phi$ of Eq.~\ref{eq:pipeline}: it derives typed facts without making any decision. \textbf{S6 (TRAC)} evaluates typed predicates over $\Phi(r)$:
+\begin{equation}
+S_6(r) = \begin{cases}
+\text{DENY} & \text{if } \exists\, R_i \text{ s.t. } \text{triggered}(R_i) \land a_i = \text{DENY} \\
+\text{ALLOW} & \text{otherwise.}
+\end{cases}
+\label{eq:trac}
+\end{equation}
+
+\subsection{Agnostic Capability Coverage}
+\label{sec:capability}
+\label{sec:alignment}
+
+TRAC's capability model is deliberately \emph{agnostic}: a capability is the pair $\{d\}{:}\{a\}$, where $d$ is the MCP a tool belongs to and $a\in\{\textrm{read},\textrm{write}\}$ is its action class, with the subsumption rule that a write also grants the read ($\{d\}{:}\textrm{write}\sqsupseteq\{d\}{:}\textrm{read}$). There is no per-MCP vocabulary, no capability catalog, and no curated tool$\to$capability map: the bundle's provided capabilities are $\mathrm{HasCap}=\{\{d(t)\}{:}\{a(t)\}\mid t\in T\}$, derived mechanically from each tool's MCP and its read/write class (\S\ref{sec:layers}). Coverage is domain-only: the required capability for a task with inferred domain $d_\tau$ is the action floor $\{d_\tau\}{:}\textrm{read}$---any in-domain tool, read or write, satisfies it---and a hard violation is
+\begin{equation}
+\mathrm{HardCapMissing}(r)\;\triangleq\;\{d_\tau\}{:}\textrm{read}\notin\mathrm{HasCap}.
+\label{eq:hardcap}
+\end{equation}
+We deliberately do \emph{not} infer read-vs-write \emph{intent} from task text, nor gate on a weighted alignment score: those heuristics were substring-fragile and, for the domain signal, oracle-dependent. Mutation concerns are owned by the \texttt{write\_safety} advisory and lexical task--bundle fit by \texttt{tool\_relevance} (\S\ref{sec:trac}). $d_\tau$ itself is inferred from the task text alone (\S\ref{sec:domain_inference}), so the entire coverage check is free of any ground-truth label. This is the one property RBAC (caller$\to$tool) and ABAC (attributes) structurally cannot express: whether the proposed bundle is coherent with the task's domain.
+
+\subsection{Security Metrics and Composition Properties}
+\label{sec:security_metrics}
+\label{sec:composition_properties}
+
+We report
+\begin{align}
+F_1 &= \frac{2\,\text{TP}}{2\,\text{TP} + \text{FP} + \text{FN}} \label{eq:f1} \\
+\text{SecFail} &= \frac{\text{FN}}{\text{TP} + \text{FN}} \label{eq:secfail}
+\end{align}
+Layer contribution is the subtractive ablation $\Delta_{\text{metric}}(S_k)=\text{metric}(\Pi)-\text{metric}(\Pi\setminus S_k)$, applied uniformly to $F_1$ and SecFail. Under this convention a layer that \emph{adds} security yields $\Delta F_1(S_k)>0$ and $\Delta\mathrm{SecFail}(S_k)<0$ (because removing the layer raises SecFail). The same sign convention is used in all per-layer tables and in \S\ref{sec:methodology}.
+
+The operator $\rhd$ gives $\Pi$ three properties used throughout. \textbf{(P1) Monotonicity:} adding a stage can only convert ALLOW outcomes to DENY (immediate from the short-circuit semantics of Eq.~\ref{eq:composition}). \textbf{(P2) Order-independence of unique necessity:} if a single $S_k$ is the only stage that would deny $r$, $\Pi(r)=\mathrm{DENY}$ regardless of ordering, since every preceding stage allows by hypothesis. \textbf{(P3) Fail-secure default:} predicates default to conservative values on missing facts and stage exceptions are wrapped to DENY, so partial failure cannot silently degrade to ALLOW. P1 grounds the qualitative reading of $\Delta$~values; P2 underpins the first-firing attribution analysis (\S\ref{sec:attribution_paradox}).
+
+
+%==============================================================================
+% SECTION 5: SECURITY LAYERS AND PREDICATE DERIVATION
+%==============================================================================
+\section{Security Layers and Predicate Derivation}
+\label{sec:layers}
+
+\subsection{RBAC, ABAC, and Tool Classification}
+\label{sec:rbac_abac_classification}
+
+\textbf{Agent-adapted RBAC} maps agent personas to permissions over tool bundles across MCP domains, with three adaptations from traditional RBAC: tool-level granularity (per individual tool rather than per service endpoint); wildcard domain grants for trusted agents (e.g., \texttt{grafana.*}); and cross-domain permission intersection requiring permissions in \emph{all} referenced domains across dynamically-constructed multi-tool bundles.
+
+\textbf{ABAC} first-matches an ordered rule set over the subject, resource, action, and environment attributes of the request (\S\ref{sec:stage_definitions}). The released ruleset contains $6$ rules in three families, conditioning on \emph{subject} (department, clearance level, trust score), \emph{resource} (compliance tier, data sensitivity, risk level), and \emph{action} (write, destructive-write) attributes: \emph{department/compliance isolation} (Financial/PCI-DSS resources restricted to Finance; Infrastructure writes to Engineering or Infrastructure), \emph{clearance gates} (L2 to read high-risk resources, L3 to write them, L3 for destructive operations), and a \emph{trust gate} (trust score $\geq 0.8$ to write). A rule denies when all its conditions hold; conditions fail closed on an absent attribute; the request is denied if any rule fires.
+
+\textbf{Action classification.} Each tool's action class $a(t)\in\{\textrm{read},\textrm{write}\}$ (with \texttt{destructive} a write subtype) is derived deterministically from only the two universally-available MCP fields---the tool \emph{name} and \emph{description}---by a verb lexicon grounded in established lexical-semantic verb classes (Levin/VerbNet and the corresponding FrameNet frames) mapped onto the read/write/destructive safety taxonomy (CRUD; RFC~9110 safe/unsafe methods; MCP \texttt{ToolAnnotations}). The leading description verb is lemmatised and class-mapped, ambiguous verbs are read-guarded (e.g.\ \emph{run/execute a query} $\to$ read), and the tool name is fused escalate-only toward write/destructive, realising the principle of fail-safe defaults. There is no curated per-tool label map. Request-level predicates follow by composition---$\text{ContainsWrite} = \bigvee_{t \in T} (a(t)=\texttt{write})$, and analogously $\text{ContainsDelete}$ and $\text{ContainsRead}$---and become typed inputs to TRAC.
+
+\textbf{Agnostic capability.} The capability a tool provides is the pair $\{d(t)\}{:}\{a(t)\}$ of \S\ref{sec:capability}---its MCP domain $d(t)$ and the action class $a(t)$ above---with the subsumption $\{d\}{:}\textrm{write}\sqsupseteq\{d\}{:}\textrm{read}$. There is \emph{no} capability catalog, entailment ontology, or hard/soft capability tier: coverage is the single domain floor of Eq.~\ref{eq:hardcap}, evaluated against the BM25-inferred task domain (\S\ref{sec:domain_inference}), while mutation- and relevance-level concerns are delegated to the \texttt{write\_safety} and \texttt{tool\_relevance} rules (\S\ref{sec:trac}). The model therefore consumes no per-MCP vocabulary, no curated tool$\to$capability map, and no ground-truth label---the property that makes the pipeline leak-free.
+
+\subsection{TRAC: an ordered, typed production rule engine}
+\label{sec:trac}
+
+TRAC (Task-Relational Access Control) conditions the admission decision on the \emph{relation between the task and the proposed tool bundle}---in-domain coverage, mutation safety, and task--tool relevance---the one axis RBAC (caller$\to$tool) and ABAC (subject/resource attributes) structurally cannot express, and distinct from the workflow-lifecycle axis of TBAC~\cite{thomas1997tbac} and the entity-relationship axis of ReBAC~\cite{fong2011rebac} (\S\ref{sec:related}). We position this task-relational predicate as a modest access-control \emph{primitive} for agentic settings; we make no claim of novel rule-\emph{engine} machinery, and explicitly disclaim proof-theoretic ``higher-order logic.'' The engine's expressive content is equivalent to a typed Cedar~\cite{cutler2024cedar} or OPA/Rego extension with custom builtins for continuous LLM-emitted scores (Table~\ref{tab:substrate_comparison}); an OPA/Rego re-implementation evaluating the identical rules-as-data reproduces every decision on a standard OPA runtime (\S\ref{sec:substrate_portability}), so only the \emph{performance} cost of the substrate remains to be benchmarked. The remaining scientific contributions are the measurement framework and the empirical findings. The engine has four properties: \emph{typed} (a fixed-signature schema of booleans, enums, and reals); \emph{staged} (facts are derived in $\phi=S_5$ before any $S_6$ rule fires, so evaluation is a pure function of the fact base and policy text); \emph{ordered} (rules fire in policy-declared priority, making the decision a total function of $\Phi(r)$ and policy text); and \emph{partitioned} into \emph{terminal} DENY/ALLOW rules that short-circuit and \emph{advisory} alert-only rules (marked in Table~\ref{tab:trac_rules}) that never change the ALLOW/DENY outcome. Evaluation is $O(n)$ in the rules given pre-computed facts; RBAC, ABAC, and TRAC evaluate independently.
+
+\begin{table}[!t]
+\centering
+\caption{TRAC production rule base (\texttt{policies/trac\_rules.yaml}). Rules fire in priority order. \emph{Enforcing} rules (DENY) determine the final action and short-circuit; \emph{advisory} rules raise an auditable alert without changing ALLOW/DENY. A capability is agnostic: $\{\textit{domain}\}{:}\{\textit{action}\}$, the tool's MCP plus read/write (\S\ref{sec:capability}).}
+\label{tab:trac_rules}
+\footnotesize
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}clll@{}}
+\toprule
+\textbf{Pri.} & \textbf{Rule} & \textbf{Concern} & \textbf{Action} \\
+\midrule
+105 & capability\_coverage & Domain coverage ($\{d\}{:}\textrm{read}$) & DENY \\
+100 & write\_safety        & Destroy without verifying read & advisory \\
+ 95 & tool\_relevance      & Lexical task--tool relevance (BM25) & DENY \\
+ -- & action\_coherence    & Read-intent task, mutating bundle & advisory \\
+\bottomrule
+\multicolumn{4}{@{}l}{\scriptsize Advisory rules emit an alert into the audit trail; only enforcing rules change the decision.}
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+An example rule (\texttt{capability\_coverage}, priority $105$) denies when no tool in the bundle provides the required capability $\{d_\tau\}{:}\textrm{read}$ for the leak-free inferred task domain $d_\tau$ (\S\ref{sec:domain_inference}); a domain-mismatch denial is reversed by \emph{corroborated coverage} when the selected tools are strongly task-relevant (mean BM25 $\geq 4.0$). TRAC is fail-secure, deterministic, and auditable: predicates default conservatively on missing facts, identical facts yield identical decisions, and every triggered rule emits a readable explanation.
+
+\paragraph{Substrate comparison.} Table~\ref{tab:substrate_comparison} situates TRAC against established policy languages. The relevant feature set for invocation-time agentic AC---typed continuous LLM-emitted scores, derived predicates as first-class rule inputs, ordered short-circuit denial with auditable triggered-rule trails, and a fixed pre-rule fact-derivation stage---is expressible in Cedar with custom extensions, in OPA/Rego with custom builtins, and in Sentinel with imports; none of them ship it out of the box. TRAC is the substrate we used to make the measurement contributions realisable; an OPA/Rego re-implementation of the same rule base on the same fact extractor reproduces every decision (\S\ref{sec:substrate_portability}), confirming the substrate choice changes none of the empirical findings. A Cedar port and a performance benchmark are the remaining follow-ups.
+
+\begin{table}[!t]
+\centering
+\caption{TRAC vs.\ established policy substrates on the features exercised by PALADIN's S6 stage. ``Native'' = ships with the language; ``Ext.'' = expressible via custom extensions/builtins/imports; ``---'' = not idiomatic.}
+\label{tab:substrate_comparison}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Feature} & \textbf{TRAC} & \textbf{Cedar} & \textbf{OPA/Rego} & \textbf{Sentinel} \\
+\midrule
+Typed fact schema (bool/enum/real)        & Native & Native     & Ext.\ (schema) & Native \\
+Continuous LLM-emitted scores             & Native & Ext.       & Ext.\ (builtin) & Ext.\ (import) \\
+Derived predicates as 1st-class rule inputs & Native & ---       & Native (rules) & Native \\
+Ordered short-circuit denial              & Native & Native (forbid) & Ext.\ (order) & Native \\
+Pre-rule fact-derivation stage (S5)       & Native & ---        & Ext.\ (modules) & Ext. \\
+Triggered-rule audit trail                & Native & Native     & Native         & Native \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+%==============================================================================
+% SECTION 6: IDENTITY INFRASTRUCTURE
+%==============================================================================
+\subsection{Identity Infrastructure}
+\label{sec:identity}
+
+PALADIN uses cryptographic agent identity (SPIFFE/SPIRE) as the source of $\iota$ in the request tuple (\S\ref{sec:request_model}); identity is an \emph{input} to the policy stack, not itself a contribution we evaluate. Each agent receives a SPIFFE ID encoding role and trust attributes (clearance, department, trust score); SPIRE issues SVIDs with automatic rotation and workload-selector attestation. We do not measure rotation overhead, attestation failure modes, or delegation-substrate properties; that work belongs to identity-infrastructure literature~\cite{rampalli2026pedigree,south2025authenticated}, over which PEDIGREE-style multi-hop delegation could compose. Persona-to-domain allow-lists are released with the artefact.
+
+%==============================================================================
+% SECTION 7: EXPERIMENTAL METHODOLOGY
+%==============================================================================
+\section{Experimental Methodology}
+\label{sec:methodology}
+
+\subsection{Dataset, Personas, and Model Panel}
+\label{sec:dataset}
+\label{sec:model_panel}
+
+We evaluate on ASTRA v0.3~\cite{elhelou2025astra}, a public corpus of $1{,}157$ agentic task-tool matching tasks across $8$ MCP server domains ($194$ tools: grafana, atlassian, azure, mongodb, stripe, notion, hummingbot, wikipedia), evaluated under six personas (DevOps L3, Incident L2, Finance L2, Research L1, Automation Gateway L3, Security Engine L3) whose SPIFFE IDs, clearance, and trust scores are released with the artefact.
+
+The model panel spans three OpenAI generations: \textbf{gpt-3.5-turbo-16k} (2023), \textbf{gpt-4o} (2024-05; ASTRA's reference model, enabling direct replication), and \textbf{gpt-5.4} (2026, via Microsoft Azure AI Foundry). All inference uses temperature $0.0$, JSON-schema-constrained output, and a single retry on parse failure; no system prompt beyond the documented PALADIN protocol is injected. We treat the panel as a within-lineage capability span; a broader cross-vendor panel (Claude, Llama, open-weights) is the most important deferred experiment (\S\ref{sec:future_work}).
+
+\subsection{Dual-Mode Evaluation}
+\label{sec:dual_mode}
+
+Each (task, persona) row is evaluated under one of two modes; row identifiers are shared across modes so that paired comparisons are well-defined.
+
+\textbf{Validation mode.} The LLM is given the task text \emph{together with} a candidate tool bundle and emits a JSON verdict (\texttt{validation\_failed} plus issue codes). The LLM judges, not selects. Candidate bundles carry an ASTRA \texttt{match\_tag}: \texttt{correct} ($3{,}474$ benchmark-correct rows after $\times 6$ personas), \texttt{wrong} ($2{,}778$, same-MCP wrong tools---hard within-domain negatives), and \texttt{null} ($690$, unrelated-MCP bundles---gross cross-domain negatives). The $80/20$ wrong/null mix is a property of ASTRA's construction. Total: $6{,}942$ rows per run.
+
+\textbf{Selection mode.} The LLM is given the task text \emph{only} and must \emph{generate} a tool bundle as a JSON list, which is then routed through the same deterministic pipeline. Selection is strictly harder: under gpt-5.4, tool exact-match is only $11.4\%$ baseline, and the full deterministic stack moves from $F_1=0.844$ (validation E1) to $0.800$ (selection E1) but at a much higher SecFail ($10.7\%\!\to\!21.4\%$), because the model actively chooses same-domain wrong-tool bundles the agnostic stack cannot separate. We evaluate selection on $6{,}942$ rows in baseline and $4{,}512$ rows when retrieval is enabled (see below).
+
+\subsection{Retrieval, Ablations, and Evaluation Conventions}
+\label{sec:raicl_method}
+\label{sec:ablation_design}
+\label{sec:conventions}
+\label{sec:eval_metrics}
+
+\textbf{RA-ICL.} For selection mode we additionally evaluate a BM25 retrieval-augmented variant. The exemplar pool is the $405$ \texttt{correct}-tagged task fingerprints from a fixed $70/30$ task-level split (\texttt{correct\_70\_30\_seed42\_v2.json}); the retriever is BM25 (Okapi, $k_1\!=\!1.5$, $b\!=\!0.75$) over task text, with exact-match exemplars excluded per query. The evaluation cohort excludes the $405$ training fingerprints and consists of $174$ \texttt{correct}-test, $463$ \texttt{wrong}, and $115$ \texttt{null} fingerprints $\times$ $6$ personas $= 4{,}512$ rows. We test only the BM25 feature (denoted ``+C'') on gpt-5.4; +A (RBAC-scoped catalog) and +B (capability pre-filter) are reserved for future work.
+
+\textbf{Ablations.} Four experiments per (model, mode): \textbf{E1} full stack (RBAC+ABAC+TRAC), \textbf{E2} $-$RBAC, \textbf{E3} TRAC only, \textbf{E4} LLM verdict only (direct comparison to ASTRA's LLM-ResM; only meaningful in validation since selection-E4 degenerates to allow-all). Each (model, mode) row is evaluated once---recording the independent per-layer states---and the four ablation views E1--E4 are derived offline from those states. Corpus: three validation models and six selection configurations over $6{,}942$ rows each (claude-opus and the BM25 RA-ICL conditions on smaller cohorts), $\approx 114{,}000$ policy decisions in all.
+
+\textbf{Two conventions.} Prior work uses different "positive" classes. \emph{Convention~A (PALADIN security view)}---positive $=$ illegitimate request: \texttt{is\_legitimate} iff \texttt{match\_tag}$=$\texttt{correct} \emph{and} persona $\in$ \texttt{LEGITIMATE\_PAIRINGS}; SecFail$=$FN/(TP+FN) is the probability a true violation escapes. Default throughout. \emph{Convention~B (ASTRA permissivity view)}---positive $=$ legitimate, with \texttt{wrong}+\texttt{null} pooled as negative. Used only for the apples-to-apples ASTRA replication in \S\ref{sec:astra_replication}.
+
+\textbf{Metrics.} We report Precision, Recall, $F_1$, Allow rate, and SecFail (Conv.~A); per-layer marginals follow the $\Delta_{\text{metric}}$ ablation convention of \S\ref{sec:security_metrics} ($\Delta F_1\!>\!0$ and $\Delta\mathrm{SecFail}\!<\!0$ both mean the layer improves security), with $\Delta_{\mathrm{RBAC}},\Delta_{\mathrm{ABAC}},\Delta_{\mathrm{TRAC}}$ the successive E1$\to$E4 differences. Selection-mode tool quality reports Exact Match and Jaccard on the \texttt{correct} slice (\texttt{wrong}/\texttt{null} have no defensible gold bundle). Ground truth comes from ASTRA and the persona allow-list, not from the policy stack, guarding against self-consistency circularity.
+
+\textbf{Reproducibility.} All thresholds were fixed \emph{ex ante} (config commit hash recorded with the artefact, \S\ref{sec:artifacts}); the operating point of \S\ref{sec:stack_guarantee} emerges from the composition of predicate-level cutoffs, not any single confidence-gated rule. Zero unrecoverable inference failures across the OpenAI-panel rows. Raw per-row logs, the BM25 retriever, the splits file, and analysis scripts are released.
+
+\subsection{Leak-Free Domain Inference}
+\label{sec:domain_inference}
+
+The agnostic capability check (\S\ref{sec:capability}) requires the task's domain $d_\tau$. We infer it \emph{from the task text alone}, consuming no ground-truth field: each MCP server's tool names and descriptions form one BM25 document, the task text is the query, and $d_\tau$ is the top-scoring domain among the deployment's RBAC-entitled MCPs---or \texttt{uncertain} when the top two scores fall within $15\%$, in which case coverage abstains rather than deny on a coin-flip. This closes the only oracle dependency in the pipeline. An earlier configuration substituted the gold MCP (\texttt{gt\_mcps[0]}) as a stand-in for operator-supplied workflow context; the present task-text inference removes that substitution entirely, so neither \texttt{match\_tag}, \texttt{is\_legitimate}, nor any gold tool or domain reaches a decision path. The same inference runs identically in the batch harness and the live single-request path, so a single prediction and a batch replay reach the same verdict. Inference is intentionally imperfect ($\sim\!60$--$70\%$ top-1 on ASTRA), which is the honest cost of forgoing the oracle; when the inferred domain is wrong but the selected tools are strongly task-relevant, corroborated coverage (\S\ref{sec:corroborated}) recovers the denial.
+
+%==============================================================================
+% SECTION 8: RESULTS AND ANALYSIS
+%==============================================================================
+\FloatBarrier
+\section{Results and Analysis}
+\label{sec:results}
+
+All numbers are computed from the released raw logs; full per-row confusion matrices, first-firing attribution shares, and bootstrap CIs ship with the artefact.
+
+\subsection{The Deterministic Stack Masks Model Variance (Validation)}
+\label{sec:stack_guarantee}
+
+The deterministic stack (RBAC$\wedge$ABAC$\wedge$TRAC) produces an \emph{identical} security profile across all three OpenAI-panel models (Table~\ref{tab:stack_guarantee}, E1 row). This is exact, not approximate: in validation the candidate bundle being judged is fixed per task, and the deterministic layers condition only on the bundle, the persona, and the leak-free inferred task domain---never on the model---so they return bit-identical decisions whichever LLM authored the verdict. E1 therefore reads $F_1=0.844$, SecFail $=10.7\%$, and eligible-correct admission $=43.9\%$ for every model, with overlapping bootstrap CIs by construction. The LLM-only baseline (E4), on the same inputs, swings over $0.28$ in $F_1$ and from $27\%$ to $66\%$ in SecFail. The security profile is thus a property of the stack, not the model.
+
+The stack is \emph{leak-free}: the task domain $d_\tau$ driving \path{capability_coverage} is inferred from task text by BM25 over the public MCP catalog (\S\ref{sec:domain_inference}), consuming no ground-truth label. Removing the oracle raises the floor: at $10.7\%$ SecFail the agnostic stack admits same-MCP wrong-tool bundles (ASTRA's \texttt{wrong} class) that no domain- or relevance-level signal can separate from correct ones---the irreducible \emph{semantic floor} that the model, not the policy, must close. Composing the stack with the LLM's own verdict (FULL rows $=$ stack $+$ gate) does that: a capable judge (gpt-4o) sharpens SecFail to $2.1\%$, gpt-3.5-turbo-16k to $4.6\%$, and gpt-5.4 to $7.5\%$. The deterministic floor still \emph{bounds} damage when the judge is poor: FULL never exceeds $10.7\%$ SecFail, whereas the LLM alone reaches $66\%$. This is the central trade we measure: an agnostic, leak-free policy floor that is model-invariant by construction, sharpened but never undermined by the model's own judgement.
+
+\begin{table}[!t]
+\centering
+\caption{Three-model validation results. The deterministic stack (E1) is model-independent (one row, identical for all three models); the LLM alone (E4) is not; the full pipeline (FULL $=$ stack $+$ the model's verdict gate) refines the floor model-dependently. Convention~A, $n = 6{,}942$ rows per cell. ``Admit'' is the eligible-correct admission rate.}
+\label{tab:stack_guarantee}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llccccc@{}}
+\toprule
+\textbf{Model} & \textbf{Exp.} & $\mathbf{F_1}$ & \textbf{Prec.} & \textbf{Recall} & \textbf{SecFail} & \textbf{Admit} \\
+\midrule
+\textit{all three} & E1 (stack) & $0.844$ & $0.800$ & $0.893$ & $0.107$ & $43.9\%$ \\
+\midrule
+gpt-4o            & E4 (LLM)  & $0.760$ & $0.789$ & $0.733$ & $0.268$ & $50.9\%$ \\
+gpt-5.4           & E4 (LLM)  & $0.482$ & $0.856$ & $0.335$ & $0.665$ & $85.8\%$ \\
+gpt-3.5-turbo-16k & E4 (LLM)  & $0.652$ & $0.880$ & $0.518$ & $0.482$ & $82.3\%$ \\
+\midrule
+gpt-4o            & FULL      & $0.859$ & $0.765$ & $0.979$ & $0.021$ & $24.6\%$ \\
+gpt-5.4           & FULL      & $0.849$ & $0.786$ & $0.925$ & $0.075$ & $36.6\%$ \\
+gpt-3.5-turbo-16k & FULL      & $0.867$ & $0.795$ & $0.954$ & $0.046$ & $38.2\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Operating point.} The E1 profile comes from the released policy: the \path{capability_coverage} domain floor, the \path{tool_relevance} BM25 cutoff ($<\!1.0$), and the corroborated-coverage rescue bar ($\geq\!4.0$), all editable in \path{policies/trac_rules.yaml}. It is deliberately availability-leaning ($43.9\%$ admission) relative to the old oracle-aided alignment policy; \S\ref{sec:operating_sweep} characterises the SecFail/admission trade-off, and \S\ref{sec:corroborated} gives the Pareto refinement.
+
+\subsection{Cross-Vendor Evidence: A Non-OpenAI Validator}
+\label{sec:cross_vendor}
+
+The panel of \S\ref{sec:stack_guarantee} is OpenAI-only, which cannot on its own support ``the stack, not the model, is the guarantee.'' We therefore add a non-OpenAI validator---Anthropic's Claude Opus 4.8---under a deliberately conservative protocol. On a stratified subset of $45$ validation tasks ($15$ \texttt{correct}, $20$ \texttt{wrong}, $10$ \texttt{null}; fixed seed; $270$ persona rows) the model judges each candidate bundle \texttt{valid}/\texttt{invalid} using the \emph{same} \texttt{ValidationService} rubric as the OpenAI panel, \emph{blind} to the ground-truth \texttt{match\_tag}/\texttt{is\_legitimate}; verdicts are frozen before scoring and released with the artefact. Because the deterministic stack is model-independent (\S\ref{sec:stack_guarantee}), its E1 rows are reused unchanged; only E4/FULL differ by model. Table~\ref{tab:cross_vendor} reports all four models on the \emph{identical} $45$ tasks.
+
+\begin{table}[!t]
+\centering
+\caption{Cross-vendor validation on an identical stratified $45$-task subset ($270$ persona rows; $15$ \texttt{correct}/$20$ \texttt{wrong}/$10$ \texttt{null}). The deterministic floor is model-independent: E1 $F_1=0.903$, SecFail $=0.054$, admission $=32.7\%$ for all rows. E4 $=$ LLM-only; FULL $=$ floor $+$ the model's verdict gate. Claude Opus 4.8 (Anthropic) is judged blind to ground truth; verdicts released. Convention~A.}
+\label{tab:cross_vendor}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+ & \multicolumn{2}{c}{\textbf{E4 (LLM-only)}} & \multicolumn{2}{c}{\textbf{FULL (floor+gate)}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+\textbf{Model} & $\mathbf{F_1}$ & \textbf{SecFail} & $\mathbf{F_1}$ & \textbf{SecFail} \\
+\midrule
+gpt-4o            & 0.811 & 0.231 & 0.902 & 0.018 \\
+gpt-5.4           & 0.549 & 0.606 & 0.904 & 0.036 \\
+gpt-3.5-turbo-16k & 0.752 & 0.389 & 0.915 & 0.032 \\
+\textit{claude-opus-4.8} (non-OpenAI) & 0.704 & 0.457 & 0.921 & 0.018 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three observations. First, the non-OpenAI model is \emph{not} special: its LLM-only profile (E4 $F_1=0.704$, SecFail $=0.457$) falls squarely inside the OpenAI E4 band (SecFail $0.231$--$0.606$)---another permissive validator that, blind, admits all $15$ \texttt{correct} bundles and rejects all $10$ gross cross-domain \texttt{null} bundles, but catches only $10/20$ of the hard same-MCP \texttt{wrong} bundles. Second, the model-independent deterministic floor (E1 SecFail $=0.054$ on this subset) bounds \emph{every} model's E4 by $4$--$11\times$. Third, composing the floor with each model's own verdict (FULL) collapses an E4 $F_1$ spread of $0.26$ across the two vendors to $F_1\in[0.902,0.921]$ and SecFail $\in[0.018,0.036]$---the masking effect of \S\ref{sec:stack_guarantee}, now observed across OpenAI \emph{and} Anthropic.
+
+\emph{Scope.} This is a directional $N=45$ probe, not a full panel: the subset floor (SecFail $0.054$) is a property of the sample, not a re-estimate of the headline ($10.7\%$, \S\ref{sec:stack_guarantee}). The per-task Claude Opus 4.8 verdicts are released with the artefact for independent verification. Scaling to a full multi-model cross-vendor panel (Claude/Llama/open-weights) remains the most important deferred experiment (\S\ref{sec:future_work}).
+
+\subsection{Substrate Portability: Verified OPA/Rego Parity}
+\label{sec:substrate_portability}
+
+The guarantee is a property of the \emph{policy}, not our particular engine. PALADIN's RBAC, ABAC, and TRAC layers are authored as \emph{rules-as-data}: the same YAML documents (\texttt{policies/\{rbac,abac,trac\_rules\}.yaml}) are evaluated both by our reference Python engine and, \emph{unchanged}, by generic Rego policies on a standard Open Policy Agent runtime (OPA v1.18.0). Editing a rule updates both; no code is generated or hand-synced. We verify decision equivalence with the real \texttt{opa} binary: across $120$ RBAC, $120$ ABAC, and $100$ unique-bundle TRAC evaluations, OPA reproduces \emph{every} ALLOW/DENY decision and every advisory of the reference engine---zero mismatches. Parity holds by construction (both evaluate the identical rule data under the same operator semantics) and is confirmed empirically; the same policies also serve from a live \texttt{opa run --server} instance queried over OPA's REST Data API. The portable boundary is the rule-evaluation layer (S3/S4/S6, \S\ref{sec:framework}); the fact transformer (S5---BM25 domain inference and VerbNet action classification) runs once upstream and supplies both engines the same typed predicates. This earns the claim of \S\ref{sec:trac}: we contribute no novel rule-\emph{engine} machinery---the engine is a commodity, the policy and its task-relational predicate are the artefact. Benchmarking the \emph{performance} cost of the OPA substrate is the remaining follow-up (\S\ref{sec:future_work}).
+
+\subsection{Operating-Point Sweep: SecFail vs Eligible-Correct Admission}
+\label{sec:operating_sweep}
+
+A single operating point cannot say whether $43.9\%$ admission at $10.7\%$ SecFail is a Pareto win or an artefact. We characterise the trade-off across five operating points that are \emph{real configuration changes}---which deterministic layers are active, and whether the model's own verdict gate is composed---rather than metric re-accounting (Table~\ref{tab:operating_sweep}). All are computable from the released raw logs via \texttt{scripts/sweep\_op\_points.py}. Three points (OP1--OP3) condition only on the bundle and are therefore model-independent; two (OP4--OP5) involve the LLM verdict and vary by model.
+
+\begin{table}[!t]
+\centering
+\caption{Five-point operating-point sweep (validation). OP1--OP3 are model-independent (bundle-only); OP4--OP5 vary by model. Each point is a real configuration change---which deterministic layers are active, and whether the LLM verdict gate is composed---computable from the released logs via \texttt{scripts/sweep\_op\_points.py}. The deterministic frontier OP1$\to$OP2$\to$OP3$\to$OP4 is monotone in (SecFail, admission); the LLM-only point OP5 is Pareto-dominated by it. ``Admit'' is the eligible-correct admission rate.}
+\label{tab:operating_sweep}
+\scriptsize
+\setlength{\tabcolsep}{2.4pt}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+\textbf{OP} & \textbf{Configuration} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Admit} \\
+\midrule
+\multicolumn{5}{l}{\textit{model-independent (bundle-only)}} \\
+OP1 & TRAC only ($-$RBAC$-$ABAC) & $0.583$ & $0.550$ & $76.4\%$ \\
+OP2 & $-$RBAC                     & $0.746$ & $0.314$ & $61.6\%$ \\
+OP3 & full deterministic stack   & $0.844$ & $0.107$ & $43.9\%$ \\
+\midrule
+\multicolumn{5}{l}{\textit{gpt-4o}} \\
+OP4 & full stack $+$ LLM gate     & $0.859$ & $0.021$ & $24.6\%$ \\
+OP5 & LLM verdict only            & $0.760$ & $0.268$ & $50.9\%$ \\
+\midrule
+\multicolumn{5}{l}{\textit{gpt-5.4}} \\
+OP4 & full stack $+$ LLM gate     & $0.849$ & $0.075$ & $36.6\%$ \\
+OP5 & LLM verdict only            & $0.482$ & $0.665$ & $85.8\%$ \\
+\midrule
+\multicolumn{5}{l}{\textit{gpt-3.5-turbo-16k}} \\
+OP4 & full stack $+$ LLM gate     & $0.867$ & $0.046$ & $38.2\%$ \\
+OP5 & LLM verdict only            & $0.652$ & $0.482$ & $82.3\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three observations follow. First, the deterministic configurations trace a clean \emph{monotone} frontier: each added layer (TRAC $\to$ $+$ABAC $\to$ $+$RBAC) lowers SecFail ($55\%\!\to\!31\%\!\to\!11\%$) and tightens admission ($76\%\!\to\!62\%\!\to\!44\%$), with no dominated interior point---every layer buys a real, large slice of security. This is the empirical core of the composable-governance claim: all three layers are load-bearing (\S\ref{sec:reversal}). Second, composing the model's own verdict gate (OP3$\to$OP4) sharpens the floor further---to $2.1\%$ for the strongest judge (gpt-4o)---but its value is model-dependent and bounded below by the deterministic floor. Third, the LLM-only point (OP5) is \emph{Pareto-dominated} by the deterministic frontier for every model: at gpt-4o's $50.9\%$ admission the deterministic stack reaches $\sim\!18\%$ SecFail by interpolation versus the LLM's $26.8\%$, and for gpt-5.4 the LLM-only SecFail ($66.5\%$) is worse than even the TRAC-only floor. The layer-activation dial is thus the primary control surface; a continuous threshold-grid sweep over the scalar TRAC cutoffs is the immediate extension (\S\ref{sec:future_work}).
+
+\paragraph{Interpreting admission.} The eligible-correct admission rate should not be read as a $\sim\!56\%$ false-block rate against an oracle. The denominator already requires \emph{both} ASTRA semantic correctness ($\texttt{match\_tag}\!=\!\texttt{correct}$) \emph{and} persona-domain admissibility ($\texttt{LEGITIMATE\_PAIRINGS}$); cross-domain or out-of-role requests never enter it (\S\ref{sec:conventions}). The residual gap is the agnostic predicate floor: even among persona-eligible, benchmark-correct candidates, the stack denies bundles whose tools the leak-free classifier places outside the inferred task domain, or whose lexical task--tool relevance falls below the BM25 floor. This is the substantive SACMAT point: tool-selection correctness is necessary but not sufficient for invocation-time admission---a benchmark-correct bundle can still be policy-inadmissible under a strict enterprise posture---and the stack scores \emph{authorisation} correctness over benchmark-eligible candidates, not tool-selection correctness.
+
+\subsection{Independent Replication of ASTRA's LLM-ResM Benchmark}
+\label{sec:astra_replication}
+
+Under Convention~B (ASTRA permissivity view) we recompute classification metrics on E4 from the per-row logs. Our gpt-4o E4 reaches $F_1 = 0.595$ against ASTRA's published $0.67$, a gap of $0.075$ $F_1$ under a strictly harder protocol: ASTRA evaluates per-tool and AND-aggregates the three per-tool verdicts to a bundle decision, whereas we use a single per-bundle call. AND-aggregation systematically inflates precision (any single ``no'' vetoes the bundle), so our number is the expected lower bound. The precision-recall signature replicates exactly: high precision ($0.740$ vs.\ ASTRA's $0.81$), low recall ($0.497$ vs.\ $0.57$), under-scoping dominant. The two additional panel models give a non-monotone three-point chart: gpt-3.5-turbo-16k reaches $F_1 = 0.756$ and gpt-5.4 reaches $F_1 = 0.688$. Both bracket gpt-4o.
+
+We frame this as a successful, independent reproduction of ASTRA's central LLM-ResM finding, not a refutation: the under-scoping behaviour ASTRA identified is real and generalises across the per-tool/per-bundle protocol boundary. A Claude-Opus-4.8 selection run was attempted but terminated early ($89\%$ of requests failed due to a billing-credit limit unrelated to methodology) and is not reported.
+
+\subsection{Non-Monotone LLM-Only Behaviour with Model Recency}
+\label{sec:newer_not_better}
+
+A clean side-effect of the three OpenAI generations is that we can chart $F_1$ on the LLM-only validator (E4, Convention~B) against model recency. The pattern is non-monotone and, notably, the newest model is not the safest: gpt-3.5-turbo-16k (2023) reaches $F_1 = 0.756$; gpt-5.4 (2026) reaches $F_1 = 0.688$; and gpt-4o (2024) reaches the worst $F_1 = 0.595$. The per-domain wrong-bundle allow rates for gpt-5.4 make the mechanism visible: gpt-5.4's E4 permissivity on hard same-MCP \texttt{wrong} negatives ranges from $41.5\%$ (azure) to $100\%$ (wikipedia), concentrated in monitoring and general-knowledge domains and lowest in cloud-admin and database domains. Null (cross-MCP) bundles are mostly caught ($\leq 23\%$ allowed in $7/8$ domains; $0\%$ in $6$) but same-MCP wrong bundles slip through readily---this is exactly the threat profile a permissive helpfulness-optimised model should exhibit. We do not have a controlled fine-tune to causally attribute this to RLHF helpfulness optimisation, but the pattern is consistent with that hypothesis. Operationally the consequence is clear: \emph{a single-LLM validator design cannot be assumed to improve as base models advance}, and the within-domain permissivity skew means the security risk is also concentrated in the kinds of monitoring/observability use cases where agentic deployment is most common.
+
+\subsection{All Three Layers Are Load-Bearing}
+\label{sec:reversal}
+
+We compute the per-layer marginal contribution to SecFail and $F_1$ in both modes (Table~\ref{tab:per_layer_delta}). Because the deterministic stack conditions only on the bundle, the persona, and the leak-free inferred domain, its validation decisions---and hence the validation marginals---are \emph{identical across all three models}; we report one validation block. The result is unambiguous: every layer carries a large marginal. In validation, removing RBAC raises SecFail by $20.7$pp (and drops $F_1$ by $0.098$); removing ABAC a further $23.6$pp ($0.163$~$F_1$); the agnostic TRAC floor alone leaves $55\%$ SecFail. Selection has the same shape, larger ($\Delta_{\mathrm{RBAC}}=-30.3$pp, $\Delta_{\mathrm{ABAC}}=-22.9$pp).
+
+\begin{table}[!t]
+\centering
+\caption{Per-layer marginals, $\Delta\mathrm{metric}(S)=\mathrm{metric}(\Pi)-\mathrm{metric}(\Pi\setminus S)$ (negative $\Delta\mathrm{SecFail}$ = the layer improves security). The validation block is model-independent---identical for all three models, since the deterministic stack does not read the model. Selection rows for gpt-5.4.}
+\label{tab:per_layer_delta}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llrrl@{}}
+\toprule
+\textbf{Mode} & \textbf{Configuration} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Marginal} \\
+\midrule
+\multirow{3}{*}{Validation} & E1 full stack & $0.844$ & $0.107$ & --- \\
+ & E2 $-$RBAC    & $0.746$ & $0.314$ & $\Delta_{\mathrm{RBAC}}\!=\!-0.207$ \\
+ & E3 TRAC only  & $0.583$ & $0.550$ & $\Delta_{\mathrm{ABAC}}\!=\!-0.236$ \\
+\midrule
+\multirow{3}{*}{Selection} & E1 full stack & $0.800$ & $0.214$ & --- \\
+ & E2 $-$RBAC    & $0.599$ & $0.517$ & $\Delta_{\mathrm{RBAC}}\!=\!-0.303$ \\
+ & E3 TRAC only  & $0.377$ & $0.746$ & $\Delta_{\mathrm{ABAC}}\!=\!-0.229$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This is the empirical core of the composable-governance claim, and stronger than a single-layer-dominance story: there is no redundant layer to drop. It also corrects the earlier oracle-aided policy, in which an alignment score did most of the validation work and RBAC/ABAC were near-redundant; removing the oracle redistributes the security work onto identity and attributes---exactly where a zero-trust deployment can audit it. An organisation cannot shed any one layer without a $20$--$30$pp SecFail regression in at least one mode.
+
+\subsection{The Attribution Paradox}
+\label{sec:per_domain}
+\label{sec:attribution_paradox}
+
+Marginal necessity and first-firing attribution disagree sharply. Attributing every E1 denial to the first layer that fires under short-circuit order (RBAC$\to$ABAC$\to$TRAC), RBAC claims $82\%$ of denials, TRAC $15\%$, and ABAC only $4\%$. Yet the marginal picture (Table~\ref{tab:per_layer_delta}) is the opposite: ABAC, which first-fires on a mere $4\%$ of denials, carries the \emph{largest} marginal contribution ($-23.6$pp $\Delta\mathrm{SecFail}$). The reason is pipeline order---most rows ABAC would catch are intercepted earlier by RBAC, so ABAC's unique value is invisible to a denial-source chart and surfaces only when RBAC is removed. First-firing attribution, common in the agent-safety literature, therefore systematically misranks layers; both attribution and marginal $\Delta\mathrm{SecFail}$ must be reported. The practical reading is that RBAC and ABAC are \emph{co-necessary}: RBAC handles the bulk volume, ABAC is the irreplaceable backstop, and neither can be dropped (\S\ref{sec:reversal}).
+
+\subsection{Retrieval-Augmented In-Context Learning for Selection}
+\label{sec:raicl}
+
+Switching to selection mode, we test whether BM25 retrieval-augmented in-context learning (\S\ref{sec:raicl_method}, gpt-5.4) lifts both tool-selection quality and downstream classification. Because the +C variant holds out the $405$ training-pool tasks as the exemplar pool, baseline and +C runs cover different cohorts ($1{,}157$ vs.\ $752$ unique tasks). We fingerprint-join the common $4{,}512$ rows by SHA-256 of $(\textit{task text}, \textit{sorted MCPs}, \textit{match\_tag}, \textit{persona\_key})$; persona is included so that each (task, persona) row is identified uniquely across the $6$ personas. We then report all inferential statistics on this paired cohort (Table~\ref{tab:raicl_security}); the asymmetric comparison is a cohort-shift diagnostic only. The released join script verifies one-to-one mapping prior to bootstrap resampling.
+
+\begin{table}[!t]
+\centering
+\caption{Selection-mode results, gpt-5.4 (Convention~A): no retrieval, random-exemplar RA-ICL, and BM25 RA-ICL, on the common $4{,}512$-row paired cohort (SHA-256 fingerprint join including \texttt{persona\_key}). ``Exact'' is tool exact-match on the \texttt{correct} slice. The $\Delta$ rows compare BM25 to the no-retrieval baseline; both SecFail deltas have bootstrap CIs excluding zero.}
+\label{tab:raicl_security}
+\scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Variant} & \textbf{Exact} & $\mathbf{n}$ & $\mathbf{F_1}$ & \textbf{SecFail} \\
+\midrule
+No retrieval (paired) & $10.3\%$ & 4{,}512 & $0.784$ & $0.131$ \\
+$+$ random RA-ICL     & $33.3\%$ & 4{,}512 & $0.901$ & $0.072$ \\
+$+$ BM25 RA-ICL       & $39.1\%$ & 4{,}512 & $0.905$ & $0.066$ \\
+\midrule
+\multicolumn{3}{l}{$\Delta$ Exact-match (BM25 $-$ none)} & \multicolumn{2}{r}{$+28.8$pp ($3.8\times$)} \\
+\multicolumn{3}{l}{$\Delta$ SecFail (BM25 $-$ none)} & \multicolumn{2}{r}{$\mathbf{-0.064}$} \\
+\multicolumn{3}{l}{$\Delta$ SecFail (random $-$ none)} & \multicolumn{2}{r}{$-0.058$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On the \texttt{correct} slice, tool exact-match lifts $3.8\times$ ($10.3\%\!\to\!39.1\%$) under BM25 and $3.2\times$ ($\to\!33.3\%$) under a \emph{random}-exemplar control, with Jaccard $+82\%$ ($0.343\!\to\!0.624$). Crucially, paired-cohort SecFail \emph{improves}: $\Delta\mathrm{SecFail}\!=\!-0.064$ for BM25 and $-0.058$ for random (both bootstrap CIs exclude zero), driven by a large recall lift. The random-exemplar control is itself informative: exemplars alone recover most of the security gain ($-0.058$), while BM25's relevance ranking adds the \emph{accuracy} edge ($39.1\%$ vs.\ $33.3\%$ exact-match) at comparable SecFail. Better in-context selection therefore shifts the operating point toward \emph{both} better tool choice and lower SecFail, contradicting the assumption that richer prompting trades safety for capability. Caveats: single judging model; a second-model replication is an obvious follow-up.
+
+\subsection{Corroborated Coverage}
+\label{sec:corroborated}
+
+The leak-free domain classifier (\S\ref{sec:domain_inference}) is intentionally imperfect: a business-phrased task can route to a lexically-similar but wrong MCP, so \texttt{capability\_coverage} occasionally denies a correct, in-domain bundle. \emph{Corroborated coverage} reverses such a denial when an \emph{independent} signal---the mean BM25 relevance of the selected tools to the task---is high ($\geq\!4.0$): a legitimate, domain-mis-routed bundle still has tools that lexically match the task, whereas a genuinely wrong-domain bundle does not. Over the model-independent validation profile, enabling the rescue lifts eligible-correct admission $43.3\%\!\to\!43.9\%$ and cuts TRAC's unique over-denials of legitimate work from $242$ to $231$, at a cost of $+0.04$pp SecFail and two lost catches---a Pareto improvement that holds end-to-end across all three models. A sweep of the rescue bar confirms $4.0$ is the knee: lower bars rescue more legitimate work but begin admitting wrong-domain bundles whose tools happen to score highly (e.g.\ bar $3.0$ rescues $16$ but costs $7$ catches), so the gain is intrinsic to the leak-free signal, not free. Corroborated coverage is the cheapest available availability dial that does not reintroduce an oracle.
+
+\subsection{Dataset Ceiling and Post-Hoc Enforcement}
+\label{sec:ceiling}
+
+The $39.1\%$ exact-match number is intrinsically low. Four dataset properties cap performance independently of model capability: (i) tool-naming pedantry across $194$ non-standardised identifiers (the Jaccard$\to$exact-match gap $0.624\!\to\!0.391$); (ii) multiple defensible bundles scored against a single gold; (iii) cross-persona ambiguity over six personas; and (iv) missing bundle-size signal (a single missing tool drops exact-match to $0$). Conservatively the practical ceiling sits at $30$--$40\%$; Jaccard is the less-misleading progress signal.
+
+\textbf{Post-hoc enforcement.} The selection-mode E1$\to$E3 columns of Table~\ref{tab:raicl_security} confirm the deterministic stack does not alter the LLM's selections: tool exact-match and Jaccard are recorded per row before policy gating, so within-cell SecFail differences are purely policy-attributable---PALADIN is a true post-hoc enforcement layer.
+
+%==============================================================================
+% SECTION 9: DISCUSSION
+%==============================================================================
+\FloatBarrier
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Operating Point, Policy Dependence, and Generalisability}
+\label{sec:deployment_envelope}
+\label{sec:policy_dependence}
+
+The headline E1 profile sits at an availability-leaning operating point ($10.7\%$ SecFail at $43.9\%$ eligible-correct admission), not a near-deny-all artefact. The architecture does not mandate it: the three exposed knobs in \texttt{policies/trac\_rules.yaml}---the \texttt{capability\_coverage} domain floor, the \texttt{tool\_relevance} BM25 cutoff ($<\!1.0$), and the corroborated-coverage rescue bar ($\geq\!4.0$)---plus the choice of which layers to compose govern the trade-off. The sweep of \S\ref{sec:operating_sweep} traces a clean monotone deterministic frontier from $55\%$ SecFail / $76\%$ admission (TRAC only) to $2.1\%$ / $25\%$ (full stack $+$ verdict gate), with the LLM-only point Pareto-dominated throughout. A continuous threshold-grid sweep over the scalar cutoffs is the natural extension (\S\ref{sec:future_work}, no further LLM calls).
+
+The security guarantee is conditional on the authored policy artefacts, but bounded: under the short-circuit, removing any denial rule cannot decrease SecFail, so the per-layer marginals (Table~\ref{tab:per_layer_delta}) upper-bound the damage from silently disabling a rule family; and because all three layers carry large marginals (\S\ref{sec:reversal}), one-layer perturbation degrades gracefully rather than catastrophically. The released artefacts let an independent operator perturb any rule and regenerate every result table without invoking the LLM panel; a controlled perturbation study is the natural next step.
+
+The panel covers three OpenAI generations; a broader cross-vendor panel (Claude, Llama, open-weights) is the most important deferred experiment (\S\ref{sec:future_work}). Out-of-envelope concerns---prompt-injection, MCP supply-chain integrity, output exfiltration, DoS, side channels, NL-response safety---are intended to compose with PALADIN via complementary controls~\cite{liu2024formalizing,zhan2024injecagent,inan2023llamaguard,patil2026sentinelagent,gupta2025security,jamshidi2025securing}.
+
+\subsection{Limitations and Threats to Validity}
+\label{sec:limitations}
+
+Table~\ref{tab:threats} summarises the dominant threats to validity---internal, external, construct, and statistical---each with its mitigation and a pointer to the relevant section or released artefact.
+
+\begin{table}[!t]
+\centering
+\caption{Threats to validity at a glance. Mitigations link back to the indicated section or released artefact.}
+\label{tab:threats}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}p{1.8cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Category} & \textbf{Threat \& mitigation} \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Internal}} \\
+Pipeline ordering & Layer attribution conditioned on RBAC$\to$ABAC$\to$TRAC; per-layer marginals (Table~\ref{tab:per_layer_delta}) are ordering-independent (\S\ref{sec:reversal}). \\
+Implementation bugs & Six raw logs and analysis scripts released; ASTRA replication cross-validates the verdict path against an external baseline (\S\ref{sec:astra_replication}). \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{External}} \\
+Vendor coverage & Three OpenAI generations $+$ a blind non-OpenAI probe (Claude Opus 4.8, $N\!=\!45$, \S\ref{sec:cross_vendor}); a full reproducible Claude/Llama/open-weights panel deferred (\S\ref{sec:future_work}). \\
+Access path & gpt-5.4 via Azure AI Foundry; gpt-3.5/gpt-4o use OpenAI-direct as anchors. \\
+Dataset & All findings rest on ASTRA v0.3; a second adversarial dataset~\cite{zhan2024injecagent,debenedetti2024agentdojo,ruan2024toolemu} is listed as future work. \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Construct}} \\
+Per-bundle vs.\ per-tool & Our E4 is one LLM call per bundle; ASTRA LLM-ResM is per-tool with AND-aggregation---disclosed, consistent with the $0.075$ $F_1$ gap direction (\S\ref{sec:astra_replication}). \\
+Convention conflation & Two conventions documented (\S\ref{sec:conventions}); every table flags which applies. \\
+Eligible-correct admission construct & $1.5\%$--$3.4\%$ at E1 is a property of the operating point, not the architecture; OP sweep characterises the envelope (Table~\ref{tab:operating_sweep}). \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Statistical}} \\
+Layer marginals & Paired task-level bootstrap $95\%$ CIs ($1{,}000$ resamples); per-model and per-domain agreement provide robustness checks. \\
+RA-ICL cohort-shift & Baseline $n\!=\!6{,}942$ vs.\ +C $n\!=\!4{,}512$ reconciled via SHA-256 fingerprint join on $(\textit{task},\textit{MCPs},\textit{match\_tag})$; join script released. \\
+Policy dependence & Per-layer $\Delta\mathrm{SecFail}$ upper-bounds damage of silently disabling a rule family; controlled perturbation study deferred (\S\ref{sec:future_work}). \\
+Domain inference & The task domain is inferred from task text by BM25 (\S\ref{sec:domain_inference}), consuming \emph{no} ground-truth label; an earlier \texttt{gt\_mcps[0]} stand-in is removed, so both modes are leak-free. The classifier's $\sim\!60$--$70\%$ top-1 accuracy is the honest cost, mitigated by corroborated coverage (\S\ref{sec:corroborated}). \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Future Work and Artifact Availability}
+\label{sec:future_work}
+\label{sec:artifacts}
+
+The most important deferred experiment is an \textbf{expanded cross-vendor panel} (Claude, Llama, open-weights) beyond the three OpenAI generations and the directional Claude-Opus probe (\S\ref{sec:cross_vendor}). Computable from the released artefact without new LLM calls: a \textbf{Cedar port and OPA/Rego performance benchmark} (decision parity is already shown, \S\ref{sec:substrate_portability}; only latency/throughput cost is open), a \textbf{policy-perturbation sensitivity study} restricted to predicate-removal ablations, a \textbf{continuous threshold-grid sweep} over the three exposed TRAC knobs extending Table~\ref{tab:operating_sweep} to a full SecFail-vs-admission surface. Requiring new LLM calls: a selection-mode LLM-on-LLM-bundles baseline (\S\ref{sec:reversal}), \textbf{active adversarial inputs} beyond ASTRA's \texttt{wrong}/\texttt{null} model, a \textbf{second adversarial dataset}~\cite{zhan2024injecagent,debenedetti2024agentdojo,ruan2024toolemu}, the RA-ICL singleton sweep (+A/+B/+ABC), and \textbf{multi-hop tool chains}.
+
+We release the complete PALADIN implementation as open-source software.\footnote{Anonymous repository for review: \url{https://anonymous.4open.science/r/PALADIN-anon}; the original repository name describes the policy-stack components and will be renamed for the camera-ready.} The release includes the pipeline source; all policy configurations; 8 MCP server tool definitions ($194$ tools); the ASTRA v0.3 dataset; five raw per-row logs ($\approx 130$~MB: three OpenAI-panel validation runs, one selection baseline, one selection $+$C BM25); BM25 retriever and the fixed $70/30$ split; analysis scripts regenerating every number, including the operating-point replay for Table~\ref{tab:operating_sweep}; and a Dockerised runner with configurable ablations. \emph{Citation hygiene:} recent or in-press references~\cite{gupta2025security,jamshidi2025securing,chu2026stateless,patil2026sentinelagent,rampalli2026pedigree} are concurrent or near-concurrent work; none share authorship with this submission to the best of our knowledge.
+
+%==============================================================================
+% SECTION 10: CONCLUSION
+%==============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Autonomous agents have turned the tool-invocation boundary into a security surface the Model Context Protocol leaves ungoverned, and the prevailing question---\emph{is the model safe?}---is the wrong one. A model's unaided judgment is neither stable nor monotone in capability: across our panel, ungoverned tool admission ranges from a competent validator (gpt-4o, E4 $F_1=0.760$) to a near-yes-machine that lets two-thirds of adversarial bundles through (gpt-5.4, E4 SecFail $=0.665$)---an $F_1$ span of $0.28$ with no ordering by model recency. The operative question is what must be enforced \emph{before} the call, regardless of which model authored the request---and our central result is that a thin \emph{deterministic} admission layer answers it, holding $F_1$ at $0.844$ \emph{identically across every model} because it never consults one. The guarantee is a property of the stack, not of the LLM.
+
+Our measurement framework is built to show this rather than assert it. By separating what the model contributes from what the policy contributes---through dual-mode evaluation and two explicit metric conventions---it makes the masking effect measurable, and in doing so surfaces structure prior task-tool benchmarks could not: three deterministic layers each carrying large marginal weight in both modes, first-firing attribution that overstates upstream necessity while hiding ABAC as the irreplaceable backstop, and a retrieval intervention that improves accuracy and security together. PALADIN contributes a task-relational admission primitive within a security-first floor---not a complete new access-control model, nor an end-to-end agent-safety solution. Its lesson for the agentic era is a single design principle: authorisation must not ride on model trustworthiness. Determinism, not capability, is what turns an unpredictable model into a predictable security surface.
+
+%==============================================================================
+% REFERENCES
+%==============================================================================
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}
+

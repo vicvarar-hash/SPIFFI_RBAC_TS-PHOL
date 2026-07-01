@@ -43,7 +43,7 @@ def _reconstruct_input(row: dict, mcp_attrs: dict, mode: str) -> Dict[str, Any]:
 
     RBAC input: spiffe_id + mcps + tools (directly from log).
     ABAC input: subject attrs from PERSONAS config + resource attrs from MCP.
-    TS-PHOL input: derived predicates from tool names + domain.
+    TRAC input: derived predicates from tool names + domain.
     """
     persona_key = row["persona"]
     persona = PERSONAS[persona_key]
@@ -131,7 +131,7 @@ def _reconstruct_input(row: dict, mcp_attrs: dict, mode: str) -> Dict[str, Any]:
         },
     }
 
-    # ── TS-PHOL predicates ──
+    # ── TRAC predicates ──
     predicates = {
         "ContainsWrite": contains_write,
         "ContainsRead": contains_read,
@@ -274,8 +274,8 @@ def run_opa_comparison(log_path: str,
     abac_data = PolicyLoader.load_yaml("policies/abac_rules.yaml")
     abac_rules = abac_data.get("rules", [])
 
-    tsphol_data = PolicyLoader.load_yaml("policies/tsphol_rules.yaml")
-    tsphol_rules = tsphol_data.get("rules", [])
+    tsphol_data = PolicyLoader.load_yaml("policies/trac_rules.yaml")
+    tsphol_rules = tsphol_data.get("tsphol_rules", tsphol_data.get("rules", []))
 
     mcp_attrs = _load_mcp_attributes()
 
@@ -382,7 +382,7 @@ def run_opa_comparison(log_path: str,
                     metrics.opa_flat_rbac_denials += 1
                 elif src == "ABAC":
                     metrics.opa_flat_abac_denials += 1
-                elif src == "TS-PHOL":
+                elif src == "TRAC":
                     metrics.opa_flat_tsphol_denials += 1
 
         # Detail row for drill-down

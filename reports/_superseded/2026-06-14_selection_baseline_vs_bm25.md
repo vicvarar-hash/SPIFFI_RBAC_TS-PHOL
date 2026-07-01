@@ -6,9 +6,12 @@
 
 ## 1. TL;DR / Headline Result
 
-- BM25-based retrieval-augmented in-context learning (RA-ICL) lifts the LLM's **exact tool-selection accuracy from 11.4% to 39.1% on the correct slice (3.4× absolute lift)** and its full-stack F1 from 0.798 to 0.846 (+4.8 points).
-- BM25 also makes the LLM **more conservative**: allow rate drops from 28.1% → 22.3% and Precision climbs from 0.813 → 0.904, while Recall barely moves (0.783 → 0.795).
+- BM25-based retrieval-augmented in-context learning (RA-ICL) lifts the LLM's **exact tool-selection accuracy from 10.3% to 39.1% on the paired correct slice (3.8× absolute lift)** and its full-stack F1 from 0.798 to 0.846 (+4.8 points, asymmetric) / +0.023 (paired bootstrap CI `[+0.014, +0.034]`).
+- BM25 also makes the LLM **more conservative**: allow rate drops from 28.1% → 22.3% (asymmetric) and Precision climbs from 0.813 → 0.904, while Recall improves slightly (0.783 → 0.795).
+- **On the methodologically correct fingerprint-joined paired cohort (n = 4,512, 752 unique tasks × 6 personas), BM25 is a recall-favourable security improvement**: ΔF1 = +0.023 `[+0.014, +0.034]`, ΔR = +0.046 `[+0.032, +0.061]`, **ΔSecFail = −0.046 `[−0.061, −0.032]`** (CI excludes zero, *p* < 0.01), at a small precision give-back of ΔP = −0.009. See §5.1a.
 - Despite the lift, **absolute selection accuracy remains very low** (39% exact match even with BM25). The dataset itself is the bottleneck — see §7.
+
+> **Update 2026-06-15:** the paper's Table 11 originally carried a (now-corrected) positional "paired" comparison that suggested BM25 degraded SecFail. That comparison did not identity-join tasks across runs. The fingerprint-joined cohort below restores the security-favourable direction and is now the headline in both this report and the SACMAT paper.
 
 ---
 
@@ -23,7 +26,7 @@
 | Inference config | temperature = 0.0, JSON schema response format, single retry on parse failure |
 | Baseline cohort | 1,157 unique tasks × 6 personas = **6,942 rows** (no retrieval) |
 | +C BM25 cohort | 752 unique tasks × 6 personas = **4,512 rows** (RA-ICL test set) |
-| Split | `datasets/splits/correct_70_30_seed42.json` — 405 `correct` train + 174 `correct` test, all 463 `wrong` + 115 `null` go to test |
+| Split | `datasets/splits/correct_70_30_seed42_v2.json` — 405 `correct` train + 174 `correct` test, all 463 `wrong` + 115 `null` go to test (v2 is the one the runner currently uses; v1 fingerprints are stale relative to the current `_task_fingerprint` formula) |
 | Baseline log | `datasets/experiment_logs/run_20260613_105137_llm_gpt-5_4_selection.json` |
 | +C BM25 log | `datasets/experiment_logs/run_20260613_165151_llm_gpt-5_4_selection_raicl-K_all-train_k10000_+C.json` |
 
@@ -48,6 +51,15 @@ E4 (LLM matcher alone) is not meaningful in selection mode — see §9.
 ## 3. Metrics & How They're Calculated
 
 > All metrics in this report use the **PALADIN security view**: positive class = **illegitimate request**, predicted positive = **DENY**. This is the convention the codebase logs and is the natural framing for security-focused evaluation. See the validation report for the alternative ASTRA permissivity view.
+
+> **Plain-English version — two scorecards, not one.** Selection mode measures *two different
+> things*: (1) **Security** (Precision / Recall / F1 / `sec_fail`) — *"did the stack catch the
+> illegitimate requests?"* (the same security view as validation); and (2) **Tool-selection
+> quality** (exact match / Jaccard) — *"did the LLM pick the right tools?"* (unique to selection,
+> since here the LLM *generates* the bundle). Key subtlety (§5.3 / §9): the stack is **blind to
+> tool quality** — it gates on persona / role / capability / trust-state, not on *which* tools
+> were chosen. So read the two scorecards separately — a request can be correctly denied for
+> *authorization* reasons even when the tools were perfect.
 
 Every (task, persona, experiment) row produces a decision (`ALLOW` or `DENY` — `DECEPTION_ROUTED` counts as `DENY`) and a tool selection. Each row carries two ground-truth labels:
 
@@ -97,6 +109,16 @@ Compute:
 - sec_fail = 1,129 / 5,190 = **0.218**
 - Allow rate = 1,948 / 6,942 = **0.281**
 - Tool exact = 396 / 6,942 = **0.057** (5.7% overall, but 11.4% on the correct slice — see §5.2)
+
+**What this example is telling us.** This is selection's "before BM25" baseline with the full
+stack. Two things stand out. (1) **Security is much harder here than in validation**:
+sec_fail = 0.218 (22% of illegitimate requests slip through) vs ~0.5% for the validation full
+stack — because the LLM now *generates* the bundle rather than judging a given one. (2) The two
+scorecards diverge: the stack denies most threats (recall 0.783), yet the LLM's **exact tool
+match is only 11.4%** on the correct slice — and that low number is mostly the dataset ceiling
+(§7: many defensible bundles), not incompetence. Also note FP = 933: the stack allows only
+**~47% of legitimate work** (819 of 1,752). This is the regime where **RBAC/ABAC carry the
+load** (the layer reversal) and where BM25 RA-ICL improves *both* scorecards at once (§5).
 
 ---
 
@@ -158,6 +180,15 @@ This is the "positive signal" mechanism: the LLM doesn't just see the task — i
 
 ## 5. Results
 
+> **How to read §5.** §5.1 is the *asymmetric* aggregate (6,942-row baseline vs 4,512-row +C) —
+> directional only, since the cohorts differ. §5.1a is the **methodologically correct paired
+> cohort** (the same 4,512 fingerprint-joined rows) and is the headline: BM25 **lifts F1 and
+> recall while *reducing* SecFail** on E1/E2 (CIs exclude zero). §5.2 is the tool-quality story —
+> BM25's biggest effect: **exact match 10.3% → 39.1% (3.8×)**. §5.3 shows allow rates flat across
+> slices, exposing a selection-mode truth: the **stack gates on persona, not on tool quality**.
+> Bottom line: BM25 RA-ICL is **"more conservative *and* more accurate"** — it improves selection
+> and security together, against the usual capability-vs-safety trade-off.
+
 ### 5.1 Aggregate metrics (PALADIN security view)
 
 | Run | n | Experiment | F1 | Precision | Recall | sec_fail | Allow rate |
@@ -174,17 +205,38 @@ This is the "positive signal" mechanism: the LLM doesn't just see the task — i
 
 **Pattern across all three experiments:** BM25 lifts F1, lifts Precision substantially, slightly lifts Recall, and reduces both `sec_fail` and `allow_rate`. The signature is "more conservative, more accurate" — exactly what a positive-signal retrieval should do.
 
-### 5.2 Tool-selection quality (correct slice only)
+### 5.1a Paired-cohort analysis (fingerprint-joined, n = 4,512)
+
+The §5.1 table compares the full 6,942-row baseline against the 4,512-row +C cohort. Those cohorts differ — the baseline includes the 405 `correct`-train tasks that the +C run held out as the retrieval pool. To get an apples-to-apples comparison, we identity-join rows by SHA-256 fingerprint of `(task_text, sorted(mcp_servers), match_tag)` against the active split (`datasets/splits/correct_70_30_seed42_v2.json`) and recompute every metric on the common 4,512-row cohort. The join script and bootstrap CI derivation are released as `scripts/factcheck_paired_ci.py` (seed 42, B = 1,000, task-level resampling).
+
+| Run | n | Experiment | F1 | Precision | Recall | sec_fail |
+|---|---|---|---|---|---|---|
+| baseline (paired) | 4,512 | E1 | 0.818 | 0.915 | 0.739 | 0.261 |
+| +C BM25 (paired) | 4,512 | E1 | **0.842** | 0.906 | **0.786** | **0.214** |
+| **Δ (+C − baseline)** | | E1 | **+0.023** `[+0.014, +0.034]` | **−0.009** `[−0.018, −0.001]` | **+0.046** `[+0.032, +0.061]` | **−0.046** `[−0.061, −0.032]` |
+| baseline (paired) | 4,512 | E2 | 0.583 | 0.892 | 0.432 | 0.568 |
+| +C BM25 (paired) | 4,512 | E2 | **0.623** | 0.890 | **0.480** | **0.520** |
+| **Δ** | | E2 | +0.041 `[+0.024, +0.058]` | −0.002 `[−0.012, +0.008]` | +0.047 `[+0.029, +0.065]` | −0.047 `[−0.065, −0.029]` |
+| baseline (paired) | 4,512 | E3 | 0.321 | 0.876 | 0.196 | 0.804 |
+| +C BM25 (paired) | 4,512 | E3 | 0.330 | 0.885 | 0.202 | 0.798 |
+| **Δ** | | E3 | +0.009 `[−0.015, +0.033]` | +0.009 `[−0.007, +0.026]` | +0.006 `[−0.011, +0.024]` | −0.006 `[−0.024, +0.011]` |
+
+**Paired interpretation.** On the identity-joined cohort, BM25 lifts F1, lifts Recall, and **reduces** SecFail on E1 and E2 with bootstrap CIs that exclude zero. E3 (TS-PHOL only) shows the same direction but the effect is small enough that the CI crosses zero — once both RBAC and ABAC are ablated, the marginal value of BM25 retrieval shrinks. The asymmetric §5.1 comparison undersells the security gain on E1 (−0.013 vs −0.046 paired).
+
+**Paired flip ledger (E1):** of the 4,512 paired rows, 326 flipped ALLOW→DENY (81 correct, 179 wrong, 66 null), 69 flipped DENY→ALLOW (16 correct, 37 wrong, 16 null), and 4,117 (91.2%) did not flip. Net shift = +257 ALLOW→DENY. On the adversarial slice (wrong + null), the new DENY is correct 74% of the time vs 53% for the reverse direction — the retriever is shifting the operating point in a direction that is **net-correct on the threat distribution**, not a noise-driven precision/recall swap.
+
+### 5.2 Tool-selection quality (correct slice)
 
 This is where BM25 has the largest effect, because it directly targets *what tools to pick*.
 
 | Run | n (correct slice) | Tool exact match | Tool Jaccard avg |
 |---|---|---|---|
-| baseline | 3,474 | 11.4% | 0.354 |
-| +C BM25 | 1,044 | **39.1%** | **0.624** |
-| **Lift** | | **+27.7 pp (3.4×)** | **+0.270 (+76%)** |
+| baseline (full) | 3,474 | 11.4% | 0.354 |
+| baseline (paired) | 1,044 | 10.3% | 0.351 |
+| +C BM25 (paired) | 1,044 | **39.1%** | **0.624** |
+| **Lift (paired)** | | **+28.8 pp (3.8×)** | **+0.273 (+78%)** |
 
-**Caveat on row counts:** the baseline's `correct` slice is the full set (174 test + 405 train = ~579 unique correct tasks × ~6 personas = 3,474 rows). The +C `correct` slice is the test-only subset (174 × 6 = 1,044). The lift is still real because the 174 test fingerprints are a 70/30 random sample of the same population — there's no systematic difficulty difference. (Selection-mode in-distribution generalization is the same task whether held-out or not.)
+The full-baseline row uses all 579 unique correct tasks × 6 personas; the paired rows restrict to the 174 test-cohort tasks × 6 personas that appear in both runs. The paired lift is the methodologically correct one and is what the paper headlines.
 
 ### 5.3 Per-slice allow rates (convention-independent — just counts)
 
@@ -248,19 +300,21 @@ This is the most important caveat to convey: the *low* number is misleadingly lo
 
 ## 8. Learnings
 
-1. **BM25 retrieval works.** It lifts both selection quality (exact match 11.4% → 39.1%, +27.7 pp) and downstream classification F1 (0.798 → 0.846) on a strict subset of harder tasks. The improvement is consistent across all three experiments (E1, E2, E3) and across both precision and recall.
+1. **BM25 retrieval works.** It lifts both selection quality (exact match 10.3% → 39.1% paired, +28.8 pp) and downstream classification F1 (paired ΔF1 = +0.023 `[+0.014, +0.034]`) on a strict identity-joined cohort. The improvement is consistent across E1 and E2; on E3 (TS-PHOL only) the effect is small enough that the bootstrap CI crosses zero.
 
-2. **BM25 lifts Precision more than Recall.** Precision: 0.813 → 0.904 (+9.1 pp); Recall: 0.783 → 0.795 (+1.2 pp). Interpretation: BM25 prevents the LLM from over-allocating tools (cuts the long tail of wrong tools), but doesn't help the LLM discover *more* legitimate tools it wouldn't otherwise have picked.
+2. **Paired-cohort direction is recall-favourable, not precision/recall trade-off.** Paired ΔPrecision = −0.009 `[−0.018, −0.001]` (small give-back) but ΔRecall = +0.046 `[+0.032, +0.061]` and ΔSecFail = −0.046 `[−0.061, −0.032]`. An earlier paper-internal positional comparison reported a +0.047 SecFail increase; that was a non-identity-joined cohort artefact and has been corrected (see §5.1a update note).
 
-3. **The "more conservative, more accurate" signature.** Allow rate drops from 28.1% → 22.3% while F1 climbs. This is exactly the operating-point shift you want for a security-sensitive system.
+3. **The "more conservative, more accurate" signature holds on both cohorts.** Asymmetric: allow rate 28.1% → 22.3% while F1 climbs. Paired: SecFail 0.261 → 0.214 while F1 climbs. Both views show the operating-point shift you want for a security-sensitive system.
 
-4. **Exact match underrates the lift; Jaccard captures it better.** 11.4% → 39.1% exact is impressive, but 0.354 → 0.624 Jaccard shows the LLM moved from "right-kind, wrong-tool" to "right-tool-most-of-the-time" — a larger absolute improvement.
+4. **Exact match underrates the lift; Jaccard captures it better.** 10.3% → 39.1% exact is impressive, but 0.351 → 0.624 Jaccard shows the LLM moved from "right-kind, wrong-tool" to "right-tool-most-of-the-time" — a larger absolute improvement.
 
 5. **In selection mode, the deterministic stack is blind to LLM quality.** Per-slice allow rates are nearly identical across `correct`, `wrong`, and `null` (all ~28% baseline, all ~22% +C). The stack enforces persona/role/policy, which doesn't depend on what tools the LLM picked. To penalize bad selection, we'd need to add a tool-set sanity layer.
 
 6. **The 39% selection ceiling is mostly a dataset-quality artifact.** The combination of tool-naming pedantry, multiple defensible bundles, cross-persona ambiguity, missing bundle-size signal, and ~3% label noise puts the realistic exact-match ceiling around 30-40% (see §7). BM25's 39.1% may already be near this ceiling.
 
-7. **Selection F1 ≠ Validation F1 (same model).** gpt-5.4 validation E1 F1 = 0.856; gpt-5.4 selection E1 F1 = 0.798. The 6-point drop is entirely from §5.3's observation: in selection mode the stack can't punish bad LLM selections, so weak selections get through that would have been rejected in validation.
+7. **Selection F1 ≠ Validation F1 (same model).** gpt-5.4 validation E1 F1 = 0.856; gpt-5.4 selection E1 F1 = 0.798 (asymmetric) / 0.818 (paired baseline). The drop is entirely from §5.3's observation: in selection mode the stack can't punish bad LLM selections, so weak selections get through that would have been rejected in validation.
+
+8. **Flip ledger confirms net-correct directionality.** On the paired adversarial slice (wrong + null), the new BM25 DENY decisions are correct 74% of the time vs 53% for the reversed DENY → ALLOW direction. This is not a noisy operating-point relocation; the retriever is systematically moving the boundary in the direction of fewer threats slipping through.
 
 ---
 
@@ -268,8 +322,8 @@ This is the most important caveat to convey: the *low* number is misleadingly lo
 
 - We do not yet have **A-only** (RBAC-scoped catalog) or **B-only** (capability pre-filter) singletons on gpt-5.4 selection. Comparing the three singletons head-to-head is the next deliverable.
 - The **+ABC ceiling** (all three together) has not been run on gpt-5.4 yet. Predicted lift over +C alone: 1-3 F1 points (see analysis in checkpoint history).
-- All numbers are from a **single model** (gpt-5.4). Cross-model selection comparisons are deferred to a future report.
-- The **baseline vs +C row-count mismatch** (6,942 vs 4,512) prevents a true strict-subset comparison. The lift is real but the magnitude estimate has ±~0.02 F1 uncertainty.
+- All numbers are from a **single model** (gpt-5.4) and a **single retriever** (BM25 over 405 training-pool exemplars). A no-retrieval ICL control (k random correct exemplars) would factor "any in-context examples help" from "BM25-similar examples help"; a second-model replication is also overdue.
+- The **paired-cohort analysis** in §5.1a uses fingerprint-based identity join via `correct_70_30_seed42_v2.json`. An earlier internal cohort comparison that used row position rather than fingerprint identity reversed the SecFail direction; the v2 fingerprint join is the methodologically correct one.
 - E4 (LLM matcher alone, no deterministic stack) is meaningless in selection mode — the LLM never emits validation issue codes, so `ValidationFailed = False` and E4 becomes allow-all. This is enforced by a guard in `app/ui/experiment_lab.py`.
 
 ---
@@ -281,3 +335,14 @@ This is the most important caveat to convey: the *low* number is misleadingly lo
 - Add a **bundle-size hint** to the prompt and re-measure. If exact-match jumps materially, §7.4 is confirmed as a major bottleneck.
 - Audit and re-tag the **~20-30 likely-mislabeled bundles** identified in the validation report; rerun selection on the cleaned set to measure the achievable ceiling lift.
 - Add a **tool-set sanity layer** to the deterministic stack (e.g., "selected tools must be a subset of the persona's role-permitted tools") so the stack can punish bad selections in selection mode. Re-measure per-slice allow rates.
+
+---
+
+## 11. Figures
+
+### Figure 1 — Retrieval improves selection *and* security (no tradeoff)
+![Operating-point shift and paired-delta confidence intervals for BM25 RA-ICL](figs/selection_no_tradeoff.png)
+
+***How to read the left panel:*** *the two dots are the **same model on the same tasks**, without (grey) and with (green) BM25 retrieval. The x-axis is how often it picks the exactly-correct tool bundle (right = more accurate); the y-axis is the security-failure rate (down = more secure). The arrow shows where retrieval moves the operating point.*
+***How to read the right panel:*** *each row is the **change** (with − without retrieval) for one metric, drawn with its 95% bootstrap confidence interval. A bar that does **not** touch the dashed zero line is statistically significant.*
+***What it's telling us:*** *retrieval moves the dot **right and down at the same time** — the model becomes both **more accurate** (exact tool-match **10.3% → 39.1%**, a 3.8× jump) **and more secure** (SecFail **0.261 → 0.214**). You normally expect a capability-vs-safety tradeoff; here there isn't one. The right panel confirms the effect is real, not noise: ΔRecall is up and ΔSecFail is down with CIs that exclude zero, at only a tiny precision give-back (−0.009). (Selection mode, gpt-5.4, paired fingerprint-joined cohort, n = 4,512.)*

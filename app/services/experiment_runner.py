@@ -20,7 +20,7 @@ from collections import defaultdict
 
 from app.services.experiment_config import (
     ExperimentConfig, EXPERIMENTS, EXPERIMENT_MAP,
-    PERSONAS, LEGITIMATE_PAIRINGS, simulate_llm_output,
+    PERSONAS, LEGITIMATE_PAIRINGS, LEGITIMATE_PAIRINGS_NORMALIZED, simulate_llm_output,
 )
 from app.services.normalization import normalize_mcp_name
 from app.services.spiffe_registry_service import SpiffeRegistryService
@@ -65,6 +65,11 @@ class RunResult:
     # LLM selection accuracy vs groundtruth
     tool_match: bool = False            # Exact set match (selected == groundtruth)
     tool_jaccard: float = 0.0           # Jaccard similarity (partial credit)
+    # LLM validation verdict (validation mode only) — persisted so the
+    # Post-Experiment Lab can replay the two issue-code-dependent TRAC rules
+    # without re-invoking the LLM.
+    issue_codes: List[str] = field(default_factory=list)
+    is_valid: Optional[bool] = None
 
 
 @dataclass
@@ -151,8 +156,8 @@ def _write_temp_policies(policies: Dict[str, dict], tmp_dir: str):
     # ABAC
     with open(os.path.join(tmp_dir, "abac_rules.yaml"), "w") as f:
         yaml.dump(policies["abac"], f, default_flow_style=False)
-    # TS-PHOL
-    with open(os.path.join(tmp_dir, "tsphol_rules.yaml"), "w") as f:
+    # TRAC
+    with open(os.path.join(tmp_dir, "trac_rules.yaml"), "w") as f:
         yaml.dump(policies["tsphol"], f, default_flow_style=False)
 
 
@@ -169,7 +174,7 @@ def build_engine_from_policies(policies: Dict[str, dict], personas_list) -> Deci
         )
         rbac_svc = RBACService(filepath=os.path.join(tmp_dir, "rbac.yaml"))
         abac_rule_svc = ABACRuleService(filepath=os.path.join(tmp_dir, "abac_rules.yaml"))
-        tsphol_svc = TSPHOLRuleService(filepath=os.path.join(tmp_dir, "tsphol_rules.yaml"))
+        tsphol_svc = TSPHOLRuleService(filepath=os.path.join(tmp_dir, "trac_rules.yaml"))
         # MCPAttributeService reads from policy_dir, copy original attributes file
         orig_attrs = "policies/mcp_attributes.yaml"
         if os.path.exists(orig_attrs):
@@ -239,7 +244,7 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
         match_tag = getattr(task, "match_tag", "null")
 
     task_domain = normalize_mcp_name(gt_mcps[0]) if gt_mcps else "unknown"
-    domain_authorized = task_domain in LEGITIMATE_PAIRINGS.get(persona_key, set())
+    domain_authorized = task_domain in LEGITIMATE_PAIRINGS_NORMALIZED.get(persona_key, set())
     is_legitimate = domain_authorized and match_tag == "correct"
 
     # Determine inference source and the bundle to evaluate
@@ -308,6 +313,10 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
     union = sel_set | gt_set
     tool_jaccard = len(sel_set & gt_set) / len(union) if union else 1.0
 
+    # Persist the LLM validation verdict (validation mode) for faithful replay.
+    issue_codes = list(llm_out.get("issue_codes", []) or []) if isinstance(llm_out, dict) else []
+    is_valid = llm_out.get("is_valid") if isinstance(llm_out, dict) else None
+
     return RunResult(
         experiment=config.name,
         group=config.group,
@@ -333,6 +342,8 @@ def run_single(engine: DecisionEngine, persona_key: str, task,
         groundtruth_mcps=gt_mcps,
         tool_match=tool_match,
         tool_jaccard=tool_jaccard,
+        issue_codes=issue_codes,
+        is_valid=is_valid,
     )
 
 

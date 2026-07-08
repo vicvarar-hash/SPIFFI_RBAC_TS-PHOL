@@ -414,50 +414,18 @@ The agnostic capability check (\S\ref{sec:capability}) requires the task's domai
 
 All numbers are computed from the released raw logs; full per-row confusion matrices, first-firing attribution shares, and bootstrap CIs ship with the artefact.
 
-\subsection{The Deterministic Stack Masks Model Variance (Validation)}
+\subsection{The Deterministic Stack Masks Model Variance Across Vendors (Validation)}
 \label{sec:stack_guarantee}
-
-PALADIN is deployed as the composition FULL $=$ the model's own verdict \emph{behind} the deterministic floor; it complements the LLM rather than replacing it. Table~\ref{tab:stack_guarantee} reads that composition per model. Each LLM judging \emph{alone} (E4) is an unreliable admission control---SecFail ranges from $26.8\%$ (gpt-4o) to $66.5\%$ (gpt-5.4), an $F_1$ spread of $0.28$ with no ordering by model recency---yet the same LLM behind the floor (FULL) is sharpened to SecFail $\leq 7.5\%$ for all three. What makes the composition trustworthy is the floor beneath it. Reported alone (E1), the deterministic stack (RBAC$\wedge$ABAC$\wedge$TRAC) returns an \emph{identical} profile for every model---$F_1=0.844$, SecFail $=10.7\%$, eligible-correct admission $=43.9\%$. This is exact, not approximate: in validation the judged bundle is fixed per task and the deterministic layers condition only on the bundle, the persona, and the leak-free inferred task domain---never on the model---so they return bit-identical decisions whichever LLM authored the verdict. The guarantee is thus a property of the stack, not the model.
-
-The floor is \emph{leak-free}: the task domain $d_\tau$ driving \path{capability_coverage} is inferred from task text by BM25 over the public MCP catalog (\S\ref{sec:domain_inference}), consuming no ground-truth label. That is why E1 sits at $10.7\%$ SecFail rather than zero: the agnostic stack still admits same-MCP wrong-tool bundles (ASTRA's \texttt{wrong} class) that no domain- or relevance-level signal can separate from correct ones---the irreducible \emph{semantic floor} that the model, not the policy, must close, which is exactly the work the verdict gate does in FULL. Crucially the floor \emph{bounds} the composition in both directions: a capable judge (gpt-4o) sharpens SecFail to $2.1\%$, but even a poor one cannot undo the floor---FULL never exceeds E1's $10.7\%$, whereas the LLM alone reaches $66\%$. This is the central trade we measure: an agnostic, leak-free policy floor, model-invariant by construction, sharpened but never undermined by the model's own judgement.
-
-\begin{table}[!t]
-\centering
-\caption{Validation across three OpenAI generations (Convention~A, $n=6{,}942$ rows per cell; ``Admit'' $=$ eligible-correct admission rate). PALADIN is deployed as \textbf{FULL}---the model's own verdict \emph{behind} the deterministic floor---so the load-bearing comparison is per model: \textbf{E4} (the LLM judging alone) vs.\ \textbf{FULL} (the same LLM $+$ floor). Every model is unreliable alone yet sharpened to SecFail $\leq 7.5\%$ once composed. The \textbf{floor alone} (E1) is listed once---not as a standalone recommendation, but because it is \emph{model-independent} by construction (identical for all three models) and therefore \emph{bounds} every FULL result: no FULL exceeds its $10.7\%$ SecFail.}
-\label{tab:stack_guarantee}
-\footnotesize
-\setlength{\tabcolsep}{5pt}
-\begin{adjustbox}{max width=\columnwidth}
-\begin{tabular}{@{}llccc@{}}
-\toprule
-\textbf{Model} & \textbf{Config} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Admit} \\
-\midrule
-\multicolumn{2}{@{}l}{\textbf{Deterministic floor} --- E1 \textit{(model-independent)}} & $\mathbf{0.844}$ & $\mathbf{0.107}$ & $\mathbf{43.9\%}$ \\
-\midrule
-\multirow{2}{*}{gpt-3.5-turbo-16k (2023)} & LLM alone (E4)    & $0.652$ & $0.482$ & $82.3\%$ \\
-                                          & $+$\,floor (FULL) & $0.867$ & $0.046$ & $38.2\%$ \\
-\addlinespace[3pt]
-\multirow{2}{*}{gpt-4o (2024)}            & LLM alone (E4)    & $0.760$ & $0.268$ & $50.9\%$ \\
-                                          & $+$\,floor (FULL) & $0.859$ & $0.021$ & $24.6\%$ \\
-\addlinespace[3pt]
-\multirow{2}{*}{gpt-5.4 (2026)}           & LLM alone (E4)    & $0.482$ & $0.665$ & $85.8\%$ \\
-                                          & $+$\,floor (FULL) & $0.849$ & $0.075$ & $36.6\%$ \\
-\bottomrule
-\end{tabular}
-\end{adjustbox}
-\end{table}
-
-\paragraph{Operating point.} The E1 profile comes from the released policy: the \path{capability_coverage} domain floor, the \path{tool_relevance} BM25 cutoff ($<\!1.0$), and the corroborated-coverage rescue bar ($\geq\!4.0$), all editable in \path{policies/trac_rules.yaml}. It is deliberately availability-leaning ($43.9\%$ admission) relative to the old oracle-aided alignment policy; \S\ref{sec:operating_sweep} characterises the SecFail/admission trade-off, and \S\ref{sec:corroborated} gives the Pareto refinement.
-
-\subsection{Cross-Vendor Evidence: A Full Non-OpenAI Panel}
 \label{sec:cross_vendor}
 
-The panel of \S\ref{sec:stack_guarantee} is OpenAI-only, which cannot on its own support ``the stack, not the model, is the guarantee.'' We therefore run the \emph{full} validation set ($n=6{,}942$) under three additional models spanning two further vendors---Anthropic's Claude Opus 4.8 and Claude Sonnet 4.6, and Google's Gemini 2.5 Pro---each judging every candidate bundle \texttt{valid}/\texttt{invalid} with the \emph{same} \texttt{ValidationService} rubric as the OpenAI panel, \emph{blind} to the ground-truth \texttt{match\_tag}/\texttt{is\_legitimate}; verdicts are frozen before scoring and released with the artefact. Because the deterministic stack is model-independent (\S\ref{sec:stack_guarantee}), its E1 profile ($F_1=0.844$, SecFail $=0.107$, admission $=43.9\%$) is reused unchanged; only E4/FULL differ by model. Table~\ref{tab:cross_vendor} reports the three non-OpenAI models on the identical $6{,}942$ rows; the OpenAI panel is Table~\ref{tab:stack_guarantee}, scored by the same pipeline.
+PALADIN is deployed as the composition FULL $=$ the model's own verdict \emph{behind} the deterministic floor; it complements the LLM rather than replacing it. Table~\ref{tab:stack_guarantee} reads that composition across six models spanning three vendors, each judging every candidate bundle \emph{blind} to the ground-truth \texttt{match\_tag}/\texttt{is\_legitimate} with the \emph{same} \texttt{ValidationService} rubric (verdicts frozen before scoring and released). Each LLM judging \emph{alone} (E4) is an unreliable admission control---SecFail spans $26.8\%$ (gpt-4o) to $66.5\%$ (gpt-5.4), an $F_1$ spread of $0.28$, with the non-OpenAI models interleaved throughout ($0.49$--$0.63$) and no ordering by vendor or recency---yet the same LLM behind the floor (FULL) is sharpened to SecFail $\leq 7.5\%$ for all six. What makes the composition trustworthy is the floor beneath it: reported alone (E1), the deterministic stack (RBAC$\wedge$ABAC$\wedge$TRAC) returns an \emph{identical} profile for every model ($F_1=0.844$, SecFail $=10.7\%$, admission $=43.9\%$), because the deterministic layers condition only on the bundle, persona, and leak-free inferred domain---never on the model---returning bit-identical decisions whichever LLM authored the verdict. The guarantee is a property of the stack, not the model.
+
+The floor is \emph{leak-free}: the task domain driving \path{capability_coverage} is inferred from task text by BM25 over the public MCP catalog (\S\ref{sec:domain_inference}), consuming no ground-truth label. That is why E1 sits at $10.7\%$ rather than zero---the agnostic stack still admits same-MCP wrong-tool bundles (ASTRA's \texttt{wrong} class) that no domain- or relevance-level signal separates from correct ones: the irreducible \emph{semantic floor} the model, not the policy, must close, which is the work the verdict gate does in FULL. Crucially the floor \emph{bounds} the composition in both directions---a capable judge (gpt-4o) sharpens SecFail to $2.1\%$, but even a poor one cannot undo it (FULL never exceeds $10.7\%$, whereas the LLM alone reaches $66\%$)---and composing collapses the cross-vendor E4 spread to $F_1\in[0.849,0.876]$, SecFail $\in[0.021,0.075]$. Notably the non-OpenAI gates are the most \emph{precise}: FULL retains $\approx\!43\%$ admission (vs.\ $24.6\%$ for gpt-4o), buying security at almost no availability cost. This is the central trade---an agnostic, leak-free floor, model-invariant by construction, sharpened but never undermined by the model---now shown across OpenAI, Anthropic, and Google.
 
 \begin{table}[!t]
 \centering
-\caption{Extending Table~\ref{tab:stack_guarantee} to three non-OpenAI models across two further vendors (Convention~A, $n=6{,}942$ rows per model). Each judges every candidate bundle \emph{blind} to ground truth with the \emph{same} \texttt{ValidationService} rubric; the deterministic floor (E1) is model-independent ($F_1=0.844$, SecFail $=0.107$, admission $=43.9\%$). \textbf{E4} $=$ the LLM alone; \textbf{FULL} $=$ the same LLM behind the floor. All three sit inside the OpenAI E4 band of Table~\ref{tab:stack_guarantee} yet sharpen to SecFail $\leq\!6.1\%$ once composed; no FULL exceeds the floor. Non-OpenAI per-row verdicts released. ``Adm'' $=$ eligible-correct admission.}
-\label{tab:cross_vendor}
+\caption{Cross-vendor validation: the deterministic floor masks model variance (Convention~A, $n=6{,}942$ rows per model). Six models, three vendors, each judging blind with the \emph{same} \texttt{ValidationService} rubric. \textbf{E4} $=$ the LLM alone; \textbf{FULL} $=$ the same LLM behind the model-independent floor (E1, listed once: $F_1=0.844$, SecFail $=0.107$, admission $=43.9\%$ for all). Every model is unreliable alone (E4 SecFail $0.27$--$0.67$) yet sharpens to SecFail $\leq7.5\%$ once composed; no FULL exceeds the floor. Non-OpenAI verdicts released. ``Adm'' $=$ eligible-correct admission.}
+\label{tab:stack_guarantee}
 \footnotesize
 \setlength{\tabcolsep}{4pt}
 \begin{adjustbox}{max width=\columnwidth}
@@ -465,19 +433,23 @@ The panel of \S\ref{sec:stack_guarantee} is OpenAI-only, which cannot on its own
 \toprule
  & \multicolumn{2}{c}{\textbf{E4 (LLM alone)}} & \multicolumn{3}{c}{\textbf{FULL (floor$+$gate)}} \\
 \cmidrule(lr){2-3}\cmidrule(lr){4-6}
-\textbf{Model (vendor)} & $\mathbf{F_1}$ & \textbf{SecFail} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Adm} \\
+\textbf{Model (vendor, year)} & $\mathbf{F_1}$ & \textbf{SecFail} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Adm} \\
 \midrule
-claude-opus-4.8 \textit{(Anthropic)}   & 0.667 & 0.493 & \textbf{0.876} & 0.044 & 43.2\% \\
-claude-sonnet-4.6 \textit{(Anthropic)} & 0.645 & 0.517 & 0.870 & 0.056 & 43.2\% \\
-gemini-2.5-pro \textit{(Google)}       & 0.535 & 0.628 & 0.867 & 0.061 & 42.7\% \\
+\multicolumn{6}{@{}l}{\textbf{Deterministic floor} --- E1 \textit{(model-independent)}: $F_1\,0.844$, SecFail $0.107$, Adm $43.9\%$}\\
+\midrule
+gpt-3.5-turbo-16k \textit{(OpenAI '23)}    & 0.652 & 0.482 & 0.867 & 0.046 & 38.2\% \\
+gpt-4o \textit{(OpenAI '24)}               & 0.760 & 0.268 & 0.859 & 0.021 & 24.6\% \\
+gpt-5.4 \textit{(OpenAI '26)}              & 0.482 & 0.665 & 0.849 & 0.075 & 36.6\% \\
+\addlinespace[2pt]
+claude-opus-4.8 \textit{(Anthropic '26)}   & 0.667 & 0.493 & \textbf{0.876} & 0.044 & 43.2\% \\
+claude-sonnet-4.6 \textit{(Anthropic '26)} & 0.645 & 0.517 & 0.870 & 0.056 & 43.2\% \\
+gemini-2.5-pro \textit{(Google '26)}       & 0.535 & 0.628 & 0.867 & 0.061 & 42.7\% \\
 \bottomrule
 \end{tabular}
 \end{adjustbox}
 \end{table}
 
-Three observations. First, \emph{no vendor is special}: every LLM judging alone is an unreliable admission control, with E4 SecFail spanning $0.27$ (gpt-4o) to $0.67$ (gpt-5.4) in Table~\ref{tab:stack_guarantee}, and the three non-OpenAI models---$0.49$ (Opus), $0.52$ (Sonnet), $0.63$ (Gemini)---interleaved throughout that band, with no ordering by vendor or model recency. Second, the model-independent deterministic floor (E1 SecFail $=0.107$) bounds \emph{every} model: no FULL result exceeds it. Third, composing the floor with each model's own verdict (FULL) collapses an E4 $F_1$ spread of $0.28$ across all three vendors to $F_1\in[0.849,0.876]$ and SecFail $\in[0.021,0.075]$---the masking effect of \S\ref{sec:stack_guarantee}, now observed across OpenAI, Anthropic, \emph{and} Google. Notably the non-OpenAI gates are the most \emph{precise}: FULL retains $\approx\!43\%$ eligible-correct admission (vs.\ $24.6\%$ for gpt-4o), buying the SecFail reduction at almost no additional availability cost.
-
-\emph{Scope.} This delivers the full cross-vendor panel deferred by earlier drafts---three vendors, six models, the complete $6{,}942$-row validation set, scored by the identical leak-free pipeline. Open-weights models (Llama, Mistral) and a second adversarial dataset remain future work (\S\ref{sec:future_work}); all non-OpenAI per-row verdicts are released for independent verification.
+\paragraph{Operating point.} The E1 profile comes from the released policy: the \path{capability_coverage} domain floor, the \path{tool_relevance} BM25 cutoff ($<\!1.0$), and the corroborated-coverage rescue bar ($\geq\!4.0$), all editable in \path{policies/trac_rules.yaml}. It is deliberately availability-leaning ($43.9\%$ admission) relative to the old oracle-aided alignment policy; \S\ref{sec:operating_sweep} characterises the SecFail/admission trade-off, and \S\ref{sec:corroborated} gives the Pareto refinement.
 
 \subsection{Substrate Portability: Verified OPA/Rego Parity}
 \label{sec:substrate_portability}
@@ -507,7 +479,7 @@ A single operating point cannot say whether $43.9\%$ admission at $10.7\%$ SecFa
 % Deterministic frontier (bundle-only, model-independent): TRAC-only -> +ABAC -> +RBAC (=E1)
 \addplot[thick, black, mark=triangle*, mark size=2.4pt]
   coordinates {(76.4,0.550) (61.6,0.314) (43.9,0.107)};
-\addlegendentry{det.\ frontier: TRAC$\to$$+$ABAC$\to$$+$RBAC}
+\addlegendentry{det.\ frontier: TRAC, +ABAC, +RBAC}
 % LLM alone (E4): 6 models across 3 vendors
 \addplot[only marks, mark=o, mark size=2.6pt, red!75!black, thick]
   coordinates {(50.9,0.268) (85.8,0.665) (82.3,0.482) (97.1,0.493) (96.5,0.517) (95.9,0.628)};
@@ -515,11 +487,11 @@ A single operating point cannot say whether $43.9\%$ admission at $10.7\%$ SecFa
 % FULL = floor + gate: 6 models across 3 vendors
 \addplot[only marks, mark=square*, mark size=2.4pt, blue!65!black]
   coordinates {(24.6,0.021) (36.6,0.075) (38.2,0.046) (43.2,0.044) (43.2,0.056) (42.7,0.061)};
-\addlegendentry{FULL (floor$+$gate), 6 models}
+\addlegendentry{FULL (floor+gate), 6 models}
 \node[font=\scriptsize, anchor=south west] at (axis cs:44.6,0.115) {E1 floor};
 \end{axis}
 \end{tikzpicture}
-\caption{Operating-point map: SecFail vs.\ eligible-correct admission (validation). The model-independent deterministic frontier is \emph{monotone} and \emph{Pareto-dominates} every LLM-only (E4) point (which sits above it); composing each model's verdict with the floor (FULL) pulls all six models, across three vendors, into a tight low-SecFail cluster ($\leq7.5\%$) at the frontier's secure end, none exceeding the E1 floor. Values: Tables~\ref{tab:stack_guarantee}--\ref{tab:cross_vendor},~\ref{tab:per_layer_delta}; replay via \texttt{scripts/sweep\_op\_points.py}.}
+\caption{Operating-point map: SecFail vs.\ eligible-correct admission (validation). The model-independent deterministic frontier is \emph{monotone} and \emph{Pareto-dominates} every LLM-only (E4) point (which sits above it); composing each model's verdict with the floor (FULL) pulls all six models, across three vendors, into a tight low-SecFail cluster ($\leq7.5\%$) at the frontier's secure end, none exceeding the E1 floor. Values: Table~\ref{tab:stack_guarantee}; replay via \texttt{scripts/sweep\_op\_points.py}.}
 \label{tab:operating_sweep}
 \end{figure}
 
@@ -542,28 +514,7 @@ A clean side-effect of the three OpenAI generations is that we can chart $F_1$ o
 \subsection{All Three Layers Are Load-Bearing}
 \label{sec:reversal}
 
-We compute the per-layer marginal contribution to SecFail and $F_1$ in both modes (Table~\ref{tab:per_layer_delta}). Because the deterministic stack conditions only on the bundle, the persona, and the leak-free inferred domain, its validation decisions---and hence the validation marginals---are \emph{identical across all three models}; we report one validation block. The result is unambiguous: every layer carries a large marginal. In validation, removing RBAC raises SecFail by $20.7$pp (and drops $F_1$ by $0.098$); removing ABAC a further $23.6$pp ($0.163$~$F_1$); the agnostic TRAC floor alone leaves $55\%$ SecFail. Selection has the same shape, larger ($\Delta_{\mathrm{RBAC}}=-30.3$pp, $\Delta_{\mathrm{ABAC}}=-22.9$pp).
-
-\begin{table}[!t]
-\centering
-\caption{Per-layer marginals, $\Delta\mathrm{metric}(S)=\mathrm{metric}(\Pi)-\mathrm{metric}(\Pi\setminus S)$ (negative $\Delta\mathrm{SecFail}$ = the layer improves security). The validation block is model-independent---identical for all three models, since the deterministic stack does not read the model. Selection rows for gpt-5.4.}
-\label{tab:per_layer_delta}
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}llrrl@{}}
-\toprule
-\textbf{Mode} & \textbf{Configuration} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Marginal} \\
-\midrule
-\multirow{3}{*}{Validation} & E1 full stack & $0.844$ & $0.107$ & --- \\
- & E2 $-$RBAC    & $0.746$ & $0.314$ & $\Delta_{\mathrm{RBAC}}\!=\!-0.207$ \\
- & E3 TRAC only  & $0.583$ & $0.550$ & $\Delta_{\mathrm{ABAC}}\!=\!-0.236$ \\
-\midrule
-\multirow{3}{*}{Selection} & E1 full stack & $0.800$ & $0.214$ & --- \\
- & E2 $-$RBAC    & $0.599$ & $0.517$ & $\Delta_{\mathrm{RBAC}}\!=\!-0.303$ \\
- & E3 TRAC only  & $0.377$ & $0.746$ & $\Delta_{\mathrm{ABAC}}\!=\!-0.229$ \\
-\bottomrule
-\end{tabular}
-\end{table}
+We compute the per-layer marginal contribution to SecFail and $F_1$ in both modes. Because the deterministic stack conditions only on the bundle, the persona, and the leak-free inferred domain, its validation decisions---and hence the validation marginals---are \emph{identical across all three models}. The result is unambiguous: every layer carries a large marginal. From the full-stack E1 ($F_1=0.844$, SecFail $=0.107$), removing RBAC raises validation SecFail by $20.7$pp (and drops $F_1$ by $0.098$); removing ABAC a further $23.6$pp ($0.163$~$F_1$); the agnostic TRAC floor alone leaves $55\%$ SecFail. Selection shows the same shape, larger: $\Delta_{\mathrm{RBAC}}\!=\!-30.3$pp and $\Delta_{\mathrm{ABAC}}\!=\!-22.9$pp from selection E1 ($0.800$/$0.214$), with TRAC-only at $75\%$ SecFail.
 
 This is the empirical core of the composable-governance claim, and stronger than a single-layer-dominance story: there is no redundant layer to drop. It also corrects the earlier oracle-aided policy, in which an alignment score did most of the validation work and RBAC/ABAC were near-redundant; removing the oracle redistributes the security work onto identity and attributes---exactly where a zero-trust deployment can audit it. An organisation cannot shed any one layer without a $20$--$30$pp SecFail regression in at least one mode.
 
@@ -571,7 +522,7 @@ This is the empirical core of the composable-governance claim, and stronger than
 \label{sec:per_domain}
 \label{sec:attribution_paradox}
 
-Marginal necessity and first-firing attribution disagree sharply. Attributing every E1 denial to the first layer that fires under short-circuit order (RBAC$\to$ABAC$\to$TRAC), RBAC claims $82\%$ of denials, TRAC $15\%$, and ABAC only $4\%$. Yet the marginal picture (Table~\ref{tab:per_layer_delta}) is the opposite: ABAC, which first-fires on a mere $4\%$ of denials, carries the \emph{largest} marginal contribution ($-23.6$pp $\Delta\mathrm{SecFail}$). The reason is pipeline order---most rows ABAC would catch are intercepted earlier by RBAC, so ABAC's unique value is invisible to a denial-source chart and surfaces only when RBAC is removed. First-firing attribution, common in the agent-safety literature, therefore systematically misranks layers; both attribution and marginal $\Delta\mathrm{SecFail}$ must be reported. The practical reading is that RBAC and ABAC are \emph{co-necessary}: RBAC handles the bulk volume, ABAC is the irreplaceable backstop, and neither can be dropped (\S\ref{sec:reversal}).
+Marginal necessity and first-firing attribution disagree sharply. Attributing every E1 denial to the first layer that fires under short-circuit order (RBAC$\to$ABAC$\to$TRAC), RBAC claims $82\%$ of denials, TRAC $15\%$, and ABAC only $4\%$. Yet the marginal picture (\S\ref{sec:reversal}) is the opposite: ABAC, which first-fires on a mere $4\%$ of denials, carries the \emph{largest} marginal contribution ($-23.6$pp $\Delta\mathrm{SecFail}$). The reason is pipeline order---most rows ABAC would catch are intercepted earlier by RBAC, so ABAC's unique value is invisible to a denial-source chart and surfaces only when RBAC is removed. First-firing attribution, common in the agent-safety literature, therefore systematically misranks layers; both attribution and marginal $\Delta\mathrm{SecFail}$ must be reported. The practical reading is that RBAC and ABAC are \emph{co-necessary}: RBAC handles the bulk volume, ABAC is the irreplaceable backstop, and neither can be dropped (\S\ref{sec:reversal}).
 
 \subsection{Retrieval-Augmented In-Context Learning for Selection}
 \label{sec:raicl}
@@ -626,7 +577,7 @@ The $39.1\%$ exact-match number is intrinsically low. Four dataset properties ca
 
 The headline E1 profile sits at an availability-leaning operating point ($10.7\%$ SecFail at $43.9\%$ eligible-correct admission), not a near-deny-all artefact. The architecture does not mandate it: the three exposed knobs in \texttt{policies/trac\_rules.yaml}---the \texttt{capability\_coverage} domain floor, the \texttt{tool\_relevance} BM25 cutoff ($<\!1.0$), and the corroborated-coverage rescue bar ($\geq\!4.0$)---plus the choice of which layers to compose govern the trade-off. The frontier of Fig.~\ref{tab:operating_sweep} traces the full trade-off, with the LLM-only point Pareto-dominated throughout; a continuous threshold-grid sweep over the scalar cutoffs is the natural extension (\S\ref{sec:future_work}, no further LLM calls).
 
-The security guarantee is conditional on the authored policy artefacts, but bounded: under the short-circuit, removing any denial rule cannot decrease SecFail, so the per-layer marginals (Table~\ref{tab:per_layer_delta}) upper-bound the damage from silently disabling a rule family; and because all three layers carry large marginals (\S\ref{sec:reversal}), one-layer perturbation degrades gracefully rather than catastrophically. The released artefacts let an independent operator perturb any rule and regenerate every result table without invoking the LLM panel; a controlled perturbation study is the natural next step.
+The security guarantee is conditional on the authored policy artefacts, but bounded: under the short-circuit, removing any denial rule cannot decrease SecFail, so the per-layer marginals (\S\ref{sec:reversal}) upper-bound the damage from silently disabling a rule family; and because all three layers carry large marginals (\S\ref{sec:reversal}), one-layer perturbation degrades gracefully rather than catastrophically. The released artefacts let an independent operator perturb any rule and regenerate every result table without invoking the LLM panel; a controlled perturbation study is the natural next step.
 
 The panel covers three OpenAI generations plus a full non-OpenAI panel spanning Anthropic and Google (\S\ref{sec:cross_vendor}); an open-weights panel (Llama, Mistral) remains deferred (\S\ref{sec:future_work}). Out-of-envelope concerns---prompt-injection, MCP supply-chain integrity, output exfiltration, DoS, side channels, NL-response safety---are intended to compose with PALADIN via complementary controls~\cite{liu2024formalizing,zhan2024injecagent,inan2023llamaguard,patil2026sentinelagent,gupta2025security,jamshidi2025securing}.
 
@@ -646,12 +597,11 @@ Table~\ref{tab:threats} summarises the dominant threats to validity---internal, 
 \textbf{Category} & \textbf{Threat \& mitigation} \\
 \midrule
 \multicolumn{2}{@{}l}{\textit{Internal}} \\
-Pipeline ordering & Layer attribution conditioned on RBAC$\to$ABAC$\to$TRAC; per-layer marginals (Table~\ref{tab:per_layer_delta}) are ordering-independent (\S\ref{sec:reversal}). \\
+Pipeline ordering & Layer attribution conditioned on RBAC$\to$ABAC$\to$TRAC; per-layer marginals are ordering-independent (\S\ref{sec:reversal}). \\
 Implementation bugs & Six raw logs and analysis scripts released; ASTRA replication cross-validates the verdict path against an external baseline (\S\ref{sec:astra_replication}). \\
 \midrule
 \multicolumn{2}{@{}l}{\textit{External}} \\
 Vendor coverage & Three OpenAI generations $+$ a full blind non-OpenAI panel (Claude Opus 4.8, Claude Sonnet 4.6, Gemini 2.5 Pro; $n\!=\!6{,}942$ each, \S\ref{sec:cross_vendor}); open-weights (Llama, Mistral) deferred (\S\ref{sec:future_work}). \\
-Access path & gpt-5.4 via Azure AI Foundry; gpt-3.5/gpt-4o use OpenAI-direct as anchors. \\
 Dataset & All findings rest on ASTRA v0.3; a second adversarial dataset~\cite{zhan2024injecagent,debenedetti2024agentdojo,ruan2024toolemu} is listed as future work. \\
 \midrule
 \multicolumn{2}{@{}l}{\textit{Construct}} \\
@@ -663,7 +613,7 @@ Eligible-correct admission construct & $1.5\%$--$3.4\%$ at E1 is a property of t
 Layer marginals & Paired task-level bootstrap $95\%$ CIs ($1{,}000$ resamples); per-model and per-domain agreement provide robustness checks. \\
 RA-ICL cohort-shift & Baseline $n\!=\!6{,}942$ vs.\ +C $n\!=\!4{,}512$ reconciled via SHA-256 fingerprint join on $(\textit{task},\textit{MCPs},\textit{match\_tag})$; join script released. \\
 Policy dependence & Per-layer $\Delta\mathrm{SecFail}$ upper-bounds damage of silently disabling a rule family; controlled perturbation study deferred (\S\ref{sec:future_work}). \\
-Domain inference & The task domain is inferred from task text by BM25 (\S\ref{sec:domain_inference}), consuming \emph{no} ground-truth label; an earlier \texttt{gt\_mcps[0]} stand-in is removed, so both modes are leak-free. The classifier's $\sim\!60$--$70\%$ top-1 accuracy is the honest cost, mitigated by corroborated coverage (\S\ref{sec:corroborated}). \\
+Domain inference & Task domain inferred from task text by BM25, consuming \emph{no} ground-truth label (\S\ref{sec:domain_inference}); an earlier \texttt{gt\_mcps[0]} stand-in is removed, so both modes are leak-free. The $\sim\!60$--$70\%$ top-1 accuracy is the honest cost, mitigated by corroborated coverage (\S\ref{sec:corroborated}). \\
 \bottomrule
 \end{tabularx}
 \end{table}

@@ -152,7 +152,7 @@ Our contributions are threefold: a \emph{reformulation} of agentic tool selectio
 \begin{enumerate}
   \item A \textbf{dual-mode measurement framework}: (a) the validation/selection protocol separating ``the LLM judges a candidate bundle'' from ``the LLM generates one,'' which most task-tool benchmarks conflate; (b) two metric conventions (security- vs.\ permissivity-view) that systematically disagree on layer importance and must be reported jointly; (c) paired task-level bootstrap CIs on layer-marginal $\Delta\mathrm{SecFail}$; and (d) a dataset-ceiling analysis. That analysis places the practical exact-match upper bound at $30$--$40\%$, against which $39\%$ retrieval-augmented selection accuracy must be read (\S\ref{sec:methodology},~\ref{sec:conventions},~\ref{sec:ceiling}).
 
-  \item A \textbf{task-relational admission primitive and its instantiation, PALADIN}: a predicate that authorises a tool invocation on the \emph{semantic coherence between the task and the proposed bundle}---in-domain coverage, mutation safety, and task--tool relevance---realised as the TRAC stage of an invocation-time pipeline (SPIFFE/SPIRE identity, RBAC, ABAC, fact extraction, and TRAC over an \emph{agnostic} $\{$domain$\}{:}\{$action$\}$ capability model). This is a distinct authorisation axis from RBAC (caller$\to$tool), ABAC (attributes), TBAC (workflow lifecycle~\cite{thomas1997tbac}), and ReBAC (entity relationships~\cite{fong2011rebac}) (\S\ref{sec:related}); we claim no novel rule-\emph{engine} machinery---and \emph{demonstrate} it: the RBAC, ABAC, and TRAC layers are rules-as-data that run unchanged on a standard OPA/Rego runtime with decisions verified bit-identical to our reference engine (\S\ref{sec:substrate_portability}, Table~\ref{tab:substrate_comparison}). The pipeline consumes \emph{no ground-truth label}: the task domain is inferred from task text by BM25 (\S\ref{sec:domain_inference}), closing the only oracle dependency. A SecFail-vs-eligible-correct-admission sweep is computable from released logs without further LLM calls (\S\ref{sec:architecture}--\ref{sec:layers},~\ref{sec:operating_sweep}).
+  \item A \textbf{task-relational admission primitive and its instantiation, PALADIN}: a predicate that authorises a tool invocation on the \emph{semantic coherence between the task and the proposed bundle}---in-domain coverage, mutation safety, and task--tool relevance---realised as the TRAC stage of an invocation-time pipeline (SPIFFE/SPIRE identity, RBAC, ABAC, fact extraction, and TRAC over an \emph{agnostic} $\{$domain$\}{:}\{$action$\}$ capability model). This is a distinct authorisation axis from RBAC (caller$\to$tool), ABAC (attributes), TBAC (workflow lifecycle~\cite{thomas1997tbac}), and ReBAC (entity relationships~\cite{fong2011rebac}) (\S\ref{sec:related}); we claim no novel rule-\emph{engine} machinery---and \emph{demonstrate} it: the RBAC, ABAC, and TRAC layers are rules-as-data that run unchanged on a standard OPA/Rego runtime with decisions verified bit-identical to our reference engine (\S\ref{sec:substrate_portability}). The pipeline consumes \emph{no ground-truth label}: the task domain is inferred from task text by BM25 (\S\ref{sec:domain_inference}), closing the only oracle dependency. A SecFail-vs-eligible-correct-admission sweep is computable from released logs without further LLM calls (\S\ref{sec:architecture}--\ref{sec:layers},~\ref{sec:operating_sweep}).
 
   \item \textbf{Model-invariant deterministic floor}: across three OpenAI generations the deterministic stack returns an \emph{identical} security profile ($F_1\!=\!0.844$, SecFail $=10.7\%$, eligible-correct admission $=43.9\%$)---by construction, since it conditions on the bundle, not the model---while LLM-only $F_1$ ranges over $0.28$ on the same inputs. Composing the model's own verdict gate sharpens the floor to $2.1\%$ (gpt-4o) and never exceeds it for a weak judge: the policy bounds the worst case. A blind non-OpenAI validator (Claude Opus 4.8, $N\!=\!45$) falls within the OpenAI LLM-only band, with the composed pipeline converging across both vendors (\S\ref{sec:stack_guarantee},~\ref{sec:cross_vendor},~\ref{sec:newer_not_better}).
 
@@ -330,53 +330,30 @@ The operator $\rhd$ gives $\Pi$ three properties used throughout. \textbf{(P1) M
 \subsection{TRAC: an ordered, typed production rule engine}
 \label{sec:trac}
 
-TRAC (Task-Relational Access Control) conditions the admission decision on the \emph{relation between the task and the proposed tool bundle}---in-domain coverage, mutation safety, and task--tool relevance---the one axis RBAC (caller$\to$tool) and ABAC (subject/resource attributes) structurally cannot express, and distinct from the workflow-lifecycle axis of TBAC~\cite{thomas1997tbac} and the entity-relationship axis of ReBAC~\cite{fong2011rebac} (\S\ref{sec:related}). We position this task-relational predicate as a modest access-control \emph{primitive} for agentic settings; we make no claim of novel rule-\emph{engine} machinery, and explicitly disclaim proof-theoretic ``higher-order logic.'' The engine's expressive content is equivalent to a typed Cedar~\cite{cutler2024cedar} or OPA/Rego extension with custom builtins for continuous LLM-emitted scores (Table~\ref{tab:substrate_comparison}); an OPA/Rego re-implementation evaluating the identical rules-as-data reproduces every decision on a standard OPA runtime (\S\ref{sec:substrate_portability}), so only the \emph{performance} cost of the substrate remains to be benchmarked. The remaining scientific contributions are the measurement framework and the empirical findings. The engine has four properties: \emph{typed} (a fixed-signature schema of booleans, enums, and reals); \emph{staged} (facts are derived in $\phi=S_5$ before any $S_6$ rule fires, so evaluation is a pure function of the fact base and policy text); \emph{ordered} (rules fire in policy-declared priority, making the decision a total function of $\Phi(r)$ and policy text); and \emph{partitioned} into \emph{terminal} DENY/ALLOW rules that short-circuit and \emph{advisory} alert-only rules (marked in Table~\ref{tab:trac_rules}) that never change the ALLOW/DENY outcome. Evaluation is $O(n)$ in the rules given pre-computed facts; RBAC, ABAC, and TRAC evaluate independently.
+TRAC (Task-Relational Access Control) conditions the admission decision on the \emph{relation between the task and the proposed tool bundle}---in-domain coverage, mutation safety, and task--tool relevance---the one axis RBAC (caller$\to$tool) and ABAC (subject/resource attributes) structurally cannot express, and distinct from the workflow-lifecycle axis of TBAC~\cite{thomas1997tbac} and the entity-relationship axis of ReBAC~\cite{fong2011rebac} (\S\ref{sec:related}). We position this task-relational predicate as a modest access-control \emph{primitive} for agentic settings; we make no claim of novel rule-\emph{engine} machinery, and explicitly disclaim proof-theoretic ``higher-order logic.'' The engine's expressive content is equivalent to a typed Cedar~\cite{cutler2024cedar} or OPA/Rego extension with custom builtins for continuous LLM-emitted scores; an OPA/Rego re-implementation evaluating the identical rules-as-data reproduces every decision on a standard OPA runtime (\S\ref{sec:substrate_portability}), so only the \emph{performance} cost of the substrate remains to be benchmarked. The remaining scientific contributions are the measurement framework and the empirical findings. The engine has four properties: \emph{typed} (a fixed-signature schema of booleans, enums, and reals); \emph{staged} (facts are derived in $\phi=S_5$ before any $S_6$ rule fires, so evaluation is a pure function of the fact base and policy text); \emph{ordered} (enforcing rules fire in policy-declared order and short-circuit on the first denial, making the decision a total function of $\Phi(r)$ and policy text); and \emph{partitioned} into \emph{enforcing} rules that change the ALLOW/DENY decision and \emph{advisory} alert-only rules that only write to the audit trail (both grouped in Table~\ref{tab:trac_rules}). Evaluation is $O(n)$ in the rules given pre-computed facts; RBAC, ABAC, and TRAC evaluate independently.
 
 \begin{table}[!t]
 \centering
-\caption{TRAC production rule base (\texttt{policies/trac\_rules.yaml}). Rules fire in priority order. \emph{Enforcing} rules (DENY) determine the final action and short-circuit; \emph{advisory} rules raise an auditable alert without changing ALLOW/DENY. A capability is agnostic: $\{\textit{domain}\}{:}\{\textit{action}\}$, the tool's MCP plus read/write (\S\ref{sec:capability}).}
+\caption{PALADIN's four agnostic TRAC rules---declarative and extensible. The two \textbf{DENY} rules change the admission decision; the two \emph{alert} rules only annotate the audit trail. Each conditions on the task$\leftrightarrow$bundle relation (\texttt{write\_safety} on a within-bundle safety check)---the axis RBAC and ABAC cannot express.}
 \label{tab:trac_rules}
 \footnotesize
 \begin{adjustbox}{max width=\columnwidth}
-\begin{tabular}{@{}clll@{}}
+\begin{tabular}{@{}lllc@{}}
 \toprule
-\textbf{Pri.} & \textbf{Rule} & \textbf{Concern} & \textbf{Action} \\
+\textbf{Rule} & \textbf{Relation tested} & \textbf{Fires when} & \textbf{Effect} \\
 \midrule
-105 & capability\_coverage & Domain coverage ($\{d\}{:}\textrm{read}$) & DENY \\
-100 & write\_safety        & Destroy without verifying read & advisory \\
- 95 & tool\_relevance      & Lexical task--tool relevance (BM25) & DENY \\
- -- & action\_coherence    & Read-intent task, mutating bundle & advisory \\
-\bottomrule
-\multicolumn{4}{@{}l}{\scriptsize Advisory rules emit an alert into the audit trail; only enforcing rules change the decision.}
-\end{tabular}
-\end{adjustbox}
-\end{table}
-
-An example rule (\texttt{capability\_coverage}, priority $105$) denies when no tool in the bundle provides the required capability $\{d_\tau\}{:}\textrm{read}$ for the leak-free inferred task domain $d_\tau$ (\S\ref{sec:domain_inference}); a domain-mismatch denial is reversed by \emph{corroborated coverage} when the selected tools are strongly task-relevant (mean BM25 $\geq 4.0$). TRAC is fail-secure, deterministic, and auditable: predicates default conservatively on missing facts, identical facts yield identical decisions, and every triggered rule emits a readable explanation.
-
-\paragraph{Substrate comparison.} Table~\ref{tab:substrate_comparison} situates TRAC against established policy languages. The relevant feature set for invocation-time agentic AC---typed continuous LLM-emitted scores, derived predicates as first-class rule inputs, ordered short-circuit denial with auditable triggered-rule trails, and a fixed pre-rule fact-derivation stage---is expressible in Cedar with custom extensions, in OPA/Rego with custom builtins, and in Sentinel with imports; none of them ship it out of the box. TRAC is the substrate we used to make the measurement contributions realisable; an OPA/Rego re-implementation of the same rule base on the same fact extractor reproduces every decision (\S\ref{sec:substrate_portability}), confirming the substrate choice changes none of the empirical findings. A Cedar port and a performance benchmark are the remaining follow-ups.
-
-\begin{table}[!t]
-\centering
-\caption{TRAC vs.\ established policy substrates on the features exercised by PALADIN's S6 stage. ``Native'' = ships with the language; ``Ext.'' = expressible via custom extensions/builtins/imports; ``---'' = not idiomatic.}
-\label{tab:substrate_comparison}
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{adjustbox}{max width=\columnwidth}
-\begin{tabular}{@{}lcccc@{}}
-\toprule
-\textbf{Feature} & \textbf{TRAC} & \textbf{Cedar} & \textbf{OPA/Rego} & \textbf{Sentinel} \\
-\midrule
-Typed fact schema (bool/enum/real)        & Native & Native     & Ext.\ (schema) & Native \\
-Continuous LLM-emitted scores             & Native & Ext.       & Ext.\ (builtin) & Ext.\ (import) \\
-Derived predicates as 1st-class rule inputs & Native & ---       & Native (rules) & Native \\
-Ordered short-circuit denial              & Native & Native (forbid) & Ext.\ (order) & Native \\
-Pre-rule fact-derivation stage (S5)       & Native & ---        & Ext.\ (modules) & Ext. \\
-Triggered-rule audit trail                & Native & Native     & Native         & Native \\
+capability\_coverage & task domain $\leftrightarrow$ bundle domains & no tool in the task's domain & \textbf{DENY} \\
+tool\_relevance      & task text $\leftrightarrow$ tool descriptions & little text overlap & \textbf{DENY} \\
+write\_safety        & destructive op $\leftrightarrow$ verifying read & delete, no prior read & alert \\
+action\_coherence    & task intent $\leftrightarrow$ bundle actions & read task, mutating bundle & alert \\
 \bottomrule
 \end{tabular}
 \end{adjustbox}
 \end{table}
+
+These four rules instantiate TRAC concretely; they are declarative data, so an operator can retune thresholds or add rules without touching the engine. The two enforcing rules gate admission: \texttt{capability\_coverage} denies a bundle when none of its tools operates in the task's domain---inferred from task text alone, so the check reads no ground-truth label (\S\ref{sec:domain_inference}) and softened by \emph{corroborated coverage} (\S\ref{sec:corroborated})---while \texttt{tool\_relevance} denies a bundle whose tools have low lexical (BM25) overlap with the task. The two advisory rules only annotate the audit trail: \texttt{write\_safety} on a destructive operation lacking a verifying read, and \texttt{action\_coherence} on a read-only-sounding task that selected mutating tools. All are fail-secure and deterministic---predicates default conservatively on missing facts, and identical facts yield identical, individually-explained decisions---and the set is illustrative rather than exhaustive: further task-relational predicates compose in the same typed, ordered form.
+
+\paragraph{Engine portability.} The feature set S6 exercises---typed continuous LLM-emitted scores, derived predicates as first-class rule inputs, ordered short-circuit denial with auditable triggered-rule trails, and a fixed pre-rule fact-derivation stage---is not exotic: each is native or a standard extension away in commodity policy engines (Cedar extension functions, OPA/Rego builtins and modules, Sentinel imports), none of which ships the full set out of the box. We therefore treat the engine as interchangeable and verify it directly---an OPA/Rego re-implementation of the identical rules-as-data reproduces every decision on a standard runtime (\S\ref{sec:substrate_portability}), so the substrate choice changes none of the empirical findings, and a Cedar port plus a performance benchmark are the remaining follow-ups.
 
 %==============================================================================
 % SECTION 6: IDENTITY INFRASTRUCTURE
@@ -442,31 +419,34 @@ All numbers are computed from the released raw logs; full per-row confusion matr
 \subsection{The Deterministic Stack Masks Model Variance (Validation)}
 \label{sec:stack_guarantee}
 
-The deterministic stack (RBAC$\wedge$ABAC$\wedge$TRAC) produces an \emph{identical} security profile across all three OpenAI-panel models (Table~\ref{tab:stack_guarantee}, E1 row). This is exact, not approximate: in validation the candidate bundle being judged is fixed per task, and the deterministic layers condition only on the bundle, the persona, and the leak-free inferred task domain---never on the model---so they return bit-identical decisions whichever LLM authored the verdict. E1 therefore reads $F_1=0.844$, SecFail $=10.7\%$, and eligible-correct admission $=43.9\%$ for every model, with overlapping bootstrap CIs by construction. The LLM-only baseline (E4), on the same inputs, swings over $0.28$ in $F_1$ and from $27\%$ to $66\%$ in SecFail. The security profile is thus a property of the stack, not the model.
+PALADIN is deployed as the composition FULL $=$ the model's own verdict \emph{behind} the deterministic floor; it complements the LLM rather than replacing it. Table~\ref{tab:stack_guarantee} reads that composition per model. Each LLM judging \emph{alone} (E4) is an unreliable admission control---SecFail ranges from $26.8\%$ (gpt-4o) to $66.5\%$ (gpt-5.4), an $F_1$ spread of $0.28$ with no ordering by model recency---yet the same LLM behind the floor (FULL) is sharpened to SecFail $\leq 7.5\%$ for all three. What makes the composition trustworthy is the floor beneath it. Reported alone (E1), the deterministic stack (RBAC$\wedge$ABAC$\wedge$TRAC) returns an \emph{identical} profile for every model---$F_1=0.844$, SecFail $=10.7\%$, eligible-correct admission $=43.9\%$. This is exact, not approximate: in validation the judged bundle is fixed per task and the deterministic layers condition only on the bundle, the persona, and the leak-free inferred task domain---never on the model---so they return bit-identical decisions whichever LLM authored the verdict. The guarantee is thus a property of the stack, not the model.
 
-The stack is \emph{leak-free}: the task domain $d_\tau$ driving \path{capability_coverage} is inferred from task text by BM25 over the public MCP catalog (\S\ref{sec:domain_inference}), consuming no ground-truth label. Removing the oracle raises the floor: at $10.7\%$ SecFail the agnostic stack admits same-MCP wrong-tool bundles (ASTRA's \texttt{wrong} class) that no domain- or relevance-level signal can separate from correct ones---the irreducible \emph{semantic floor} that the model, not the policy, must close. Composing the stack with the LLM's own verdict (FULL rows $=$ stack $+$ gate) does that: a capable judge (gpt-4o) sharpens SecFail to $2.1\%$, gpt-3.5-turbo-16k to $4.6\%$, and gpt-5.4 to $7.5\%$. The deterministic floor still \emph{bounds} damage when the judge is poor: FULL never exceeds $10.7\%$ SecFail, whereas the LLM alone reaches $66\%$. This is the central trade we measure: an agnostic, leak-free policy floor that is model-invariant by construction, sharpened but never undermined by the model's own judgement.
+The floor is \emph{leak-free}: the task domain $d_\tau$ driving \path{capability_coverage} is inferred from task text by BM25 over the public MCP catalog (\S\ref{sec:domain_inference}), consuming no ground-truth label. That is why E1 sits at $10.7\%$ SecFail rather than zero: the agnostic stack still admits same-MCP wrong-tool bundles (ASTRA's \texttt{wrong} class) that no domain- or relevance-level signal can separate from correct ones---the irreducible \emph{semantic floor} that the model, not the policy, must close, which is exactly the work the verdict gate does in FULL. Crucially the floor \emph{bounds} the composition in both directions: a capable judge (gpt-4o) sharpens SecFail to $2.1\%$, but even a poor one cannot undo the floor---FULL never exceeds E1's $10.7\%$, whereas the LLM alone reaches $66\%$. This is the central trade we measure: an agnostic, leak-free policy floor, model-invariant by construction, sharpened but never undermined by the model's own judgement.
 
 \begin{table}[!t]
 \centering
-\caption{Three-model validation results. The deterministic stack (E1) is model-independent (one row, identical for all three models); the LLM alone (E4) is not; the full pipeline (FULL $=$ stack $+$ the model's verdict gate) refines the floor model-dependently. Convention~A, $n = 6{,}942$ rows per cell. ``Admit'' is the eligible-correct admission rate.}
+\caption{Validation across three OpenAI generations (Convention~A, $n=6{,}942$ rows per cell; ``Admit'' $=$ eligible-correct admission rate). PALADIN is deployed as \textbf{FULL}---the model's own verdict \emph{behind} the deterministic floor---so the load-bearing comparison is per model: \textbf{E4} (the LLM judging alone) vs.\ \textbf{FULL} (the same LLM $+$ floor). Every model is unreliable alone yet sharpened to SecFail $\leq 7.5\%$ once composed. The \textbf{floor alone} (E1) is listed once---not as a standalone recommendation, but because it is \emph{model-independent} by construction (identical for all three models) and therefore \emph{bounds} every FULL result: no FULL exceeds its $10.7\%$ SecFail.}
 \label{tab:stack_guarantee}
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}llccccc@{}}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}llccc@{}}
 \toprule
-\textbf{Model} & \textbf{Exp.} & $\mathbf{F_1}$ & \textbf{Prec.} & \textbf{Recall} & \textbf{SecFail} & \textbf{Admit} \\
+\textbf{Model} & \textbf{Config} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Admit} \\
 \midrule
-\textit{all three} & E1 (stack) & $0.844$ & $0.800$ & $0.893$ & $0.107$ & $43.9\%$ \\
+\multicolumn{2}{@{}l}{\textbf{Deterministic floor} --- E1 \textit{(model-independent)}} & $\mathbf{0.844}$ & $\mathbf{0.107}$ & $\mathbf{43.9\%}$ \\
 \midrule
-gpt-4o            & E4 (LLM)  & $0.760$ & $0.789$ & $0.733$ & $0.268$ & $50.9\%$ \\
-gpt-5.4           & E4 (LLM)  & $0.482$ & $0.856$ & $0.335$ & $0.665$ & $85.8\%$ \\
-gpt-3.5-turbo-16k & E4 (LLM)  & $0.652$ & $0.880$ & $0.518$ & $0.482$ & $82.3\%$ \\
-\midrule
-gpt-4o            & FULL      & $0.859$ & $0.765$ & $0.979$ & $0.021$ & $24.6\%$ \\
-gpt-5.4           & FULL      & $0.849$ & $0.786$ & $0.925$ & $0.075$ & $36.6\%$ \\
-gpt-3.5-turbo-16k & FULL      & $0.867$ & $0.795$ & $0.954$ & $0.046$ & $38.2\%$ \\
+\multirow{2}{*}{gpt-3.5-turbo-16k (2023)} & LLM alone (E4)    & $0.652$ & $0.482$ & $82.3\%$ \\
+                                          & $+$\,floor (FULL) & $0.867$ & $0.046$ & $38.2\%$ \\
+\addlinespace[3pt]
+\multirow{2}{*}{gpt-4o (2024)}            & LLM alone (E4)    & $0.760$ & $0.268$ & $50.9\%$ \\
+                                          & $+$\,floor (FULL) & $0.859$ & $0.021$ & $24.6\%$ \\
+\addlinespace[3pt]
+\multirow{2}{*}{gpt-5.4 (2026)}           & LLM alone (E4)    & $0.482$ & $0.665$ & $85.8\%$ \\
+                                          & $+$\,floor (FULL) & $0.849$ & $0.075$ & $36.6\%$ \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 \paragraph{Operating point.} The E1 profile comes from the released policy: the \path{capability_coverage} domain floor, the \path{tool_relevance} BM25 cutoff ($<\!1.0$), and the corroborated-coverage rescue bar ($\geq\!4.0$), all editable in \path{policies/trac_rules.yaml}. It is deliberately availability-leaning ($43.9\%$ admission) relative to the old oracle-aided alignment policy; \S\ref{sec:operating_sweep} characterises the SecFail/admission trade-off, and \S\ref{sec:corroborated} gives the Pareto refinement.

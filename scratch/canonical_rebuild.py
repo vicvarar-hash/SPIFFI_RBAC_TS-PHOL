@@ -25,7 +25,7 @@ OUTDIR = os.path.join("scratch", "canonical_rows")
 VAL = [
     ("gpt-4o",            "20260613005419_gpt-4o_validation.json"),
     ("gpt-5.4",           "20260612191843_gpt-5-4_validation.json"),
-    ("gemini-2.5-pro",    "20260612160439_gemini-2-5-pro_validation.json"),
+    ("gemini-2.5-pro",    "20260708143259_gemini-2-5-pro_validation.json"),
     ("gpt-3.5-turbo-16k", "20260613141204_gpt-35-turbo-16k_validation.json"),
 ]
 SEL = [

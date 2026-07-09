@@ -1,19 +1,23 @@
 tsphol_rules:
 # ═══════════════════════════════════════════════════════════════════
-# TRAC — Task-relational ASSURANCE over the proposed tool bundle.
+# TRAC — Task-Relational Access Control over the proposed tool bundle.
 #
-# Two predicates, each expressing a property RBAC and ABAC structurally cannot:
-# RBAC authorises persona→domain→tool; ABAC checks subject/resource attributes;
-# neither relates the *task* to the *bundle*. TRAC does — task/MCP-agnostically:
-# a capability is just {domain}:{action} (the MCP a tool belongs to + read/write).
+# Four rules, each conditioning on the task<->bundle relation — which conventional
+# RBAC (persona->domain->tool) and ABAC (subject/resource attributes) do not express;
+# TRAC does, task/MCP-agnostically (a capability is {domain}:{action} = the tool's
+# MCP + read/write). Expressible over derived attributes on a standard engine
+# (OPA/Rego parity verified) — this is the predicate, not a new engine.
 #
-# Composition (the assurance model — see scripts/_authz_assurance.py):
+# Two ENFORCING rules change ALLOW/DENY; two ADVISORY rules only annotate the audit:
 #   1. capability_coverage — ENFORCING. Denies bundles that cannot operate in the
-#      task's declared domain. Zero legitimate cost in measurement, so it blocks.
-#   2. write_safety        — ADVISORY (enforce: false). Alerts on destructive ops
-#      without a verifying read, but does not block (it cannot deterministically
-#      tell a legitimate delete from a dangerous one — that is semantic).
-# Every bundle is assessed by both; only enforcing predicates change ALLOW/DENY.
+#      task's declared (BM25-inferred) domain.
+#   2. tool_relevance      — ENFORCING. Denies bundles whose selected tools have low
+#      BM25 relevance to the task text (complements capability_coverage).
+#   3. write_safety        — ADVISORY (enforce: false). Alerts on destructive ops
+#      without a verifying read (a legitimate vs. dangerous delete is semantic).
+#   4. action_coherence    — ADVISORY (enforce: false). Alerts on a read-intent task
+#      paired with a mutating bundle.
+# Every bundle is assessed by all four; only enforcing rules change ALLOW/DENY.
 # ═══════════════════════════════════════════════════════════════════
 
 # ───────────────────────────────────────────────────────────────────

@@ -72,12 +72,13 @@ for fn in sorted(glob.glob(os.path.join(D, "sel_*.json"))):
     r = metr(rows, d_e1)
     print(f'{name:26s} {len(rows):>5} | {r["F1"]:>6.3f} {r["SecFail"]:>8.4f} {r["admit"]:>6.1f}%')
 
-# RA-ICL paired on common cohort (gpt-5.4 none restricted to bm25's task set)
-print("\n--- RA-ICL paired (gpt-5.4, common cohort by task_idx) ---")
-none = {r["task_idx"]: r for r in load("sel_gpt-5.4_none.json")}
+# RA-ICL paired on common cohort (gpt-5.4), joined on the (task, persona) row identity.
+# NB: key by (task_idx, persona) -- keying by task_idx alone collapses the six personas.
+print("\n--- RA-ICL paired (gpt-5.4, common cohort by (task_idx, persona)) ---")
+none = {(r["task_idx"], r["persona"]): r for r in load("sel_gpt-5.4_none.json")}
 for variant in ("bm25", "random"):
     var = load(f"sel_gpt-5.4_{variant}.json")
-    ids = set(r["task_idx"] for r in var)
+    ids = set((r["task_idx"], r["persona"]) for r in var)
     none_sub = [none[i] for i in ids if i in none]
     rn = metr(none_sub, d_e1); rv = metr(var, d_e1)
     print(f'  cohort={len(ids)} none.SecFail={rn["SecFail"]:.4f} {variant}.SecFail={rv["SecFail"]:.4f} '

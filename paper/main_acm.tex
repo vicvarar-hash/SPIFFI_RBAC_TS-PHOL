@@ -428,26 +428,26 @@ The floor is \emph{leak-free}: the task domain driving \path{capability_coverage
 
 \begin{table}[!t]
 \centering
-\caption{Cross-vendor validation: the deterministic floor masks model variance (Convention~A, $n=6{,}942$ rows per model). Six models, three vendors, each judging blind with the \emph{same} \texttt{ValidationService} rubric. \textbf{E4} $=$ the LLM alone; \textbf{FULL} $=$ the same LLM behind the model-independent floor (E1, listed once: $F_1=0.844$, SecFail $=0.107$ for all). Every model is unreliable alone (E4 SecFail $0.27$--$0.67$) yet sharpens to SecFail $\leq7.5\%$ once composed; no FULL exceeds the floor. Non-OpenAI verdicts released.}
+\caption{Cross-vendor validation: the deterministic floor masks model variance (Convention~A, $n=6{,}942$ rows per model). Six models, three vendors, each judging blind with the \emph{same} \texttt{ValidationService} rubric. \textbf{E4} $=$ the LLM alone; \textbf{FULL} $=$ the same LLM behind the model-independent floor (E1, listed once: $F_1=0.844$, SecFail $=0.107$ for all). Every model is unreliable alone (E4 SecFail $0.27$--$0.67$) yet sharpens to SecFail $\leq7.5\%$ once composed; no FULL exceeds the floor. \textbf{FB} $=$ false-block rate (legitimate requests denied); it exposes the verdict gate's availability cost---the strictest judge (gpt-4o) drives SecFail to $0.021$ but FB to $75.4\%$. Non-OpenAI verdicts released.}
 \label{tab:stack_guarantee}
 \footnotesize
 \setlength{\tabcolsep}{6pt}
 \begin{adjustbox}{max width=\columnwidth}
-\begin{tabular}{@{}lcccc@{}}
+\begin{tabular}{@{}lccccc@{}}
 \toprule
- & \multicolumn{2}{c}{\textbf{E4 (LLM alone)}} & \multicolumn{2}{c}{\textbf{FULL (floor$+$gate)}} \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-\textbf{Model (vendor, year)} & $\mathbf{F_1}$ & \textbf{SecFail} & $\mathbf{F_1}$ & \textbf{SecFail} \\
+ & \multicolumn{2}{c}{\textbf{E4 (LLM alone)}} & \multicolumn{3}{c}{\textbf{FULL (floor$+$gate)}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-6}
+\textbf{Model (vendor, year)} & $\mathbf{F_1}$ & \textbf{SecFail} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{FB} \\
 \midrule
-\multicolumn{5}{@{}l}{\textbf{Deterministic floor} --- E1 \textit{(model-independent)}: $F_1\,0.844$, SecFail $0.107$}\\
+\multicolumn{6}{@{}l}{\textbf{Deterministic floor} --- E1 \textit{(model-independent)}: $F_1\,0.844$, SecFail $0.107$, FB $56.1\%$}\\
 \midrule
-gpt-3.5-turbo-16k \textit{(OpenAI '23)}    & 0.652 & 0.482 & 0.867 & 0.046 \\
-gpt-4o \textit{(OpenAI '24)}               & 0.760 & 0.268 & 0.859 & 0.021 \\
-gpt-5.4 \textit{(OpenAI '26)}              & 0.482 & 0.665 & 0.849 & 0.075 \\
+gpt-3.5-turbo-16k \textit{(OpenAI '23)}    & 0.652 & 0.482 & 0.867 & 0.046 & 61.8 \\
+gpt-4o \textit{(OpenAI '24)}               & 0.760 & 0.268 & 0.859 & 0.021 & 75.4 \\
+gpt-5.4 \textit{(OpenAI '26)}              & 0.482 & 0.665 & 0.849 & 0.075 & 63.4 \\
 \addlinespace[2pt]
-claude-opus-4.8 \textit{(Anthropic '26)}   & 0.667 & 0.493 & \textbf{0.876} & 0.044 \\
-claude-sonnet-4.6 \textit{(Anthropic '26)} & 0.645 & 0.517 & 0.870 & 0.056 \\
-gemini-2.5-pro \textit{(Google '26)}       & 0.535 & 0.628 & 0.867 & 0.061 \\
+claude-opus-4.8 \textit{(Anthropic '26)}   & 0.667 & 0.493 & \textbf{0.876} & 0.044 & 56.8 \\
+claude-sonnet-4.6 \textit{(Anthropic '26)} & 0.645 & 0.517 & 0.870 & 0.056 & 56.8 \\
+gemini-2.5-pro \textit{(Google '26)}       & 0.535 & 0.628 & 0.867 & 0.061 & 57.3 \\
 \bottomrule
 \end{tabular}
 \end{adjustbox}
@@ -490,11 +490,11 @@ Marginal necessity and first-firing attribution disagree sharply. Attributing ev
 \subsection{Retrieval-Augmented In-Context Learning for Selection}
 \label{sec:raicl}
 
-Switching to selection mode, we test whether BM25 retrieval-augmented in-context learning (\S\ref{sec:raicl_method}, gpt-5.4) lifts both tool-selection quality and downstream classification. Because the +C variant holds out the $405$ training-pool tasks as the exemplar pool, baseline and +C runs cover different cohorts ($1{,}157$ vs.\ $752$ unique tasks). We fingerprint-join the common $4{,}512$ rows by SHA-256 of $(\textit{task text}, \textit{sorted MCPs}, \textit{match\_tag}, \textit{persona\_key})$; persona is included so that each (task, persona) row is identified uniquely across the $6$ personas. We then report all inferential statistics on this paired cohort (Table~\ref{tab:raicl_security}); the asymmetric comparison is a cohort-shift diagnostic only. The released join script verifies one-to-one mapping prior to bootstrap resampling.
+Switching to selection mode, we test whether BM25 retrieval-augmented in-context learning (\S\ref{sec:raicl_method}, gpt-5.4) lifts both tool-selection quality and downstream classification. Because the +C variant holds out the $405$ training-pool tasks as the exemplar pool, baseline and +C runs cover different cohorts ($1{,}157$ vs.\ $752$ unique tasks). We join the common $4{,}512$ rows on the stable $(\textit{task}, \textit{persona})$ row identity---the one-to-one key across the six personas (a content hash is unsuitable: ASTRA contains duplicate task \emph{texts}). We then report all inferential statistics on this paired cohort (Table~\ref{tab:raicl_security}); the asymmetric comparison is a cohort-shift diagnostic only. The released join script (\path{scratch/raicl_join.py}) verifies the one-to-one mapping and reproduces the table prior to bootstrap resampling.
 
 \begin{table}[!t]
 \centering
-\caption{Selection-mode results, gpt-5.4 (Convention~A): no retrieval, random-exemplar RA-ICL, and BM25 RA-ICL, on the common $4{,}512$-row paired cohort (SHA-256 fingerprint join including \texttt{persona\_key}). ``Exact'' is tool exact-match on the \texttt{correct} slice. The $\Delta$ rows compare BM25 to the no-retrieval baseline; both SecFail deltas have bootstrap CIs excluding zero.}
+\caption{Selection-mode results, gpt-5.4 (Convention~A): no retrieval, random-exemplar RA-ICL, and BM25 RA-ICL, on the common $4{,}512$-row paired cohort (joined on the $(\textrm{task},\textrm{persona})$ row identity). ``Exact'' is tool exact-match on the \texttt{correct} slice. The $\Delta$ rows compare BM25 to the no-retrieval baseline; both SecFail deltas have bootstrap CIs excluding zero.}
 \label{tab:raicl_security}
 \scriptsize
 \setlength{\tabcolsep}{2.2pt}
@@ -574,7 +574,7 @@ Adversarial task text & TRAC's enforcing predicates are BM25 over adversary-cont
 \midrule
 \multicolumn{2}{@{}l}{\textit{Statistical}} \\
 Layer marginals & Paired task-level bootstrap $95\%$ CIs ($1{,}000$ resamples); per-model and per-domain agreement provide robustness checks. \\
-RA-ICL cohort-shift & Baseline $n\!=\!6{,}942$ vs.\ +C $n\!=\!4{,}512$ reconciled via SHA-256 fingerprint join on $(\textit{task},\textit{MCPs},\textit{match\_tag})$; join script released. \\
+RA-ICL cohort-shift & Baseline $n\!=\!6{,}942$ vs.\ +C $n\!=\!4{,}512$ reconciled by joining on the $(\textit{task},\textit{persona})$ row identity; join script released (\path{scratch/raicl_join.py}). \\
 Policy dependence & Per-layer $\Delta\mathrm{SecFail}$ upper-bounds damage of silently disabling a rule family; controlled perturbation study deferred (\S\ref{sec:future_work}). \\
 Domain inference & Task domain inferred from task text by BM25, consuming \emph{no} ground-truth label (\S\ref{sec:domain_inference}); an earlier \texttt{gt\_mcps[0]} stand-in is removed, so both modes are leak-free. The $\sim\!60$--$70\%$ top-1 accuracy is the honest cost, mitigated by corroborated coverage (\S\ref{sec:corroborated}). \\
 \bottomrule

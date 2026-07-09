@@ -1,0 +1,72 @@
+{
+  "coupled (Conv A)": {
+    "n_legit": 1977,
+    "configs": {
+      "RBAC only": {
+        "f1": 0.7925,
+        "secfail": 0.2417,
+        "false_block": 0.39
+      },
+      "ABAC only": {
+        "f1": 0.532,
+        "secfail": 0.6103,
+        "false_block": 0.1897
+      },
+      "TRAC only": {
+        "f1": 0.5826,
+        "secfail": 0.5503,
+        "false_block": 0.2362
+      },
+      "RBAC+ABAC": {
+        "f1": 0.7952,
+        "secfail": 0.2232,
+        "false_block": 0.4446
+      },
+      "FULL (R+A+T)": {
+        "f1": 0.844,
+        "secfail": 0.1067,
+        "false_block": 0.5615
+      }
+    },
+    "dropone_pp": {
+      "RBAC": -20.7,
+      "ABAC": -1.01,
+      "TRAC": -11.64
+    }
+  },
+  "independent (match_tag)": {
+    "n_legit": 3474,
+    "configs": {
+      "RBAC only": {
+        "f1": 0.5667,
+        "secfail": 0.346,
+        "false_block": 0.6528
+      },
+      "ABAC only": {
+        "f1": 0.3977,
+        "secfail": 0.6687,
+        "false_block": 0.3342
+      },
+      "TRAC only": {
+        "f1": 0.5992,
+        "secfail": 0.4671,
+        "false_block": 0.2453
+      },
+      "RBAC+ABAC": {
+        "f1": 0.5753,
+        "secfail": 0.3195,
+        "false_block": 0.6839
+      },
+      "FULL (R+A+T)": {
+        "f1": 0.6519,
+        "secfail": 0.1528,
+        "false_block": 0.7504
+      }
+    },
+    "dropone_pp": {
+      "RBAC": -15.37,
+      "ABAC": -1.44,
+      "TRAC": -16.67
+    }
+  }
+}

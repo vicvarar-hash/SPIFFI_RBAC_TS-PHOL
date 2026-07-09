@@ -1,8 +1,8 @@
 """Policy-independent label + operating-point frontier (deterministic, no API).
 
-Reviewers A & B (SACMAT R5), remaining accept conditions:
-  (3) a label defined *independently of any policy artifact*, and
-  (4) a recommended *deployable* operating point on the SecFail/false-block frontier.
+Two robustness analyses:
+  (a) a label defined *independently of any policy artifact*, and
+  (b) a recommended *deployable* operating point on the SecFail/false-block frontier.
 
 Both are computable offline from the frozen canonical rows (val gpt-4o; the deterministic floor is
 model-invariant). No replay, no API.

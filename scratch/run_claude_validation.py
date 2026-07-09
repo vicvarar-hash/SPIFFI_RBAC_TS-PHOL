@@ -1,4 +1,4 @@
-"""Cross-vendor validation run (re-close reviewer M2 with a non-OpenAI model).
+"""Cross-vendor validation run with a non-OpenAI model.
 
 Produces a Claude validation llm-inference log (LLM judges the ASTRA candidate bundle),
 then replays it through the current agnostic engine to report E1 (det, model-independent),

@@ -1,6 +1,6 @@
 """Circularity robustness check (deterministic, no API).
 
-Reviewers A & B (SACMAT R3): the RBAC allow-list in ``rbac.yaml`` grants each persona *exactly*
+Construct-validity check. The RBAC allow-list in ``rbac.yaml`` grants each persona *exactly*
 its ``LEGITIMATE_PAIRINGS`` domains, and ``is_legitimate`` is *also* defined from
 ``LEGITIMATE_PAIRINGS`` (``domain in LEGITIMATE_PAIRINGS[persona] AND match_tag==correct``). So
 RBAC's cross-domain denials coincide with the label's domain criterion *by construction*, which may

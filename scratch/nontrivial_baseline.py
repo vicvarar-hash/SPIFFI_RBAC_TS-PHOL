@@ -1,6 +1,6 @@
 """Non-trivial baselines for TRAC (deterministic, no API).
 
-Reviewers A & B (SACMAT R4): comparing the stack only to "LLM alone" is a weak baseline. Is TRAC's
+Comparing the stack only to "LLM alone" is a weak baseline. Is TRAC's
 drop-one marginal the *task-relational axis*, or would ANY extra denial mechanism at a matched
 operating point do as well? Two baselines answer this on the model-invariant validation floor
 (gpt-4o log; the deterministic floor is identical across models):

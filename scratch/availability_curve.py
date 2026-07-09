@@ -1,8 +1,8 @@
 """Security/availability trade-off curve (deterministic, no API).
 
-Reviewers A/B/C (SACMAT R3): the paper folds availability into F1 and never reports a separate
-false-block rate; the headline floor (SecFail 0.107) is reached at a ~56% false-block rate. They ask
-for (i) the false-block rate as a first-class number, per model, and (ii) the SecFail<->false-block
+Motivation: the paper folds availability into F1 and never reports a separate
+false-block rate; the headline floor (SecFail 0.107) is reached at a ~56% false-block rate. We report
+(i) the false-block rate as a first-class number, per model, and (ii) the SecFail<->false-block
 trade-off curve as the operating point moves.
 
 We sweep the enforcing ``tool_relevance`` BM25 threshold (``PALADIN_TOOLREL_THRESHOLD``, default 1.0)

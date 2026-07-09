@@ -1,6 +1,6 @@
 """Cross-vendor SELECTION-mode run (full ASTRA set) for a non-OpenAI model.
 
-Tier-3 rebuttal to reviewers: the cross-vendor panel was validation-only. Here each
+Extends the cross-vendor panel beyond validation-only. Here each
 model *generates* the tool bundle (selection mode); we replay the generated bundles
 through the deterministic floor (E1) to test whether the floor's SecFail stays low
 when the model, not ASTRA, produces the bundle. Reports E1 SecFail/admission and

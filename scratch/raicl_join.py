@@ -1,7 +1,7 @@
 """RA-ICL paired-cohort join for Table `raicl_security` (deterministic, no API).
 
-Reviewer (SACMAT R4) noted that the quick diagnostic in ``canonical_tables.py`` keyed the RA-ICL
-pairing by ``task_idx`` alone, collapsing the six personas, and that the paper's claimed content
+The quick diagnostic in ``canonical_tables.py`` keyed the RA-ICL
+pairing by ``task_idx`` alone, collapsing the six personas, and the paper's claimed content
 fingerprint join had no released script. This is that script.
 
 The baseline (``none``) covers 1,157 tasks x 6 personas = 6,942 rows; the retrieval variants hold out

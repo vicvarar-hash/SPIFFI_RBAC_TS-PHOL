@@ -1,6 +1,6 @@
 """Adversarial task-text robustness of the deterministic TRAC floor (no API, fully deterministic).
 
-Reviewers (all three) flagged the core soundness gap: TRAC's two ENFORCING rules --
+Core soundness question. TRAC's two ENFORCING rules --
 capability_coverage (BM25 domain inference) and tool_relevance (BM25 of tool descriptions) --
 are computed entirely from the *adversary-controlled task text*, yet adversarial text is out of
 scope. This measures the exposure directly.

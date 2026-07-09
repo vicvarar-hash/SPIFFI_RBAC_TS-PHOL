@@ -1,6 +1,6 @@
 """Full-factorial layer ablation (deterministic, from canonical rows; no API).
 
-Reviewer A: E1->E2->E3 successive deltas are order-dependent and don't isolate TRAC's marginal
+Motivation: E1->E2->E3 successive deltas are order-dependent and don't isolate TRAC's marginal
 on top of conventional access control. Here we score ALL non-empty layer subsets from the released
 per-row decisions (validation; deterministic => model-independent), including the key missing cell
 RBAC+ABAC (no TRAC), and report the marginal value of each layer added last.

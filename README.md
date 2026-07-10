@@ -3,7 +3,7 @@
 A composable governance framework for securing LLM-based agentic tool selection
 through layered identity, attribute, and formal logic policies.
 
-> **Live Demo:** [paladin-duutz4i3lmxwm.thankfulsea-2363085b.eastus.azurecontainerapps.io](https://paladin-duutz4i3lmxwm.thankfulsea-2363085b.eastus.azurecontainerapps.io/)
+> **Anonymous artifact (for review):** https://anonymous.4open.science/r/PALADIN-anon
 
 ---
 
@@ -210,9 +210,9 @@ Trust domain: `spiffe://demo.local`
 ### Quick Start
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/vicvarar-hash/SPIFFI_RBAC_TS-PHOL.git
-cd SPIFFI_RBAC_TS-PHOL
+# 1. Clone the repository (anonymised mirror for review)
+git clone https://anonymous.4open.science/r/PALADIN-anon
+cd PALADIN-anon
 
 # 2. Install dependencies
 pip install -r requirements.txt

@@ -1,40 +1,40 @@
 {
   "configs": {
     "E1 (baseline: 2 enforcing BM25 rules)": {
-      "f1": 0.844,
-      "secfail": 0.1067,
-      "false_block": 0.5615
+      "f1": 0.8476,
+      "secfail": 0.1029,
+      "false_block": 0.5518
     },
     "E1 + action_coherence (structural)": {
-      "f1": 0.8462,
-      "secfail": 0.0997,
-      "false_block": 0.5716
+      "f1": 0.8499,
+      "secfail": 0.0951,
+      "false_block": 0.564
     },
     "E1 + write_safety (structural)": {
-      "f1": 0.8437,
-      "secfail": 0.1059,
-      "false_block": 0.566
+      "f1": 0.8473,
+      "secfail": 0.1021,
+      "false_block": 0.5564
     },
     "E1 + both structural enforcing": {
-      "f1": 0.8457,
-      "secfail": 0.0993,
-      "false_block": 0.5761
+      "f1": 0.8494,
+      "secfail": 0.0947,
+      "false_block": 0.5685
     }
   },
   "added_denial_quality": {
     "action_coherence": {
-      "fired": 55,
-      "catch": 35,
-      "block": 20,
-      "precision": 0.636,
-      "approved_base_rate": 0.379
+      "fired": 63,
+      "catch": 39,
+      "block": 24,
+      "precision": 0.619,
+      "approved_base_rate": 0.366
     },
     "write_safety": {
       "fired": 13,
       "catch": 4,
       "block": 9,
       "precision": 0.308,
-      "approved_base_rate": 0.379
+      "approved_base_rate": 0.366
     }
   }
 }

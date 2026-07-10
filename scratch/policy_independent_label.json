@@ -13,9 +13,9 @@
         "false_block": 0.1897
       },
       "TRAC only": {
-        "f1": 0.5826,
-        "secfail": 0.5503,
-        "false_block": 0.2362
+        "f1": 0.5908,
+        "secfail": 0.5436,
+        "false_block": 0.2226
       },
       "RBAC+ABAC": {
         "f1": 0.7952,
@@ -23,15 +23,15 @@
         "false_block": 0.4446
       },
       "FULL (R+A+T)": {
-        "f1": 0.844,
-        "secfail": 0.1067,
-        "false_block": 0.5615
+        "f1": 0.8476,
+        "secfail": 0.1029,
+        "false_block": 0.5518
       }
     },
     "dropone_pp": {
       "RBAC": -20.7,
-      "ABAC": -1.01,
-      "TRAC": -11.64
+      "ABAC": -0.93,
+      "TRAC": -12.02
     }
   },
   "independent (match_tag)": {
@@ -48,9 +48,9 @@
         "false_block": 0.3342
       },
       "TRAC only": {
-        "f1": 0.5992,
-        "secfail": 0.4671,
-        "false_block": 0.2453
+        "f1": 0.6181,
+        "secfail": 0.4498,
+        "false_block": 0.2297
       },
       "RBAC+ABAC": {
         "f1": 0.5753,
@@ -58,15 +58,15 @@
         "false_block": 0.6839
       },
       "FULL (R+A+T)": {
-        "f1": 0.6519,
-        "secfail": 0.1528,
-        "false_block": 0.7504
+        "f1": 0.6562,
+        "secfail": 0.1473,
+        "false_block": 0.745
       }
     },
     "dropone_pp": {
-      "RBAC": -15.37,
-      "ABAC": -1.44,
-      "TRAC": -16.67
+      "RBAC": -14.65,
+      "ABAC": -1.33,
+      "TRAC": -17.21
     }
   }
 }

@@ -28,6 +28,7 @@ from typing import Dict, List, Optional
 from rank_bm25 import BM25Okapi
 
 from app.services.task_domain_classifier import _MCP_DIR, _tokens
+from app.services.normalization import normalize_tool_name
 
 # Mean BM25 relevance below this -> the selected tools look irrelevant to the task (advisory flag).
 # Tuned on ASTRA: correct median ~5.0, wrong median ~1.6, null median ~0.0.
@@ -40,8 +41,8 @@ _THRESHOLD = THRESHOLD  # backward-compat alias
 # tools are at least this relevant to the task (mean BM25). Legit bundles whose task-domain was
 # mis-inferred still score high here (~5.7); wrong-domain / null attacks score low (~2.4 / ~0.4) —
 # so a high bar reverses false-denies without admitting attacks. ``<= 0`` disables it. Default 4.0
-# is the swept Pareto point (gpt-4o val, n=6942): legit-allow 43.3%->43.9%, TRAC over-deny 242->231,
-# at a 2-catch / +0.1pp-SecFail cost. Read at call time in ``predicate_engine``; env-overridable.
+# is the swept Pareto point (gpt-4o val, n=6942): it reverses domain-mis-inferred legit denials at
+# near-zero catch cost. Read at call time in ``predicate_engine``; env-overridable.
 RESCUE_RELEVANCE = float(os.environ.get("PALADIN_CAPCOV_RESCUE", "4.0"))
 
 
@@ -60,6 +61,15 @@ def _build():
                 names.append(nm)
                 corpus.append(_tokens((nm or "") + " " + (t.get("description") or "")))
     index = {n: i for i, n in enumerate(names)}
+    # Normalization-robust aliases. Callers (the TRAC predicate engine) pass tool names through
+    # ``normalize_tool_name`` (spaces/hyphens -> underscores) BEFORE the relevance lookup, but the
+    # catalog keys are the raw tool names, which are frequently hyphenated (``azmcp-*``,
+    # ``collection-indexes``, ``API-get-user``). Without an alias those tools never match the index,
+    # so they silently score as irrelevant (rel~0) — spuriously firing ``tool_relevance`` and
+    # suppressing the corroborated-coverage rescue. Add a normalized alias for every tool so the
+    # lookup matches regardless of hyphen/underscore form (raw keys kept; aliases never overwrite).
+    for n, i in list(index.items()):
+        index.setdefault(normalize_tool_name(n), i)
     return index, (BM25Okapi(corpus) if corpus else None)
 
 
@@ -76,7 +86,13 @@ def bundle_tool_relevance(tools, task_text: str) -> Optional[float]:
     if not _BM25 or not tools:
         return None
     scores = _BM25.get_scores(_tokens(task_text))
-    sel = [scores[_INDEX[t]] for t in tools if t in _INDEX]
+    sel = []
+    for t in tools:
+        j = _INDEX.get(t)
+        if j is None:                                  # hyphen/underscore-robust fallback
+            j = _INDEX.get(normalize_tool_name(t))
+        if j is not None:
+            sel.append(scores[j])
     if not sel:
         return None
     return float(statistics.mean(sel))

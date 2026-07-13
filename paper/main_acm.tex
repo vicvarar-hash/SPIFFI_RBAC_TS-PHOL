@@ -590,7 +590,7 @@ Implementation bugs & Eight raw logs and analysis scripts released; ASTRA replic
 \midrule
 \multicolumn{2}{@{}l}{\textit{External}} \\
 Vendor coverage & Three OpenAI generations $+$ a full blind non-OpenAI panel (Claude Opus 4.8, Claude Sonnet 4.6, Gemini 2.5 Pro; $n\!=\!6{,}942$ each, \S\ref{sec:cross_vendor}); open-weights (Llama, Mistral) deferred (\S\ref{sec:future_work}). \\
-Dataset & ASTRA v0.3 is the only public corpus with the required label structure (\S\ref{sec:dataset}); single-source risk is mitigated by fixed-threshold generalisation across its $8$ tool catalogs ($F_1\!\in\![0.78,0.89]$, \S\ref{sec:deployment_envelope}). A structurally comparable second corpus is future work. \\
+Dataset & ASTRA v0.3 is, to our knowledge, the only public corpus with the required label structure (\S\ref{sec:dataset}); single-source risk is mitigated by fixed-threshold generalisation across its $8$ tool catalogs ($F_1\!\in\![0.78,0.89]$, \S\ref{sec:deployment_envelope}). A structurally comparable second corpus is future work. \\
 \midrule
 \multicolumn{2}{@{}l}{\textit{Construct}} \\
 Per-bundle vs.\ per-tool & Our E4 is one LLM call per bundle; ASTRA LLM-ResM is per-tool with AND-aggregation---disclosed, consistent with the $0.075$ $F_1$ gap direction (\S\ref{sec:astra_replication}). \\

@@ -1,0 +1,8 @@
+# Large, regenerable prompt intermediates (rebuild via gen_prompts.py)
+payload.json
+context.txt
+catalog_tools.txt
+tasks.jsonl
+tasks_baseline_only.jsonl
+tasks_k25_only.jsonl
+tasks_summary.txt

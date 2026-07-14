@@ -129,7 +129,7 @@
 \begin{sloppypar}
 Autonomous LLM agents now invoke external tools through the Model Context Protocol (MCP), turning every tool call into an authorisation decision the protocol itself does not make. We argue this is an \emph{access-control} problem---and that the field has been answering the wrong question: \emph{semantic correctness is not authorisation correctness}. The tools that best accomplish a task can be exactly the ones an agent is not permitted to use, while a poorly-chosen bundle may be perfectly admissible. We introduce \textbf{PALADIN}, a deterministic invocation-time authorisation pipeline (SPIFFE/SPIRE identity, RBAC, ABAC, then TRAC), whose novel stage is \textbf{TRAC}---a \emph{task-relational} admission predicate that authorises an invocation on the coherence between the task and its proposed action-set.
 
-Our central result is one of \emph{magnitude}: the deterministic floor pins worst-case SecFail to a fixed, model-independent $10.3\%$ no single LLM reaches---the \emph{bound} itself (a conjunction of denials) holds by construction; the finding is how small and model-invariant the floor is. On ASTRA~\cite{elhelou2025astra}, an agentic tool-selection safety benchmark, six LLMs from three vendors used \emph{alone} as admission controllers wrongly admit $27$--$67\%$ of unsafe tool calls---unreliable, with no monotonic improvement across newer or stronger models. Composed \emph{behind} the floor, the \emph{same} models all converge to at most $7.5\%$. In the realistic \emph{generating} setting (the agent proposes the bundle), the same floor holds SecFail near $0.21$ at ${\approx}20\%$ admissible false-block---about twice the judging-mode floor, still well below any single LLM. Around this we build a measurement framework for layered authorisation: it separates an LLM \emph{judging} a candidate bundle from one \emph{generating} it, and shows that na\"ive attribution misranks which policy layers matter. The floor guards \emph{semi-honest} mis-scoping (the common case) at a bounded false-block cost; it composes with prompt-injection defences for adversarial input and needs no bespoke runtime (verified OPA/Rego parity). All policies, logs, and scripts are released.
+Our central result: this deterministic floor holds worst-case SecFail to a fixed $10.3\%$, identical across every model. On ASTRA~\cite{elhelou2025astra}, an agentic tool-selection safety benchmark, six LLMs from three vendors used \emph{alone} as admission controllers wrongly admit $27$--$67\%$ of unsafe tool calls---unreliable, with no monotonic improvement across newer or stronger models. Composed \emph{behind} the floor, the \emph{same} models all converge to at most $7.5\%$. Around this we build a measurement framework for layered authorisation: it separates an LLM \emph{judging} a candidate bundle from one \emph{generating} it, and shows that na\"ive attribution misranks which policy layers matter. The floor guards \emph{semi-honest} mis-scoping (the common case) at a bounded false-block cost; it composes with prompt-injection defences for adversarial input and needs no bespoke runtime (verified OPA/Rego parity). All policies, logs, and scripts are released.
 \end{sloppypar}
 \end{abstract}
 
@@ -504,40 +504,6 @@ The deterministic layers trace a \emph{monotone} frontier (each layer lowers Sec
 
 \textbf{The security/availability trade-off.} The full stack's eligible-correct admission---$44.8\%$ of correct candidates---is deliberately conservative, but the face value overstates the availability cost because it counts \emph{every} denied correct bundle, including ones a correct agent \emph{should} not be allowed to run. Of the $55.2$pp it does not admit, $44.5$pp are correct-but-\emph{unauthorised} bundles that RBAC/ABAC deny by least privilege (over-privileged or out-of-grant tool use---enforcement working as intended, not a false block); only $10.7$pp are genuine over-blocks of \emph{admissible} (correct \emph{and} authorised) work by the leak-free task-relational layer---the $19.3\%$ deployment false-block. That residual is an \emph{inference} cost and the operating point is tunable (\S\ref{sec:policy_dependence}). The low admission is therefore a deliberate max-security operating point on a policy-navigable frontier, not a fixed limitation.
 
-\subsection{Selection Mode: The Generating Deployment}
-\label{sec:selection}
-
-Validation isolates the floor by \emph{supplying} the candidate bundle; the realistic deployment is \emph{selection}, where the agent \emph{generates} the bundle and the floor gates it (there is no LLM verdict to compose---the model already acted). The safety label is the task's ASTRA scenario tag (\texttt{correct}/\texttt{wrong}/\texttt{null}) with persona authorisation---the \emph{required} admission outcome, not a per-generation re-scoring---applied to gate the generated bundle. Figure~\ref{fig:selection_pareto} plots the selection frontier for the two models with clean selection logs. At the shipped operating point the deterministic floor holds SecFail to $0.204$ (gpt-4o) / $0.219$ (gpt-5.4) at $\approx\!20\%$/$18\%$ admissible false-block---about \emph{twice} the judging-mode floor ($0.103$), the honest cost of the harder setting, yet still less than half any single LLM's E4 SecFail ($0.27$--$0.67$). The frontier is monotone and near-identical across the two models, so an operator can pick a SecFail/false-block operating point (e.g.\ SecFail $\leq\!0.18$ at a $\leq\!33\%$ false-block budget) largely independent of which model generates the bundle.
-
-\begin{figure}[!t]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    width=\columnwidth, height=3.6cm,
-    xlabel={Admissible false-block (\%)}, ylabel={SecFail},
-    xmin=11, xmax=36, ymin=0.08, ymax=0.245,
-    xtick={15,20,25,30,35}, ytick={0.10,0.14,0.18,0.22},
-    grid=major, grid style={gray!18},
-    tick label style={font=\scriptsize}, label style={font=\footnotesize},
-    legend style={font=\scriptsize, at={(0.97,0.97)}, anchor=north east,
-                  cells={anchor=west}, fill=white, fill opacity=0.85, draw=gray!40},
-    legend cell align={left},
-]
-\addplot[thick, blue!65!black, mark=*, mark size=1.5pt]
-  coordinates {(14.8,0.217)(18.4,0.208)(20.2,0.204)(22.8,0.198)(25.8,0.192)(29.4,0.181)(33.3,0.173)};
-\addlegendentry{gpt-4o (selection)}
-\addplot[thick, red!70!black, mark=square*, mark size=1.5pt]
-  coordinates {(13.9,0.233)(16.1,0.226)(18.0,0.219)(19.4,0.216)(22.6,0.209)(26.6,0.198)(30.2,0.188)};
-\addlegendentry{gpt-5.4 (selection)}
-\addplot[only marks, mark=star, mark size=3.2pt, black] coordinates {(19.3,0.103)};
-\addlegendentry{validation floor (judging)}
-\end{axis}
-\end{tikzpicture}
-\caption{Selection-mode Pareto frontier---the realistic \emph{generating} deployment (the agent proposes the bundle; the floor gates it, no LLM verdict). Each curve sweeps the \texttt{tool\_relevance} cutoff for one model (rescue bar $4.0$). At the shipped cutoff SecFail is near $0.21$---about twice the judging floor ($\star$, $0.103$)---and the operator trades false-block for SecFail along a monotone curve, every point well below any single LLM (E4 $0.27$--$0.67$).}
-\Description{Two monotone SecFail-versus-false-block curves for gpt-4o and gpt-5.4 in selection mode, near SecFail 0.2 at 20 percent false-block, with a star at the lower validation floor 0.103.}
-\label{fig:selection_pareto}
-\end{figure}
-
 \subsection{Substrate Portability: Verified OPA/Rego Parity}
 \label{sec:substrate_portability}
 
@@ -682,7 +648,7 @@ We release the complete PALADIN implementation as open-source software.\footnote
 \section{Conclusion}
 \label{sec:conclusion}
 
-Autonomous agents have turned the tool-invocation boundary into a security surface the Model Context Protocol leaves ungoverned, and the prevailing question---\emph{is the model safe?}---is the wrong one. A model's unaided judgment is neither stable nor monotone in capability: across our panel, ungoverned tool admission ranges from a competent validator (gpt-4o, E4 $F_1=0.760$) to a near-yes-machine that lets two-thirds of mis-scoped bundles through (gpt-5.4, E4 SecFail $=0.665$)---an $F_1$ span of $0.28$ with no ordering by model recency. The operative question is what must be enforced \emph{before} the call, regardless of which model authored the request---and our central result is a thin \emph{deterministic} admission layer that answers it at a fixed, model-independent SecFail of $10.3\%$ ($F_1$ $0.848$) no single LLM reaches. Its identity across models is by construction (it never consults one); the empirical substance is how low it sits. The guarantee is a property of the stack, not the LLM.
+Autonomous agents have turned the tool-invocation boundary into a security surface the Model Context Protocol leaves ungoverned, and the prevailing question---\emph{is the model safe?}---is the wrong one. A model's unaided judgment is neither stable nor monotone in capability: across our panel, ungoverned tool admission ranges from a competent validator (gpt-4o, E4 $F_1=0.760$) to a near-yes-machine that lets two-thirds of mis-scoped bundles through (gpt-5.4, E4 SecFail $=0.665$)---an $F_1$ span of $0.28$ with no ordering by model recency. The operative question is what must be enforced \emph{before} the call, regardless of which model authored the request---and our central result is that a thin \emph{deterministic} admission layer answers it, holding SecFail to a fixed $10.3\%$ ($F_1$ $0.848$) identically across every model. The guarantee is a property of the stack, not the LLM.
 
 Our measurement framework is built to show this rather than assert it. By separating what the model contributes from what the policy contributes---through dual-mode evaluation and two explicit metric conventions---it makes the masking effect measurable, and in doing so surfaces structure prior task-tool benchmarks could not: three deterministic layers of differing marginal weight (RBAC and TRAC individually load-bearing, ABAC a backstop), first-firing attribution that overstates upstream necessity while hiding ABAC's necessity when RBAC is absent, and a retrieval intervention that improves accuracy and security together. PALADIN contributes a task-relational admission predicate (derived-attribute ABAC) within a security-first floor---not a complete new access-control model, nor an end-to-end agent-safety solution. Its lesson for the agentic era is a single design principle: authorisation must not ride on model trustworthiness. Determinism, not capability, is what turns an unpredictable model into a predictable security surface.
 

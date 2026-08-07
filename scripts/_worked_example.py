@@ -97,13 +97,12 @@ print('FOUR-BUNDLE WALK on tau (advisor paraphrase), incident persona, E1 full p
 print('='*80)
 
 TAU = TAU_ADVISOR
+# Advisor's EXACT tab:worked bundles (real tool names verified present in mcp_servers/).
 # A: in-domain grafana reads -> expect ALLOW
-run_bundle('A', ['find_slow_requests', 'find_error_pattern_logs', 'list_incidents'], ['grafana'], TAU)
-# B: adds an unentitled stripe tool -> expect RBAC DENY (stripe not in incident's entitlements)
-run_bundle('B', ['find_slow_requests', 'create_refund'], ['grafana', 'stripe'], TAU)
-# C candidates: entitled-domain (atlassian) writes/destructive -> which one does prod ABAC deny?
-run_bundle('C1_add_comment', ['jira_add_comment'], ['atlassian'], TAU)
-run_bundle('C2_delete_issue', ['jira_delete_issue'], ['atlassian'], TAU)
-run_bundle('C3_update_issue', ['jira_update_issue'], ['atlassian'], TAU)
+run_bundle('A', ['query_prometheus', 'get_dashboard_by_uid'], ['grafana'], TAU)
+# B: adds an unentitled stripe write -> expect RBAC DENY (stripe not in incident's entitlements)
+run_bundle('B', ['query_prometheus', 'create_refund'], ['grafana', 'stripe'], TAU)
+# C: entitled-domain (atlassian) high-risk write -> expect ABAC DENY (needs L3, incident is L2)
+run_bundle('C_add_comment', ['jira_add_comment'], ['atlassian'], TAU)
 # D: entitled, read-only atlassian bundle, irrelevant to a grafana task -> expect TRAC DENY
-run_bundle('D', ['jira_search', 'jira_get_issue'], ['atlassian'], TAU)
+run_bundle('D', ['jira_search', 'confluence_search'], ['atlassian'], TAU)

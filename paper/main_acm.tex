@@ -197,49 +197,26 @@ NIST Zero Trust~\cite{rose2020zero} and SPIFFE~\cite{spiffe2022} establish crypt
 The agent-safety community has produced evaluation frameworks---Agent-SafetyBench~\cite{zhang2024agentsafetybench}, ToolEmu~\cite{ruan2024toolemu}, GuardAgent~\cite{xiang2024guardagent}, R-Judge~\cite{yuan2024rjudge}, ALMITA~\cite{arcadinho2024almita}, Constitutional AI~\cite{bai2022constitutional}, deceptive-alignment analyses~\cite{hubinger2024sleeper}---and prompt-injection defences~\cite{liu2024formalizing,zhan2024injecagent,debenedetti2024agentdojo,kim2025promptflow,inan2023llamaguard}. These treat the agent monolithically and do not enforce authorisation at the invocation boundary. MCP-specific work has begun mapping the landscape (16 threat categories~\cite{gupta2025security}, practical exploits~\cite{jamshidi2025securing}, cross-server tool poisoning~\cite{invariantlabs2025toolpoisoning}); multi-agent and behavioural-trust efforts~\cite{patil2026sentinelagent,schroederdewitt2025open,xu2025master,wu2023autogen,rao1995bdi,csa2025fortifying,cisco2025redefining} establish the problem space but offer ad-hoc rather than staged enforcement. Foundational tool-augmented architectures~\cite{schick2023toolformer,yao2023react,wang2023voyager,wang2024survey,xi2025rise} provide the agents but no governance for their invocations; PALADIN is architecture-agnostic and composes on top.
 
 %==============================================================================
-% SECTION 3: SYSTEM ARCHITECTURE
+% SECTION 3: THE PALADIN PIPELINE
 %==============================================================================
-\section{System Architecture}
+\section{The PALADIN Pipeline}
 \label{sec:architecture}
-
-\subsection{Pipeline Overview}
-\label{sec:pipeline_overview}
-
-The Unified Decision Engine executes six sequential stages with short-circuit semantics: any \texttt{DENY} from stages S1--S4 terminates the pipeline immediately (Figure~\ref{fig:pipeline}). S5 extracts typed facts; S6 (TRAC) consumes them for predicate-level evaluation.
-
-\begin{figure}[!t]
-\centering
-\includegraphics[width=0.8\columnwidth]{figures/pf1.png}
-\caption{PALADIN's six‑stage admission pipeline (short‑circuit S1–S4; S5 fact transformer → S6 TRAC). The deterministic stages are model‑independent; the LLM verdict gate composes \emph{conjunctively} with the deterministic floor (its drawn position is presentational---FULL $=$ floor $\wedge$ verdict) and is present only in validation, while in selection the LLM instead generates the bundle.}
-\Description{Flow diagram showing an MCP tool request passing through identity, registration, RBAC, ABAC, fact extraction, and TRAC stages before allow or deny.}
-\label{fig:pipeline}
-\end{figure}
-
-\subsection{Evaluation State and Short-Circuit Semantics}
-\label{sec:state_model}
-
-Each stage records \texttt{ALLOW}, \texttt{DENY}, or \texttt{NOT\_EVALUATED}; the final decision is the conjunction of evaluated stages. A \texttt{DecisionResult} carries the per-stage map, final decision (\texttt{ALLOW}/\texttt{DENY}), denial source, and audit trace. Short-circuiting yields three benefits: computational efficiency (S6 is skipped when cheaper checks suffice), security hardening (later stages cannot mask upstream denials), and audit clarity (the denial source unambiguously identifies the triggering concern).
-
-Beyond the per-stage states, the pipeline returns a single binary admission decision: $\Pi(r)=\text{ALLOW}$ only if every evaluated stage allows, and $\text{DENY}$ otherwise. There is no third outcome---a denied high-risk write simply stays \texttt{DENY}---which keeps every layer expressible as a standard ALLOW/DENY policy (\S\ref{sec:substrate_portability}). Advisory TRAC rules (\S\ref{sec:trac}) may additionally raise non-blocking alerts on an admitted bundle, but these never change the admission decision and are excluded from the security metrics.
-
-\subsection{Threat Model and Deployment Envelope}
-\label{sec:threat_model}
-
-\textbf{Adversary.} A \emph{semi-honest agent}: an authenticated LLM-driven workload that, given an operator- or workflow-supplied task, may select and emit a tool bundle that exceeds scope, crosses domains, targets writes without prior reads, or otherwise violates policy---through hallucination or over-helpful, helpfulness-optimised behaviour. It controls the \emph{emitted bundle}; the task text is trusted provenance (operator/workflow), which is what makes the task-relational predicates meaningful. Active manipulation of the task text itself---prompt injection \emph{into the task}, crafted to steer the BM25 predicates---is out of scope and composes with the prompt-injection defences of \S\ref{sec:deployment_envelope}.
-
-\textbf{Trust assumptions.} We trust the SPIFFE/SPIRE identity substrate, policy YAML/JSON integrity at load, the MCP tool registry, and the deterministic pipeline; we do \emph{not} trust LLM-emitted bundles, confidence scores, or natural-language justifications.
-
-\textbf{In-scope.} Within-domain mis-scoping, cross-domain capability leakage, mutation-without-read, hard-capability gaps, and trust-state misalignments (operationalised by ASTRA's \texttt{wrong}/\texttt{null} negatives). \textbf{Out of scope:} policy-file compromise, side channels, DoS, MCP supply-chain attacks, active adversarial prompts crafted to evade specific predicates, and tool-output exfiltration. \textbf{Security objective:} minimise SecFail (Eq.~\ref{eq:secfail}) subject to a bounded false-block rate on admissible requests; the trade-off point is set by policy, not architecture.
-
-\textbf{Deployment envelope.} PALADIN is an invocation-time authorisation layer, not an end-to-end agent-security solution. The exclusions above are not minor: each is an active research area, and production deployment composes PALADIN with output filters (e.g., Llama Guard~\cite{inan2023llamaguard}), signed registries, network-layer rate limiting, and prompt-injection defences~\cite{liu2024formalizing}. Contribution claims are scoped to that envelope. TRAC's two enforcing predicates are BM25 over the task text, so its deterministic guarantee targets \emph{semi-honest} mis-scoping---hallucination, over-helpfulness, and benign scoping errors (ASTRA's non-adversarial \texttt{wrong}/\texttt{null} negatives), the dominant failure mode of today's agents. Active task-text manipulation---an adversary crafting wording to lexically match a target bundle---is owned by trusted task provenance and the composed prompt-injection controls above, not by this layer.
-
-
-\section{Mathematical Framework}
 \label{sec:framework}
 
-\subsection{Request Model and Short-Circuit Composition}
+
+PALADIN authorises each tool invocation through an ordered stack of deterministic gates that culminates in TRAC. We first fix the admission model and its short-circuit algebra (\S\ref{sec:state_model}), state the threat model (\S\ref{sec:threat_model}), walk a single request through the stages (\S\ref{sec:pipeline_overview}), give the design rationale (\S\ref{sec:design_rationale}), then develop the conventional layers (\S\ref{sec:layers}) and, as the novel stage, TRAC (\S\ref{sec:trac}).
+
+\subsection{Gate Control and Short-Circuit Composition}
+\label{sec:state_model}
 \label{sec:request_model}
 \label{sec:composition}
+\label{sec:composition_properties}
+
+
+% >>> NEW-WRITING (Phase: gate-control): per-invocation reference-monitor framing (advisor
+% >>> draft) --- complete mediation, tamper-evident audit trail, fail-secure default --- casting
+% >>> the whole stack as a reference monitor over each invocation. Rename cue: "Gate Control"
+% >>> (not "Evaluation State"), since evaluation can mislead.
 
 A tool invocation request is modelled as a 6-tuple
 \begin{equation}
@@ -266,8 +243,67 @@ $S_5$ is not a decision stage but a deterministic \emph{fact-transformer} $\phi\
 \end{equation}
 i.e. $\phi$ runs once when $S_1$--$S_4$ all admit, and $S_6$'s predicates evaluate over $\Phi(r)$.
 
-\subsection{Stage Definitions}
+Each stage records \texttt{ALLOW}, \texttt{DENY}, or \texttt{NOT\_EVALUATED}; the final decision is the conjunction of evaluated stages. A \texttt{DecisionResult} carries the per-stage map, final decision (\texttt{ALLOW}/\texttt{DENY}), denial source, and audit trace. Short-circuiting yields three benefits: computational efficiency (S6 is skipped when cheaper checks suffice), security hardening (later stages cannot mask upstream denials), and audit clarity (the denial source unambiguously identifies the triggering concern).
+
+Beyond the per-stage states, the pipeline returns a single binary admission decision: $\Pi(r)=\text{ALLOW}$ only if every evaluated stage allows, and $\text{DENY}$ otherwise. There is no third outcome---a denied high-risk write simply stays \texttt{DENY}---which keeps every layer expressible as a standard ALLOW/DENY policy (\S\ref{sec:substrate_portability}). Advisory TRAC rules (\S\ref{sec:trac}) may additionally raise non-blocking alerts on an admitted bundle, but these never change the admission decision and are excluded from the security metrics.
+
+The operator $\rhd$ gives $\Pi$ three properties. \textbf{(P1) Monotonicity:} adding a stage can only convert ALLOW to DENY (immediate from the short-circuit semantics). \textbf{(P2) Order-independence of unique necessity:} if a single $S_k$ is the only stage that would deny $r$, $\Pi(r)=\mathrm{DENY}$ regardless of ordering. \textbf{(P3) Fail-secure default:} predicates default conservatively on missing facts and stage exceptions are wrapped to DENY, so partial failure cannot silently degrade to ALLOW. P1 grounds the $\Delta$-value reading; P2 underpins the attribution analysis (\S\ref{sec:attribution_paradox}).
+
+\subsection{Threat Model and Deployment Envelope}
+\label{sec:threat_model}
+
+
+\textbf{Adversary.} A \emph{semi-honest agent}: an authenticated LLM-driven workload that, given an operator- or workflow-supplied task, may select and emit a tool bundle that exceeds scope, crosses domains, targets writes without prior reads, or otherwise violates policy---through hallucination or over-helpful, helpfulness-optimised behaviour. It controls the \emph{emitted bundle}; the task text is trusted provenance (operator/workflow), which is what makes the task-relational predicates meaningful. Active manipulation of the task text itself---prompt injection \emph{into the task}, crafted to steer the BM25 predicates---is out of scope and composes with the prompt-injection defences of \S\ref{sec:deployment_envelope}.
+
+\textbf{Trust assumptions.} We trust the SPIFFE/SPIRE identity substrate, policy YAML/JSON integrity at load, the MCP tool registry, and the deterministic pipeline; we do \emph{not} trust LLM-emitted bundles, confidence scores, or natural-language justifications.
+
+\textbf{In-scope.} Within-domain mis-scoping, cross-domain capability leakage, mutation-without-read, hard-capability gaps, and trust-state misalignments (operationalised by ASTRA's \texttt{wrong}/\texttt{null} negatives). \textbf{Out of scope:} policy-file compromise, side channels, DoS, MCP supply-chain attacks, active adversarial prompts crafted to evade specific predicates, and tool-output exfiltration. \textbf{Security objective:} minimise SecFail (Eq.~\ref{eq:secfail}) subject to a bounded false-block rate on admissible requests; the trade-off point is set by policy, not architecture.
+
+\textbf{Deployment envelope.} PALADIN is an invocation-time authorisation layer, not an end-to-end agent-security solution. The exclusions above are not minor: each is an active research area, and production deployment composes PALADIN with output filters (e.g., Llama Guard~\cite{inan2023llamaguard}), signed registries, network-layer rate limiting, and prompt-injection defences~\cite{liu2024formalizing}. Contribution claims are scoped to that envelope. TRAC's two enforcing predicates are BM25 over the task text, so its deterministic guarantee targets \emph{semi-honest} mis-scoping---hallucination, over-helpfulness, and benign scoping errors (ASTRA's non-adversarial \texttt{wrong}/\texttt{null} negatives), the dominant failure mode of today's agents. Active task-text manipulation---an adversary crafting wording to lexically match a target bundle---is owned by trusted task provenance and the composed prompt-injection controls above, not by this layer.
+
+% >>> NEW-WRITING (Phase: layers/mTLS): add mTLS to the trusted-transport assumptions here
+% >>> (SPIFFE/SPIRE SVIDs establish mutual TLS at the invocation boundary; trusted substrate,
+% >>> not a measured contribution). Mechanism detail lives in \S\ref{sec:layers}.
+
+\subsection{Pipeline Overview}
+\label{sec:pipeline_overview}
+
+
+The Unified Decision Engine executes six sequential stages with short-circuit semantics: any \texttt{DENY} from stages S1--S4 terminates the pipeline immediately (Figure~\ref{fig:pipeline}). S5 extracts typed facts; S6 (TRAC) consumes them for predicate-level evaluation.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.8\columnwidth]{figures/pf1.png}
+\caption{PALADIN's six‑stage admission pipeline (short‑circuit S1–S4; S5 fact transformer → S6 TRAC). The deterministic stages are model‑independent; the LLM verdict gate composes \emph{conjunctively} with the deterministic floor (its drawn position is presentational---FULL $=$ floor $\wedge$ verdict) and is present only in validation, while in selection the LLM instead generates the bundle.}
+\Description{Flow diagram showing an MCP tool request passing through identity, registration, RBAC, ABAC, fact extraction, and TRAC stages before allow or deny.}
+\label{fig:pipeline}
+\end{figure}
+
+% >>> NEW-WRITING (Phase: soo+worked): (1) Subject/Object/Operation table (tab:soo), one row
+% >>> per stage incl. an mTLS transport row; (2) the A->D worked example (tab:worked) with the
+% >>> VERIFIED numbers: incident persona (L2/Operations/trust 0.88); BM25 grafana 11.1 vs azure
+% >>> 6.1 -> infers grafana; A=ALLOW (grafana reads), B=DENY RBAC (stripe.create_refund),
+% >>> C=DENY ABAC (jira_add_comment: high-risk write needs L3, incident is L2), D=DENY TRAC
+% >>> (jira_search+jira_get_issue: entitled+read-only but grafana:read capability missing).
+
+\subsection{Design Rationale}
+\label{sec:design_rationale}
+
+
+% >>> NEW-WRITING (Phase: design-rationale): design-rationale table + prose. USE GENERIC TERMS
+% >>> at this stage of the paper: "deterministic relevance control" (NOT BM25) and "the
+% >>> evaluation dataset" (NOT ASTRA); both are named later (TRAC / Methodology). Motivate
+% >>> deterministic-first ordering, cheapest-checks-first short-circuit, fail-secure defaults,
+% >>> and engine-agnostic rules-as-data.
+
+\subsection{Conventional Layers: Identity, Registration, RBAC, and ABAC}
+\label{sec:layers}
 \label{sec:stage_definitions}
+\label{sec:rbac_abac_classification}
+\label{sec:identity}
+
+
+This section derives the typed predicates each layer consumes---from persona-scoped RBAC grants and attribute rules, through the read/write action classes inferred from tool metadata, to the task-relational facts TRAC evaluates.
 
 \textbf{S1--S2} are deterministic set-membership checks: $S_1$ admits iff $\iota \in \mathcal{I}_{\text{valid}}$, and $S_2$ admits iff every $t\in T$ is in the registry $\mathcal{R}(m_t)$. \textbf{S3 (RBAC)} evaluates role-based permissions:
 \begin{equation}
@@ -282,50 +318,7 @@ where $\rho(\iota)$ maps an identity to its permitted (domain, tool) pairs. \tex
 S_4(r) = \text{first-match}(\mathcal{P}_{\text{ABAC}}, \text{attrs}(r)),
 \label{eq:abac}
 \end{equation}
-with $\mathcal{P}_{\text{ABAC}}$ the ordered policy set and $\text{attrs}(r)$ extracting subject, resource, action, and environment attributes. \textbf{S5} is the fact-transformer $\phi$ of Eq.~\ref{eq:pipeline}: it derives typed facts without making any decision. \textbf{S6 (TRAC)} evaluates typed predicates over $\Phi(r)$:
-\begin{equation}
-S_6(r) = \begin{cases}
-\text{DENY} & \text{if } \exists\, R_i \text{ s.t. } \text{triggered}(R_i) \land a_i = \text{DENY} \\
-\text{ALLOW} & \text{otherwise.}
-\end{cases}
-\label{eq:trac}
-\end{equation}
-
-\subsection{Agnostic Capability Coverage}
-\label{sec:capability}
-\label{sec:alignment}
-
-TRAC's capability model is deliberately \emph{agnostic}: a capability is the pair $\{d\}{:}\{a\}$, where $d$ is the MCP a tool belongs to and $a\in\{\textrm{read},\textrm{write}\}$ is its action class, with the subsumption rule that a write also grants the read ($\{d\}{:}\textrm{write}\sqsupseteq\{d\}{:}\textrm{read}$). There is no per-MCP vocabulary, no capability catalog, and no curated tool$\to$capability map: the bundle's provided capabilities are $\mathrm{HasCap}=\{\{d(t)\}{:}\{a(t)\}\mid t\in T\}$, derived mechanically from each tool's MCP and its read/write class (\S\ref{sec:layers}). Coverage is domain-only: the required capability for a task with inferred domain $d_\tau$ is the action floor $\{d_\tau\}{:}\textrm{read}$---any in-domain tool, read or write, satisfies it---and a hard violation is
-\begin{equation}
-\mathrm{HardCapMissing}(r)\;\triangleq\;\{d_\tau\}{:}\textrm{read}\notin\mathrm{HasCap}.
-\label{eq:hardcap}
-\end{equation}
-We deliberately do \emph{not} infer read-vs-write \emph{intent} from task text, nor gate on a weighted alignment score: those heuristics were substring-fragile and, for the domain signal, oracle-dependent. Mutation concerns are owned by the \texttt{write\_safety} advisory and lexical task--bundle fit by \texttt{tool\_relevance} (\S\ref{sec:trac}). $d_\tau$ itself is inferred from the task text alone (\S\ref{sec:domain_inference}), so the entire coverage check is free of any ground-truth label. This is a property RBAC (caller$\to$tool) and ABAC (attributes) do not express in their conventional vocabulary: whether the proposed bundle is coherent with the task's domain---expressible, as we show, over derived attributes on a standard engine (\S\ref{sec:substrate_portability}).
-
-\subsection{Security Metrics and Composition Properties}
-\label{sec:security_metrics}
-\label{sec:composition_properties}
-
-We report
-\begin{align}
-F_1 &= \frac{2\,\text{TP}}{2\,\text{TP} + \text{FP} + \text{FN}} \label{eq:f1} \\
-\text{SecFail} &= \frac{\text{FN}}{\text{TP} + \text{FN}} \label{eq:secfail}
-\end{align}
-Layer contribution is the subtractive ablation $\Delta_{\text{metric}}(S_k)=\text{metric}(\Pi)-\text{metric}(\Pi\setminus S_k)$, applied uniformly to $F_1$ and SecFail. Under this convention a layer that \emph{adds} security yields $\Delta F_1(S_k)>0$ and $\Delta\mathrm{SecFail}(S_k)<0$ (because removing the layer raises SecFail). This signed convention is used for the per-layer marginals (\S\ref{sec:reversal}); the factorial table (Table~\ref{tab:factorial_ablation}) instead reports the \emph{excess} SecFail over the full stack---its negation, so positive means worse.
-
-The operator $\rhd$ gives $\Pi$ three properties. \textbf{(P1) Monotonicity:} adding a stage can only convert ALLOW to DENY (immediate from the short-circuit semantics). \textbf{(P2) Order-independence of unique necessity:} if a single $S_k$ is the only stage that would deny $r$, $\Pi(r)=\mathrm{DENY}$ regardless of ordering. \textbf{(P3) Fail-secure default:} predicates default conservatively on missing facts and stage exceptions are wrapped to DENY, so partial failure cannot silently degrade to ALLOW. P1 grounds the $\Delta$-value reading; P2 underpins the attribution analysis (\S\ref{sec:attribution_paradox}).
-
-
-%==============================================================================
-% SECTION 5: SECURITY LAYERS AND PREDICATE DERIVATION
-%==============================================================================
-\section{Security Layers and Predicate Derivation}
-\label{sec:layers}
-
-This section derives the typed predicates each layer consumes---from persona-scoped RBAC grants and attribute rules, through the read/write action classes inferred from tool metadata, to the task-relational facts TRAC evaluates.
-
-\subsection{RBAC, ABAC, and Tool Classification}
-\label{sec:rbac_abac_classification}
+with $\mathcal{P}_{\text{ABAC}}$ the ordered policy set and $\text{attrs}(r)$ extracting subject, resource, action, and environment attributes. \textbf{S5} is the fact-transformer $\phi$ of Eq.~\ref{eq:pipeline}: it derives typed facts without making any decision. 
 
 \textbf{Agent-adapted RBAC} maps agent personas to permissions over tool bundles across MCP domains, with three adaptations from traditional RBAC: tool-level granularity (per individual tool rather than per service endpoint); wildcard domain grants for trusted agents (e.g., \texttt{grafana.*}); and cross-domain permission intersection requiring permissions in \emph{all} referenced domains across dynamically-constructed multi-tool bundles.
 
@@ -335,8 +328,35 @@ This section derives the typed predicates each layer consumes---from persona-sco
 
 \textbf{Agnostic capability.} The capability a tool provides is the pair $\{d(t)\}{:}\{a(t)\}$ of \S\ref{sec:capability}---its MCP domain $d(t)$ and the action class $a(t)$ above---with the subsumption $\{d\}{:}\textrm{write}\sqsupseteq\{d\}{:}\textrm{read}$. There is \emph{no} capability catalog, entailment ontology, or hard/soft capability tier: coverage is the single domain floor of Eq.~\ref{eq:hardcap}, evaluated against the BM25-inferred task domain (\S\ref{sec:domain_inference}), while mutation- and relevance-level concerns are delegated to the \texttt{write\_safety} and \texttt{tool\_relevance} rules (\S\ref{sec:trac}). The model therefore consumes no per-MCP vocabulary, no curated tool$\to$capability map, and no ground-truth label---the property that makes the pipeline leak-free.
 
-\subsection{TRAC: an ordered, typed production rule engine}
+\paragraph{Identity infrastructure.} PALADIN uses cryptographic agent identity (SPIFFE/SPIRE) as the source of $\iota$ in the request tuple (\S\ref{sec:request_model}); identity is an \emph{input} to the policy stack, not itself a contribution we evaluate. Each agent receives a SPIFFE ID encoding role and trust attributes (clearance, department, trust score); SPIRE issues SVIDs with automatic rotation and workload-selector attestation. We do not measure rotation overhead, attestation failure modes, or delegation-substrate properties; that work belongs to identity-infrastructure literature~\cite{rampalli2026pedigree,south2025authenticated}, over which PEDIGREE-style multi-hop delegation could compose. Persona-to-domain allow-lists are released with the artefact.
+
+% >>> NEW-WRITING (Phase: layers/mTLS): fold mTLS into the identity layer (SPIRE issues X.509
+% >>> SVIDs that establish mutual TLS between the agent workload and the MCP invocation boundary;
+% >>> trusted pass-through, NOT an evaluated contribution; keep the six-stage model / pf1.png ---
+% >>> do not add a 7th numbered stage). Elaborate each layer purpose/mechanism/why-needed and
+% >>> tie S1--S4 to the Subject/Object/Operation triple.
+
+\subsection{TRAC: a Task-Relational Admission Primitive}
 \label{sec:trac}
+\label{sec:capability}
+\label{sec:alignment}
+
+
+\textbf{S6 (TRAC)} evaluates typed predicates over $\Phi(r)$:
+\begin{equation}
+S_6(r) = \begin{cases}
+\text{DENY} & \text{if } \exists\, R_i \text{ s.t. } \text{triggered}(R_i) \land a_i = \text{DENY} \\
+\text{ALLOW} & \text{otherwise.}
+\end{cases}
+\label{eq:trac}
+\end{equation}
+
+TRAC's capability model is deliberately \emph{agnostic}: a capability is the pair $\{d\}{:}\{a\}$, where $d$ is the MCP a tool belongs to and $a\in\{\textrm{read},\textrm{write}\}$ is its action class, with the subsumption rule that a write also grants the read ($\{d\}{:}\textrm{write}\sqsupseteq\{d\}{:}\textrm{read}$). There is no per-MCP vocabulary, no capability catalog, and no curated tool$\to$capability map: the bundle's provided capabilities are $\mathrm{HasCap}=\{\{d(t)\}{:}\{a(t)\}\mid t\in T\}$, derived mechanically from each tool's MCP and its read/write class (\S\ref{sec:layers}). Coverage is domain-only: the required capability for a task with inferred domain $d_\tau$ is the action floor $\{d_\tau\}{:}\textrm{read}$---any in-domain tool, read or write, satisfies it---and a hard violation is
+\begin{equation}
+\mathrm{HardCapMissing}(r)\;\triangleq\;\{d_\tau\}{:}\textrm{read}\notin\mathrm{HasCap}.
+\label{eq:hardcap}
+\end{equation}
+We deliberately do \emph{not} infer read-vs-write \emph{intent} from task text, nor gate on a weighted alignment score: those heuristics were substring-fragile and, for the domain signal, oracle-dependent. Mutation concerns are owned by the \texttt{write\_safety} advisory and lexical task--bundle fit by \texttt{tool\_relevance} (\S\ref{sec:trac}). $d_\tau$ itself is inferred from the task text alone (\S\ref{sec:domain_inference}), so the entire coverage check is free of any ground-truth label. This is a property RBAC (caller$\to$tool) and ABAC (attributes) do not express in their conventional vocabulary: whether the proposed bundle is coherent with the task's domain---expressible, as we show, over derived attributes on a standard engine (\S\ref{sec:substrate_portability}).
 
 TRAC (Task-Relational Access Control) conditions admission on the \emph{measured relation between the task and the proposed tool bundle}---in-domain coverage, mutation safety, and task--tool relevance---which conventional RBAC (caller$\to$tool) and ABAC (subject/resource attributes) do not express, and which is distinct from the TBAC/ReBAC/Purpose-BAC axes (\S\ref{sec:related}). We claim no new formal model: the contribution is empirical---identifying, enforcing, and measuring this relation as a load-bearing signal---enforceable on commodity engines. Its expressive content equals a typed Cedar~\cite{cutler2024cedar} or OPA/Rego extension with custom builtins for continuous LLM-emitted scores; an OPA/Rego re-implementation of the identical rules-as-data reproduces every decision (\S\ref{sec:substrate_portability}), leaving only the substrate's \emph{performance} cost to benchmark. The engine is \emph{typed} (booleans, enums, reals), \emph{staged} (facts derived in $\phi=S_5$ before any $S_6$ rule fires), \emph{ordered} (enforcing rules short-circuit on the first denial), and \emph{partitioned} into \emph{enforcing} rules (change ALLOW/DENY) and \emph{advisory} alert-only rules (Table~\ref{tab:trac_rules}); evaluation is $O(n)$ given pre-computed facts.
 
@@ -363,16 +383,14 @@ These four rules instantiate TRAC concretely; they are declarative data, so an o
 
 \paragraph{Engine portability.} The feature set S6 exercises---typed continuous LLM-emitted scores, derived predicates as first-class rule inputs, ordered short-circuit denial with auditable triggered-rule trails, and a fixed pre-rule fact-derivation stage---is not exotic: each is native or a standard extension away in commodity policy engines (Cedar extension functions, OPA/Rego builtins and modules, Sentinel imports), none of which ships the full set out of the box. We therefore treat the engine as interchangeable and verify it directly---an OPA/Rego re-implementation of the identical rules-as-data reproduces every decision on a standard runtime (\S\ref{sec:substrate_portability}), so the substrate choice changes none of the empirical findings, and a Cedar port plus a performance benchmark are the remaining follow-ups.
 
-%==============================================================================
-% SECTION 6: IDENTITY INFRASTRUCTURE
-%==============================================================================
-\subsection{Identity Infrastructure}
-\label{sec:identity}
+% >>> NEW-WRITING (Phase: trac-elaborate): reintroduce the relevance control BY NAME as BM25
+% >>> (Okapi) and add the action-class citation (Levin 1993 / VerbNet / FrameNet) for the
+% >>> read/write/destructive lexicon; elaborate the novelty of the task-relational axis vs
+% >>> RBAC/ABAC and vs TBAC/ReBAC/Purpose-BAC; emphasise the leak-free derivation as the climax.
 
-PALADIN uses cryptographic agent identity (SPIFFE/SPIRE) as the source of $\iota$ in the request tuple (\S\ref{sec:request_model}); identity is an \emph{input} to the policy stack, not itself a contribution we evaluate. Each agent receives a SPIFFE ID encoding role and trust attributes (clearance, department, trust score); SPIRE issues SVIDs with automatic rotation and workload-selector attestation. We do not measure rotation overhead, attestation failure modes, or delegation-substrate properties; that work belongs to identity-infrastructure literature~\cite{rampalli2026pedigree,south2025authenticated}, over which PEDIGREE-style multi-hop delegation could compose. Persona-to-domain allow-lists are released with the artefact.
 
 %==============================================================================
-% SECTION 7: EXPERIMENTAL METHODOLOGY
+% SECTION 4: EXPERIMENTAL METHODOLOGY
 %==============================================================================
 \section{Experimental Methodology}
 \label{sec:methodology}
@@ -393,6 +411,17 @@ Each (task, persona) row is evaluated under one of two modes; row identifiers ar
 \textbf{Validation mode.} The LLM is given the task text \emph{together with} a candidate tool bundle and emits a JSON verdict (\texttt{validation\_failed} plus issue codes). The LLM judges, not selects. Candidate bundles carry an ASTRA \texttt{match\_tag}: \texttt{correct} ($3{,}474$ benchmark-correct rows after $\times 6$ personas), \texttt{wrong} ($2{,}778$, same-MCP wrong tools---hard within-domain negatives), and \texttt{null} ($690$, unrelated-MCP bundles---gross cross-domain negatives). The $80/20$ wrong/null mix is a property of ASTRA's construction. Total: $6{,}942$ rows per run.
 
 \textbf{Selection mode.} The LLM is given the task text \emph{only} and must \emph{generate} a tool bundle as a JSON list, which is then routed through the same deterministic pipeline. Selection is strictly harder: under gpt-5.4, tool exact-match is only $11.4\%$ baseline, and the full deterministic stack moves from $F_1=0.848$ (validation E1) to $0.800$ (selection E1) but at a much higher SecFail ($10.3\%\!\to\!21.9\%$), because the model actively chooses same-domain wrong-tool bundles the agnostic stack cannot separate. We evaluate selection on $6{,}942$ rows.
+
+\subsection{Security Metrics}
+\label{sec:security_metrics}
+
+
+We report
+\begin{align}
+F_1 &= \frac{2\,\text{TP}}{2\,\text{TP} + \text{FP} + \text{FN}} \label{eq:f1} \\
+\text{SecFail} &= \frac{\text{FN}}{\text{TP} + \text{FN}} \label{eq:secfail}
+\end{align}
+Layer contribution is the subtractive ablation $\Delta_{\text{metric}}(S_k)=\text{metric}(\Pi)-\text{metric}(\Pi\setminus S_k)$, applied uniformly to $F_1$ and SecFail. Under this convention a layer that \emph{adds} security yields $\Delta F_1(S_k)>0$ and $\Delta\mathrm{SecFail}(S_k)<0$ (because removing the layer raises SecFail). This signed convention is used for the per-layer marginals (\S\ref{sec:reversal}); the factorial table (Table~\ref{tab:factorial_ablation}) instead reports the \emph{excess} SecFail over the full stack---its negation, so positive means worse.
 
 \subsection{Ablations and Evaluation Conventions}
 \label{sec:ablation_design}

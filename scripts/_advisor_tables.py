@@ -97,3 +97,41 @@ for f in ["sel_gpt-3.5-turbo_none.json", "sel_gpt-4o_none.json", "sel_gpt-5.4_no
         print(row(f[4:-5], metr(load(f), d_e1)))
     except FileNotFoundError:
         print(f"  (missing {f})")
+
+# --- (D) TASK-RESOLUTION VIEW: persona-invariance + Convention B at n=1,157 ---
+from collections import defaultdict
+
+def task_view(name):
+    rows = load(name)
+    byt = defaultdict(list)
+    for r in rows:
+        byt[r["task_idx"]].append(r)
+    n_tasks = len(byt)
+    llm_const = legit_varies = 0
+    for _, rs in byt.items():
+        if len({r["llm_valid"] for r in rs}) == 1:
+            llm_const += 1
+        if len({r["is_legitimate"] for r in rs}) > 1:
+            legit_varies += 1
+    # Convention B (positive = task-correct) on the de-duplicated 1,157 tasks
+    tp = fp = tn = fn = 0
+    for _, rs in byt.items():
+        correct = (rs[0]["match_tag"] == "correct")
+        admit = (rs[0]["llm_valid"] is True)
+        if correct and admit: tp += 1
+        elif (not correct) and admit: fp += 1
+        elif (not correct) and (not admit): tn += 1
+        else: fn += 1
+    P = tp / (tp + fp) if (tp + fp) else 0.0
+    R = tp / (tp + fn) if (tp + fn) else 0.0
+    F1 = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
+    return n_tasks, llm_const, legit_varies, P, R, F1
+
+print()
+print("=" * 96)
+print("(D) TASK RESOLUTION VIEW  (persona-invariance + Convention B, n=1,157)")
+print("=" * 96)
+for m in ["gpt-3.5-turbo-16k", "gpt-4o", "gpt-5.4"]:
+    nt, lc, lv, P, R, F1 = task_view(f"val_{m}_r4.json")
+    print(f"  {m:<20} tasks={nt}  llm_valid persona-invariant={lc}/{nt} ({100*lc/nt:.1f}%)  "
+          f"legit-flips={lv}/{nt} ({100*lv/nt:.1f}%)  ConvB P={P:.3f} R={R:.3f} F1={F1:.3f}")

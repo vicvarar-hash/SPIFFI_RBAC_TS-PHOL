@@ -659,10 +659,15 @@ gpt-5.4 \textit{(OpenAI '26)}           & 11.4\% & 0.343 & \multicolumn{2}{c}{\t
 \end{adjustbox}
 \end{table}
 
+\subsubsection{Task Resolution vs.\ Authorisation Resolution}
+\label{sec:resolution_gap}
+
+The E4 verdict is \emph{persona-invariant}: for every one of the $1{,}157$ tasks the model returns an \emph{identical} admit/deny for the candidate bundle whichever of the six personas issued it ($1157/1157$ tasks, all three OpenAI models). The $6{,}942$-row E4 is therefore $1{,}157$ semantic judgments replicated six-fold---the model decides at \emph{task} resolution, blind to the requester. Authorisation, however, is persona-relative: on each of the $579$ task-\emph{correct} bundles (half the corpus) legitimacy depends on the role---authorised for some personas, a least-privilege \emph{violation} for others (\S\ref{sec:dataset})---yet the persona-blind model admits the semantically-correct bundle for all six, passing the violations silently. This is the mechanistic form of our thesis (\S\ref{sec:motivation}): \emph{semantic correctness is not authorisation correctness}. Scored at its own resolution against semantic ground truth (Convention~B, $n=1{,}157$; \S\ref{sec:astra_replication}) gpt-4o's E4 is $F_1=0.595$---bit-identical to the $6{,}942$-row figure, since the persona replication carries no independent LLM signal---so the model's precision/recall deficit is a property of the \emph{task}, not the sample size. RBAC exists to supply exactly the persona resolution the model structurally lacks (\S\ref{sec:reversal}).
+
 \subsubsection{Independent Replication of ASTRA's LLM-ResM Benchmark}
 \label{sec:astra_replication}
 
-Under Convention~B (ASTRA permissivity view), our gpt-4o E4 reaches $F_1=0.595$ vs.\ ASTRA's published $0.67$---a $0.075$ gap under a strictly harder protocol (ASTRA AND-aggregates three per-tool verdicts, inflating precision; we use one per-bundle call), so our number is the expected lower bound. The precision--recall signature replicates: high precision ($0.740$ vs.\ $0.81$), low recall ($0.497$ vs.\ $0.57$), under-scoping dominant; the two other panel models bracket gpt-4o ($0.756$, $0.688$). A reproduction of ASTRA's under-scoping finding, not a refutation.
+Under Convention~B (ASTRA permissivity view, $n=1{,}157$ tasks), our gpt-4o E4 reaches $F_1=0.595$ vs.\ ASTRA's published $0.67$---a $0.075$ gap under a strictly harder protocol (ASTRA AND-aggregates three per-tool verdicts, inflating precision; we use one per-bundle call), so our number is the expected lower bound. The precision--recall signature replicates: high precision ($0.740$ vs.\ $0.81$), low recall ($0.497$ vs.\ $0.57$), under-scoping dominant; the two other panel models bracket gpt-4o ($0.756$, $0.688$). A reproduction of ASTRA's under-scoping finding, not a refutation.
 
 \subsubsection{Non-Monotone LLM-Only Behaviour with Model Recency}
 \label{sec:newer_not_better}

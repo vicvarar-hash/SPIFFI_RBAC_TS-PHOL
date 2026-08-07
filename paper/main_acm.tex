@@ -509,7 +509,7 @@ Each (task, persona) row is evaluated under one of two modes; row identifiers ar
 
 \textbf{Validation mode.} The LLM is given the task text \emph{together with} a candidate tool bundle and emits a JSON verdict (\texttt{validation\_failed} plus issue codes). The LLM judges, not selects. Candidate bundles carry an ASTRA \texttt{match\_tag}: \texttt{correct} ($3{,}474$ benchmark-correct rows after $\times 6$ personas), \texttt{wrong} ($2{,}778$, same-MCP wrong tools---hard within-domain negatives), and \texttt{null} ($690$, unrelated-MCP bundles---gross cross-domain negatives). The $80/20$ wrong/null mix is a property of ASTRA's construction. Total: $6{,}942$ rows per run.
 
-\textbf{Selection mode.} The LLM is given the task text \emph{only} and must \emph{generate} a tool bundle as a JSON list, which is then routed through the same deterministic pipeline. Selection is strictly harder: under gpt-5.4, tool exact-match is only $11.4\%$ baseline, and the full deterministic stack moves from $F_1=0.848$ (validation E1) to $0.800$ (selection E1) but at a much higher SecFail ($10.3\%\!\to\!21.9\%$), because the model actively chooses same-domain wrong-tool bundles the agnostic stack cannot separate. We evaluate selection on $6{,}942$ rows.
+\textbf{Selection mode.} The LLM is given the task text \emph{only} and must \emph{generate} a tool bundle as a JSON list, which is then routed through the same deterministic pipeline. Selection is strictly harder: under gpt-5.4, tool exact-match is only $11.4\%$ baseline, and the full deterministic stack moves from $F_1=0.848$ (validation E1) to $0.800$ (selection E1) but at a much higher SecFail ($10.3\%\!\to\!21.4\%$), because the model actively chooses same-domain wrong-tool bundles the agnostic stack cannot separate. We evaluate selection on $6{,}942$ rows.
 
 \subsection{Ablations}
 \label{sec:ablation_design}
@@ -601,10 +601,63 @@ The deterministic layers trace a \emph{monotone} frontier (each layer lowers Sec
 
 \textbf{The security/availability trade-off.} The full stack's eligible-correct admission---$44.8\%$ of correct candidates---is deliberately conservative, but the face value overstates the availability cost because it counts \emph{every} denied correct bundle, including ones a correct agent \emph{should} not be allowed to run. Of the $55.2$pp it does not admit, $44.5$pp are correct-but-\emph{unauthorised} bundles that RBAC/ABAC deny by least privilege (over-privileged or out-of-grant tool use---enforcement working as intended, not a false block); only $10.7$pp are genuine over-blocks of \emph{admissible} (correct \emph{and} authorised) work by the leak-free task-relational layer---the $19.3\%$ deployment false-block. That residual is an \emph{inference} cost and the operating point is tunable (\S\ref{sec:policy_dependence}). The low admission is therefore a deliberate max-security operating point on a policy-navigable frontier, not a fixed limitation.
 
+\subsubsection{Per-Persona View: The Floor's Protection Is Uneven Across Roles}
+\label{sec:persona_floor}
+
+The aggregate floor ($F_1=0.848$, SecFail $10.3\%$) is a mean over six personas whose individual profiles differ sharply (Table~\ref{tab:persona_floor}); because the deterministic layers condition only on persona, bundle, and inferred domain, this role-based decomposition is model-independent. For the two most tightly-scoped, high-illegitimacy roles---Research (L1) and Finance (L2)---the floor is nearly airtight (SecFail $0.6$--$0.9\%$, $F_1\geq0.955$): RBAC's narrow grants leave few same-domain wrong-tool bundles for the semantic floor to miss. For the broad L3 infrastructure roles---Automation Gateway and Security Engine, entitled across many domains---it is weakest (SecFail $17.6$--$25.4\%$, $F_1\,0.64$--$0.66$): wide RBAC grants shift the discrimination burden onto the leak-free TRAC predicate, which admits more of the residual semantic floor. DevOps sits between ($F_1\,0.822$, SecFail $23.9\%$). This per-role spread---SecFail $0.6$--$25.4\%$ under one fixed policy---is precisely what the model gate must equalise (\S\ref{sec:whole_flow}): the role-resolved statement of why an agnostic floor alone is a \emph{floor}, not a solution.
+
+\begin{table}[!t]
+\centering
+\caption{Per-persona deterministic floor (validation E1, Convention~A, $n=6{,}942$; \emph{model-independent}). RBAC$\wedge$ABAC$\wedge$TRAC with no model in the loop, sliced by the six personas of Table~\ref{tab:personas} (clearance in italics). $n_{\text{ill}}$ is that persona's illegitimate-request count; \textbf{P}/\textbf{R} are Convention~A precision/recall (R $=1-$SecFail); \textbf{Adm} is eligible-correct admission (fraction of that persona's legitimate-correct candidates admitted---the $x$-axis of Fig.~\ref{fig:operating_sweep}). Rows aggregate to the reported floor ($F_1\,0.848$, SecFail $0.103$, Adm $44.8\%$). The floor is near-tight for narrowly-scoped roles (Research, Finance) and weakest for broad L3 infrastructure roles (Gateway, Security).}
+\label{tab:persona_floor}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Persona} & $\mathbf{n_{\text{ill}}}$ & \textbf{P} & \textbf{R} & $\mathbf{F_1}$ & \textbf{SecFail} & \textbf{Adm} \\
+\midrule
+Research \textit{(L1)}  & 1070 & 0.933 & 0.993 & \textbf{0.962} & \textbf{0.006} & 12.6 \\
+Finance \textit{(L2)}   & 1049 & 0.922 & 0.991 & 0.955 & 0.009 & 18.5 \\
+Incident \textit{(L2)}  &  917 & 0.872 & 0.933 & 0.902 & 0.067 & 47.5 \\
+DevOps \textit{(L3)}    &  773 & 0.894 & 0.761 & 0.822 & 0.239 & 81.8 \\
+Security \textit{(L3)}  &  578 & 0.547 & 0.824 & 0.657 & 0.176 & 32.0 \\
+Gateway \textit{(L3)}   &  578 & 0.561 & 0.746 & 0.640 & 0.254 & 41.8 \\
+\midrule
+\textbf{All (floor)}    & 4965 & 0.803 & 0.897 & \textbf{0.848} & \textbf{0.103} & 44.8 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
 \subsection{The LLM Alone}
 \label{sec:llm_alone}
 
 Removing the deterministic floor and letting the model judge or select unaided (experiment E4) shows why a single LLM is not an admission control: across the six-model panel, LLM-only SecFail spans $26.8$--$66.5\%$ under Convention~A, with the matching precision/recall deficit under Convention~B. The next two results sharpen the point---the deficit reproduces ASTRA's under-scoping rather than refuting it, and it does \emph{not} improve with model recency.
+
+Table~\ref{tab:llm_pr} makes the precision/recall deficit explicit across both modes. In \emph{validation} the model judges a candidate bundle, so it has a scoreable admit/deny verdict (E4): precision is respectable ($0.79$--$0.88$) but recall is where it fails---gpt-5.4 recovers only $33.5\%$ of true violations---and neither moves monotonically with recency. In \emph{selection} no standalone verdict exists---selection-E4 degenerates to allow-all (\S\ref{sec:ablation_design})---so the model is scored on tool-set recovery instead, and that too is weak ($11.4\%$ exact-match, Jaccard $0.343$; \S\ref{sec:ceiling}). Either way the unaided model is an unreliable control; the whole flow (\S\ref{sec:whole_flow}) is what repairs each failure.
+
+\begin{table}[!t]
+\centering
+\caption{The LLM alone, both modes (Convention~A). \emph{Validation} (the LLM \emph{judges} a candidate bundle, E4): precision, recall, $F_1$, SecFail over $n=6{,}942$ rows---three OpenAI generations. \emph{Selection} (the LLM \emph{generates} the bundle): a standalone admit/deny verdict does not exist---selection-E4 degenerates to allow-all (\S\ref{sec:ablation_design})---so the model is scored on tool-set recovery (Exact Match, Jaccard) instead. Precision is respectable but recall collapses (gpt-5.4 $0.335$), and neither precision/recall nor $F_1$ is monotone in recency (\S\ref{sec:newer_not_better}). The full six-vendor E4 panel is Table~\ref{tab:stack_guarantee}.}
+\label{tab:llm_pr}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Validation --- LLM as judge (E4)} & \textbf{P} & \textbf{R} & $\mathbf{F_1}$ & \textbf{SecFail} \\
+\midrule
+gpt-3.5-turbo-16k \textit{(OpenAI '23)} & 0.880 & 0.518 & 0.652 & 0.482 \\
+gpt-4o \textit{(OpenAI '24)}            & 0.789 & 0.733 & \textbf{0.760} & \textbf{0.268} \\
+gpt-5.4 \textit{(OpenAI '26)}           & 0.856 & 0.335 & 0.482 & 0.665 \\
+\midrule
+\textbf{Selection --- LLM as generator} & \textbf{Exact} & \textbf{Jacc.} & \multicolumn{2}{c}{\textit{(no verdict:}} \\
+gpt-5.4 \textit{(OpenAI '26)}           & 11.4\% & 0.343 & \multicolumn{2}{c}{\textit{allow-all)}} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
 
 \subsubsection{Independent Replication of ASTRA's LLM-ResM Benchmark}
 \label{sec:astra_replication}
@@ -619,7 +672,7 @@ A clean side-effect of the three OpenAI generations: LLM-only (E4) safety is \em
 \subsection{The Whole Flow: Composition and Recovery}
 \label{sec:whole_flow}
 
-Composing the two---FULL $=$ the model's verdict \emph{behind} the deterministic floor---is the deployed system. The floor collapses every model into a tight, low-SecFail band ($\leq 7.5\%$) whatever its solo behaviour, and a full-factorial ablation then shows \emph{which} deterministic layers do the recovering: RBAC and TRAC each carry independent load, the task-relational layer catching violations conventional access control cannot see.
+Composing the two---FULL $=$ the model's verdict \emph{behind} the deterministic floor---is the deployed system. The floor collapses every model into a tight, low-SecFail band ($\leq 7.5\%$) whatever its solo behaviour, and a full-factorial ablation then shows \emph{which} deterministic layers do the recovering: RBAC and TRAC each carry independent load, the task-relational layer catching violations conventional access control cannot see. We first read the composition for an external judge (validation), then repeat it when the model \emph{generates} the bundle (selection, \S\ref{sec:selection_flow}), confirming the same floor recovers both failure modes.
 
 \subsubsection{The Deterministic Stack Masks Model Variance Across Vendors (Validation)}
 \label{sec:stack_guarantee}
@@ -732,6 +785,36 @@ Two readings follow. TRAC's isolated $-12.0$pp is direct evidence the task-relat
 \textbf{Is TRAC informative, or just more denials?} On the RBAC$\wedge$ABAC-approved set ($2{,}206$ bundles, $\approx$half illegitimate, where only a task-relational signal discriminates), a \emph{volume-matched random denier} catches $\approx\!406$ violations and blocks $\approx\!403$ legitimate; TRAC, at the same volume, catches $597$ and blocks only $212$ (precision $0.74$ vs.\ base rate $0.50$)---the marginal is signal, not added volume.
 
 \textbf{The enforcing surface is not only lexical.} Two TRAC rules reason about \emph{action semantics}: \texttt{action\_coherence} (read-intent task, mutating tools) and \texttt{write\_safety} (destructive op without a preceding read). Making \texttt{action\_coherence} enforcing catches $39$ same-domain violations the BM25 predicates and RBAC$+$ABAC all miss, at precision $0.62$ ($1.69\times$ the approved base rate), lowering SecFail $10.3\!\to\!9.5\%$ at $24$ new legitimate blocks---structural coherence beyond BM25. (\texttt{write\_safety} is weaker, precision $0.31$, so advisory.)
+
+\subsubsection{Both Modes: Selection and Retrieval-Augmented Recovery}
+\label{sec:selection_flow}
+
+Validation composes the floor with an \emph{external} model's verdict; selection stresses the same floor against bundles the model \emph{itself generates}. The deterministic floor is identical in both modes---it never sees which produced the bundle---so selection simply isolates a harder input distribution: the model actively emits same-domain wrong-tool bundles (baseline tool exact-match $11.4\%$, \S\ref{sec:ceiling}). Table~\ref{tab:selection_flow} reads the whole flow in selection. The floor alone still holds every generator to SecFail $\leq21.4\%$---roughly twice validation's $10.3\%$, the price of the harder distribution---and, mirroring validation, the ordering does not track recency ($F_1\,0.771/0.799/0.800$ for gpt-3.5/gpt-4o/gpt-5.4). Recovery here is \emph{retrieval-augmented in-context learning} (RA-ICL): seeding the generator with BM25-retrieved task--tool exemplars lifts exact-match $10.3\!\to\!39.1\%$ ($3.8\times$) and Jaccard $0.343\!\to\!0.624$ ($+82\%$), and the floor then sharpens to SecFail $6.6\%$. This is the selection-mode analogue of the model gate closing the validation floor (\S\ref{sec:stack_guarantee})---TRAC recovering from the LLM's \emph{generation} failure, the dual of its recovery from the LLM's \emph{verdict} failure, and evidence the same deterministic stack transfers across modes without re-tuning.
+
+\begin{table}[!t]
+\centering
+\caption{Selection mode, whole flow (Convention~A). \emph{Top:} the deterministic floor (E1) applied to each generator's own bundles ($n=6{,}942$)---higher residual SecFail than validation's $10.3\%$ because generation is the harder distribution, and again non-monotone in recency. \emph{Bottom:} retrieval-augmented in-context learning for gpt-5.4 on the paired cohort ($n=4{,}512$): BM25 task--tool exemplars recover generation quality (Exact match, Jaccard $0.343\!\to\!0.624$) and the floor then reaches SecFail $6.6\%$. \textbf{Exact} $=$ tool-set exact match ($\%$); ``--'' where not applicable to a mixed generator slice.}
+\label{tab:selection_flow}
+\footnotesize
+\setlength{\tabcolsep}{6pt}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Selection configuration} & \textbf{Exact} & $\mathbf{F_1}$ & \textbf{SecFail} \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{Floor (E1) on each generator's bundles ($n=6{,}942$)}}\\
+gpt-3.5-turbo-16k \textit{(OpenAI '23)} & --   & 0.771 & 0.162 \\
+gpt-4o \textit{(OpenAI '24)}            & --   & 0.799 & 0.207 \\
+gpt-5.4 \textit{(OpenAI '26)}           & 11.4 & 0.800 & 0.214 \\
+\midrule
+\multicolumn{4}{@{}l}{\textit{gpt-5.4 $+$ RA-ICL (paired cohort $n=4{,}512$)}}\\
+no retrieval          & 10.3 & 0.784 & 0.131 \\
+$+$ random exemplars  & 33.3 & 0.901 & 0.072 \\
+$+$ BM25 exemplars    & 39.1 & \textbf{0.905} & \textbf{0.066} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
 
 \subsection{In-Depth Analysis}
 \label{sec:indepth}

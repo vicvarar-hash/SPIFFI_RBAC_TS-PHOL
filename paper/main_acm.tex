@@ -264,7 +264,7 @@ The operator $\rhd$ gives $\Pi$ three properties. \textbf{(P1) Monotonicity:} ad
 \label{sec:design_rationale}
 \label{sec:pipeline_overview}
 
-PALADIN is assembled from a small set of security principles, each realised by one mechanism in the stack (Table~\ref{tab:rationale}). The design is deliberately \emph{layered and deterministic}: independent concerns are separated into stages that each admit or deny for one auditable reason, and the only non-deterministic component---an optional LLM verdict---is confined so that it can never weaken the guarantee.
+PALADIN is assembled from a small set of security principles, each realised by one mechanism in the stack (Table~\ref{tab:rationale}). The design is deliberately \emph{layered and deterministic}: independent concerns are separated into stages that each admit or deny for one auditable reason, and the only non-deterministic decider---an optional LLM verdict---is confined so that it can never weaken the guarantee.
 
 \begin{table}[!t]
 \centering

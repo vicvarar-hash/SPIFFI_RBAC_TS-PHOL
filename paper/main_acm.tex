@@ -266,6 +266,8 @@ The operator $\rhd$ gives $\Pi$ three properties. \textbf{(P1) Monotonicity:} ad
 
 The Unified Decision Engine executes six sequential stages with short-circuit semantics: any \texttt{DENY} from stages S1--S4 terminates the pipeline immediately (Figure~\ref{fig:pipeline}). S5 extracts typed facts; S6 (TRAC) consumes them for predicate-level evaluation.
 
+\textbf{Two evaluation modes.} Throughout, we exercise this pipeline in two complementary modes that differ \emph{only} in where the proposed tool bundle originates; the six deterministic stages are identical in both (full protocol in \S\ref{sec:dual_mode}). In \emph{validation} mode the LLM is handed the task \emph{and} a candidate bundle and returns an admit/deny \emph{verdict}---the optional model gate drawn in Figure~\ref{fig:pipeline}, which composes conjunctively behind the deterministic floor (FULL $=$ floor $\wedge$ verdict) and can therefore only \emph{add} denials. In \emph{selection} mode the LLM is given the task \emph{alone} and must \emph{generate} the bundle, which is then routed through the \emph{same} deterministic stages with no verdict gate. The two modes isolate the two ways an LLM can fail an authorisation---mis-\emph{judging} a bundle it is shown versus mis-\emph{selecting} the bundle it emits---and let us show that the same deterministic floor recovers both (\S\ref{sec:whole_flow}).
+
 \begin{figure}[!t]
 \centering
 \includegraphics[width=0.8\columnwidth]{figures/pf1.png}

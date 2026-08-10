@@ -206,7 +206,7 @@ The agent-safety community has produced evaluation frameworks---Agent-SafetyBenc
 \label{sec:framework}
 
 
-PALADIN authorises each tool invocation through an ordered stack of deterministic gates that culminates in TRAC. We first fix the admission model and its short-circuit algebra (\S\ref{sec:state_model}), state the threat model (\S\ref{sec:threat_model}), walk a single request through the stages (\S\ref{sec:pipeline_overview}), give the design rationale (\S\ref{sec:design_rationale}), then develop the conventional layers (\S\ref{sec:layers}) and, as the novel stage, TRAC (\S\ref{sec:trac}).
+PALADIN authorises each tool invocation through an ordered stack of deterministic gates that culminates in TRAC. We first fix the admission model and its short-circuit algebra (\S\ref{sec:state_model}), state the threat model (\S\ref{sec:threat_model}), give the design rationale and walk a single request through the pipeline (\S\ref{sec:pipeline_overview}), then develop the conventional layers (\S\ref{sec:layers}) and, as the novel stage, TRAC (\S\ref{sec:trac}).
 
 \subsection{Gate Control and Short-Circuit Composition}
 \label{sec:state_model}
@@ -260,52 +260,15 @@ The operator $\rhd$ gives $\Pi$ three properties. \textbf{(P1) Monotonicity:} ad
 
 \textbf{Deployment envelope.} PALADIN is an invocation-time authorisation layer, not an end-to-end agent-security solution. The exclusions above are not minor: each is an active research area, and production deployment composes PALADIN with output filters (e.g., Llama Guard~\cite{inan2023llamaguard}), signed registries, network-layer rate limiting, and prompt-injection defences~\cite{liu2024formalizing}. Contribution claims are scoped to that envelope. TRAC's two enforcing predicates are deterministic relevance controls over the task text, so its deterministic guarantee targets \emph{semi-honest} mis-scoping---hallucination, over-helpfulness, and benign scoping errors (the evaluation dataset's non-adversarial \texttt{wrong}/\texttt{null} negatives), the dominant failure mode of today's agents. Active task-text manipulation---an adversary crafting wording to lexically match a target bundle---is owned by trusted task provenance and the composed prompt-injection controls above, not by this layer.
 
-\subsection{Pipeline Overview}
-\label{sec:pipeline_overview}
-
-
-The Unified Decision Engine executes six sequential stages with short-circuit semantics: any \texttt{DENY} from stages S1--S4 terminates the pipeline immediately (Figure~\ref{fig:pipeline}). S5 extracts typed facts; S6 (TRAC) consumes them for predicate-level evaluation.
-
-\textbf{Two evaluation modes.} Throughout, we exercise this pipeline in two complementary modes that differ \emph{only} in where the proposed tool bundle originates; the six deterministic stages are identical in both (full protocol in \S\ref{sec:dual_mode}). In \emph{validation} mode the LLM is handed the task \emph{and} a candidate bundle and returns an admit/deny \emph{verdict}---the optional model gate drawn in Figure~\ref{fig:pipeline}, which composes conjunctively behind the deterministic floor (FULL $=$ floor $\wedge$ verdict) and can therefore only \emph{add} denials. In \emph{selection} mode the LLM is given the task \emph{alone} and must \emph{generate} the bundle, which is then routed through the \emph{same} deterministic stages with no verdict gate. The two modes isolate the two ways an LLM can fail an authorisation---mis-\emph{judging} a bundle it is shown versus mis-\emph{selecting} the bundle it emits---and let us show that the same deterministic floor recovers both (\S\ref{sec:whole_flow}).
-
-\begin{figure}[!t]
-\centering
-\includegraphics[width=0.8\columnwidth]{figures/pf1.png}
-\caption{PALADIN's six‑stage admission pipeline (short‑circuit S1–S4; S5 fact transformer → S6 TRAC). The deterministic stages are model‑independent; the LLM verdict gate composes \emph{conjunctively} with the deterministic floor (its drawn position is presentational---FULL $=$ floor $\wedge$ verdict) and is present only in validation, while in selection the LLM instead generates the bundle.}
-\Description{Flow diagram showing an MCP tool request passing through identity, registration, RBAC, ABAC, fact extraction, and TRAC stages before allow or deny.}
-\label{fig:pipeline}
-\end{figure}
-
-Table~\ref{tab:soo} names the classical access-control triple---subject, object, operation---that each \emph{deciding} stage evaluates, with its admission condition. We list only stages that render an access-control verdict: authentication ($S_1$) \emph{establishes} the subject rather than authorising an access, and the fact transformer ($S_5$) materialises $\Phi(r)$ without deciding, so neither is a row (both are detailed in \S\ref{sec:layers}). $S_2$--$S_4$ are a standard reference monitor over the tool invocation; ABAC ($S_4$) reuses the \emph{same} subject and object as RBAC and merely adds attributes to the policy. $S_6$ is the one stage whose object---the capability the bundle exercises in service of the task---is not an attribute RBAC or ABAC \emph{provisions}, but a relation over the task and the whole bundle that must be \emph{derived} (\S\ref{sec:why_not_abac}).
-
-\begin{table}[!t]
-\centering
-\caption{The subject, object, and operation each \emph{deciding} stage evaluates, with its admission condition. Only genuine access-control stages appear: authentication ($S_1$) establishes the subject, and the fact transformer ($S_5$, $\phi$) renders no verdict, so neither is a row (both in \S\ref{sec:layers}). $S_2$--$S_4$ form a classical reference monitor over the invocation $(\iota,(t,m),a(t))$; ABAC ($S_4$) uses the \emph{same} subject and object as RBAC, adding subject-, resource-, action-, and environment-\emph{attributes} to the policy. $S_6$'s object---the capability the bundle exercises in service of $\tau$---is not an attribute RBAC or ABAC \emph{provisions} but a \emph{derived} relation over $\tau$ and the whole bundle (\S\ref{sec:why_not_abac}).}
-\label{tab:soo}
-\footnotesize
-\begin{adjustbox}{max width=\columnwidth}
-\begin{tabular}{@{}lllll@{}}
-\toprule
-\textbf{Stage} & \textbf{Subject} & \textbf{Object} & \textbf{Operation} & \textbf{Admits iff} \\
-\midrule
-$S_2$ Registration & agent & tool$@$server $(t,m)$ & invoke & every $(t,m)$ registered \\
-$S_3$ RBAC         & role $\rho(\iota)$ & (domain, tool) & invoke as $a(t)$ & $(m,t)\in\rho(\iota)$ \\
-$S_4$ ABAC         & agent \emph{(+attrs)} & resource \emph{(+attrs)} & read/write/destructive & subject/resource/env attributes permit \\
-$S_6$ TRAC         & agent & capability set for $\tau$ & exercise bundle for $\tau$ & bundle coheres with $\tau$ \\
-\bottomrule
-\end{tabular}
-\end{adjustbox}
-\end{table}
-
-\subsection{Design Rationale}
+\subsection{Design Rationale and Pipeline Overview}
 \label{sec:design_rationale}
-
+\label{sec:pipeline_overview}
 
 PALADIN is assembled from a small set of security principles, each realised by one mechanism in the stack (Table~\ref{tab:rationale}). The design is deliberately \emph{layered and deterministic}: independent concerns are separated into stages that each admit or deny for one auditable reason, and the only non-deterministic component---an optional LLM verdict---is confined so that it can never weaken the guarantee.
 
 \begin{table}[!t]
 \centering
-\caption{PALADIN's design principles, the mechanism realising each, and why it is needed. Several are consolidated from properties stated where they are first used (short-circuit benefits, \S\ref{sec:state_model}; fail-secure and monotonicity, \S\ref{sec:composition_properties}; substrate portability, \S\ref{sec:substrate_portability}).}
+\caption{PALADIN's design principles, the mechanism realising each, and why it is needed. Several are consolidated from properties stated where they are first used (short-circuit benefits, \S\ref{sec:state_model}; fail-secure and monotonicity, \S\ref{sec:composition_properties}; substrate portability, \S\ref{sec:substrate_portability}). The optional LLM verdict gate ($G$) is listed as a first-class layer, confined so it can only add denials.}
 \label{tab:rationale}
 \footnotesize
 \begin{adjustbox}{max width=\columnwidth}
@@ -319,6 +282,7 @@ Least privilege (role) & $S_3$ RBAC & an agent gets only the (domain, tool) pair
 Context-sensitive gates & $S_4$ ABAC & clearance/trust/department/risk conditions a role cannot express \\
 Leak-free, replayable facts & $S_5$ transformer $\phi$ & decisions recompute from logs with no LLM call and no ground-truth label \\
 Task-relational least privilege & $S_6$ TRAC & authorised $\neq$ coherent: catch hallucinated/over-helpful bundles $S_3$--$S_4$ admit \\
+Optional model second-opinion & $G$ LLM verdict (validation) & a conjunctive gate behind the floor: can only \emph{add} denials, never admit what the floor denies \\
 Fail-secure default & all stages (P3) & missing facts and stage exceptions resolve to DENY \\
 Cheap-to-costly ordering & short-circuit $\rhd$ & set-membership first, fact-derivation last: efficiency, no masking, audit clarity \\
 Substrate portability & rules-as-data & commodity engines (OPA/Rego parity) reproduce every decision \\
@@ -332,6 +296,40 @@ Substrate portability & rules-as-data & commodity engines (OPA/Rego parity) repr
 \textbf{Why a deterministic floor, then an optional model verdict.} The deterministic stages are model-independent and recomputable from the released logs; the LLM verdict, when present (validation mode), composes \emph{conjunctively} behind them (FULL $=$ floor $\wedge$ verdict), so it can only \emph{add} denials, never admit what the floor denies. This bounds the trusted computing base to the deterministic stack and keeps the model out of the decision's integrity: a compromised or hallucinating verdict degrades permissiveness, not security (\S\ref{sec:threat_model}).
 
 \textbf{Why facts precede rules.} Separating fact derivation ($\phi=S_5$) from predicate evaluation ($S_6$) makes every task-relational decision a pure function of typed facts. The same $\Phi(r)$ yields the same, individually explained verdict on replay, and the rules---being data over derived attributes---port unchanged to a commodity policy engine (\S\ref{sec:substrate_portability}).
+
+\textbf{Pipeline realisation.} The Unified Decision Engine executes these principles as six sequential stages with short-circuit semantics: any \texttt{DENY} from stages S1--S4 terminates the pipeline immediately (Figure~\ref{fig:pipeline}). S5 extracts typed facts; S6 (TRAC) consumes them for predicate-level evaluation; in \emph{validation} mode an optional LLM verdict gate $G$ then composes conjunctively behind $S_6$.
+
+\textbf{Two evaluation modes.} We exercise this pipeline in two complementary modes that differ \emph{only} in where the proposed tool bundle originates; the six deterministic stages are identical in both (full protocol in \S\ref{sec:dual_mode}). In \emph{validation} mode the LLM is handed the task \emph{and} a candidate bundle and returns the admit/deny \emph{verdict} $G$ of Figure~\ref{fig:pipeline}. In \emph{selection} mode the LLM is given the task \emph{alone} and must \emph{generate} the bundle, which is then routed through the \emph{same} deterministic stages with no verdict gate. The two modes isolate the two ways an LLM can fail an authorisation---mis-\emph{judging} a bundle it is shown versus mis-\emph{selecting} the bundle it emits---and let us show that the same deterministic floor recovers both (\S\ref{sec:whole_flow}).
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.8\columnwidth]{figures/pf1.png}
+\caption{PALADIN's six‑stage admission pipeline (short‑circuit S1–S4; S5 fact transformer → S6 TRAC). The deterministic stages are model‑independent; the LLM verdict gate composes \emph{conjunctively} with the deterministic floor (its drawn position is presentational---FULL $=$ floor $\wedge$ verdict) and is present only in validation, while in selection the LLM instead generates the bundle.}
+\Description{Flow diagram showing an MCP tool request passing through identity, registration, RBAC, ABAC, fact extraction, and TRAC stages before allow or deny.}
+\label{fig:pipeline}
+\end{figure}
+
+Table~\ref{tab:soo} names the classical access-control triple---subject, object, operation---that each \emph{deciding} stage evaluates, with its admission condition, and adds the optional LLM verdict gate as the one non-deterministic decider. We list only components that render an access-control verdict: authentication ($S_1$) \emph{establishes} the subject rather than authorising an access, and the fact transformer ($S_5$) materialises $\Phi(r)$ without deciding, so neither is a row (both are detailed in \S\ref{sec:layers}). $S_2$--$S_4$ are a standard reference monitor over the tool invocation; ABAC ($S_4$) reuses the \emph{same} subject and object as RBAC and merely adds attributes to the policy. $S_6$ is the one \emph{deterministic} stage whose object---the capability the bundle exercises in service of the task---is not an attribute RBAC or ABAC \emph{provisions}, but a relation over the task and the whole bundle that must be \emph{derived} (\S\ref{sec:why_not_abac}); the gate $G$ then adds an \emph{optional}, non-deterministic second opinion in validation mode only.
+
+\begin{table}[!t]
+\centering
+\caption{The subject, object, and operation each \emph{deciding} stage evaluates, with its admission condition. Only genuine access-control stages appear: authentication ($S_1$) establishes the subject, and the fact transformer ($S_5$, $\phi$) renders no verdict, so neither is a row (both in \S\ref{sec:layers}). $S_2$--$S_4$ form a classical reference monitor over the invocation $(\iota,(t,m),a(t))$; ABAC ($S_4$) uses the \emph{same} subject and object as RBAC, adding subject-, resource-, action-, and environment-\emph{attributes} to the policy. $S_6$'s object---the capability the bundle exercises in service of $\tau$---is not an attribute RBAC or ABAC \emph{provisions} but a \emph{derived} relation over $\tau$ and the whole bundle (\S\ref{sec:why_not_abac}). The optional gate $G$ (validation mode only) is the one \emph{non-deterministic} decider; it composes conjunctively behind $S_6$ (FULL $=$ floor $\wedge$ verdict) and can only add denials.}
+\label{tab:soo}
+\footnotesize
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Stage} & \textbf{Subject} & \textbf{Object} & \textbf{Operation} & \textbf{Admits iff} \\
+\midrule
+$S_2$ Registration & agent & tool$@$server $(t,m)$ & invoke & every $(t,m)$ registered \\
+$S_3$ RBAC         & role $\rho(\iota)$ & (domain, tool) & invoke as $a(t)$ & $(m,t)\in\rho(\iota)$ \\
+$S_4$ ABAC         & agent \emph{(+attrs)} & resource \emph{(+attrs)} & read/write/destructive & subject/resource/env attributes permit \\
+$S_6$ TRAC         & agent & capability set for $\tau$ & exercise bundle for $\tau$ & bundle coheres with $\tau$ \\
+$G$ LLM verdict \emph{(val.)} & agent & candidate bundle for $\tau$ & judge admit/deny & model finds the bundle consistent with $\tau$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
 
 \subsection{Conventional Layers: Identity, Registration, RBAC, and ABAC}
 \label{sec:layers}

@@ -56,3 +56,14 @@ bin/opa.exe
 *.bak_*
 
 scratch/m2v_model/
+
+# LaTeX build artifacts (regenerated on compile)
+paper/*.aux
+paper/*.log
+paper/*.bbl
+paper/*.blg
+paper/*.out
+paper/*.toc
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz

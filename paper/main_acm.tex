@@ -506,6 +506,39 @@ Security  & L3 & Security       & 1.00 & all 8 (R, audit) \\
 \end{adjustbox}
 \end{table}
 
+\subsubsection{Persona Design: A Coverage Basis}
+\label{sec:persona_rationale}
+
+The six personas are the experiment's \emph{subject model}, not scenario dressing. ASTRA supplies the \emph{object} and \emph{operation} of the access-control triple---a task, a candidate bundle, and a correctness label---but no \emph{subject}; yet RBAC, ABAC, the SPIFFE/mTLS identity that anchors them (\S\ref{sec:layers}), and TRAC's persona-relative domain eligibility all condition on a subject with attributes. Each persona is therefore a SPIFFE-identified workload whose SVID carries the clearance, department, and trust claims ABAC reads and whose least-privilege grant fixes the RBAC and TRAC envelope (Table~\ref{tab:personas}). In this sense the persona design \emph{is} the authorisation-experiment design: every downstream layer is parameterised by it, and turning ASTRA's tool-selection corpus into an \emph{authorisation} benchmark is exactly the act of supplying these subjects.
+
+\textbf{Two goals: realism and coverage.} We chose the six to be simultaneously recognisable and spanning. Each maps to an enterprise archetype---an engineering power-user (DevOps), a read-plus-triage responder (Incident), a billing operator (Finance), a low-privilege analyst (Research), a cross-domain automation service account (Gateway), and a read-only audit principal (Security)---so the deployment is a plausible organisation rather than a synthetic edge case. Simultaneously, their attributes form a \emph{coverage basis}: they are set so that every deterministic predicate has at least one persona it admits and at least one it denies, making no rule vacuous and ensuring no layer's measured drop-one marginal (\S\ref{sec:reversal}) is an artefact of a single persona. Four orthogonal axes span the enforcement surface---\emph{clearance} L1--L3 (the ABAC clearance gates), six distinct \emph{departments} (the department-isolation rules), \emph{trust} $0.75$--$1.00$ straddling the $0.8$ write gate, and \emph{write authority} from read-only through benign, non-destructive, to fully destructive (the action-class and destructive gates)---while breadth from two-domain to all-eight-domain personas additionally stresses TRAC's capability-coverage check (\S\ref{sec:domain_inference}).
+
+\textbf{Positive and negative witnesses.} Table~\ref{tab:persona_coverage} pairs each predicate with a persona it admits and one it denies. Two ABAC witnesses fire in the \emph{full} stack and are directly visible as model-independent survivor drops in the funnels (\S\ref{sec:whole_flow_funnels}): the \emph{financial/PCI isolation} rule denies the two non-Finance personas that RBAC nonetheless lets read Stripe/Hummingbot (Security $259\!\to\!234$, Gateway $327\!\to\!321$)---a deliberate \emph{RBAC-pass/ABAC-fail} zone that makes ABAC non-redundant---while the \emph{high-risk-write} clearance gate denies the two L2 personas' writes on high-risk domains (Finance $52\!\to\!16$, Incident $150\!\to\!125$). The remaining ABAC witnesses (the L1 high-risk-read gate, the sub-$0.8$ trust gate, infrastructure-write isolation) are \emph{backstops}: RBAC already denies them in the full stack, so they become the active denier only once RBAC is ablated---precisely the near-redundant-yet-load-bearing-when-alone pattern quantified in \S\ref{sec:reversal}. That the L1 clearance, the $0.75$ trust score, and the two all-domain read personas are each the \emph{sole} witness for a predicate is the concrete sense in which the panel is a designed coverage basis, not an arbitrary org chart.
+
+\begin{table}[!t]
+\centering
+\caption{Persona coverage basis: each deterministic predicate has both an admitting and a denying persona witness, so no rule is vacuous. Two ABAC witnesses fire in the full stack (model-independent funnel drops cited in text, \S\ref{sec:whole_flow_funnels}); the remaining ABAC gates are backstops that become active only under RBAC ablation (\S\ref{sec:reversal}). Attributes are read from the released \texttt{spiffe\_registry.json}, \texttt{rbac.yaml}, \texttt{abac\_rules.yaml}, and \texttt{mcp\_attributes.yaml}.}
+\label{tab:persona_coverage}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lllc@{}}
+\toprule
+\textbf{Deterministic predicate} & \textbf{Admits (witness)} & \textbf{Denies (witness)} & \textbf{Active in} \\
+\midrule
+RBAC least-privilege                                & persona on its grant   & Research\,$\to$\,azure           & full \\
+ABAC financial/PCI isolation                        & Finance\,$\to$\,stripe & Gateway, Security\,$\to$\,stripe & \textbf{full} \\
+ABAC high-risk/destructive write\,$\Rightarrow$\,L3 & DevOps, Gateway (L3)   & Incident, Finance (L2)           & \textbf{full} \\
+ABAC high-risk read\,$\Rightarrow\,\geq$L2          & any L2/L3              & Research (L1)                    & backstop \\
+ABAC write\,$\Rightarrow$\,trust\,$\geq 0.8$        & DevOps, Finance        & Research ($0.75$)                & backstop \\
+ABAC infra-write\,$\Rightarrow$\,Eng/Infra          & DevOps, Gateway        & non-Eng/Infra writer            & backstop \\
+TRAC \texttt{capability\_coverage}                  & in-domain bundle       & null/cross-domain bundle        & full \\
+TRAC \texttt{tool\_relevance}                       & task-relevant bundle   & low-overlap bundle              & full \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
 \subsection{Dual-Mode Evaluation}
 \label{sec:dual_mode}
 

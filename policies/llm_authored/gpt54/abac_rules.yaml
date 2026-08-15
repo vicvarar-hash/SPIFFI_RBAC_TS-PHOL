@@ -1,0 +1,153 @@
+rules:
+  # ABAC tightens high-risk domains with clearance, trust, read-before-write, and department isolation.
+  - id: "deny_high_risk_without_l2"
+    action: "deny"
+    description: "High-risk domains require at least L2 clearance."
+    failure_reason: "Insufficient clearance for high-risk resource."
+    match_attributes:
+      - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L1", op: "==" }
+
+  - id: "deny_destructive_without_l3"
+    action: "deny"
+    description: "Destructive writes require top clearance."
+    failure_reason: "Destructive write requires L3 clearance."
+    match_attributes:
+      - { source: "action", attribute: "contains_destructive_write", value: "true", op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L3", op: "!=" }
+
+  - id: "deny_any_write_without_read_before_write"
+    action: "deny"
+    description: "Mutable operations must be preceded by read context."
+    failure_reason: "Write denied because bundle lacks read-before-write."
+    match_attributes:
+      - { source: "action", attribute: "contains_write", value: "true", op: "==" }
+      - { source: "action", attribute: "contains_read_before_write", value: "true", op: "!=" }
+
+  - id: "deny_low_trust_any_write"
+    action: "deny"
+    description: "Lower-trust subjects cannot perform writes."
+    failure_reason: "Trust score too low for write operations."
+    match_attributes:
+      - { source: "action", attribute: "contains_write", value: "true", op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.9", op: "<" }
+
+  - id: "deny_medium_plus_write_without_095_trust"
+    action: "deny"
+    description: "Writes to nontrivial domains require stronger trust."
+    failure_reason: "Trust score too low for medium/high-risk write."
+    match_attributes:
+      - { source: "action", attribute: "contains_write", value: "true", op: "==" }
+      - { source: "resource", attribute: "risk_level", value: ["medium", "high"], op: "in" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.95", op: "<" }
+
+  - id: "deny_experimental_non_security"
+    action: "deny"
+    description: "Experimental trust boundaries are restricted to trusted control-plane services."
+    failure_reason: "Experimental domain restricted."
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Experimental", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Infrastructure", op: "!=" }
+
+  - id: "deny_private_key_non_security"
+    action: "deny"
+    description: "Private-key material is restricted to security."
+    failure_reason: "Private-key domain restricted to Security."
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Private-Key", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_pci_non_finance_security"
+    action: "deny"
+    description: "PCI-DSS resources are isolated to Finance and Security."
+    failure_reason: "PCI-DSS resource restricted by department."
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "PCI-DSS", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Finance", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_financial_non_finance_security"
+    action: "deny"
+    description: "Financial data/resources are isolated to Finance and Security."
+    failure_reason: "Financial resource restricted by department."
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "Financial", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Finance", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_financial_data_non_finance_security"
+    action: "deny"
+    description: "Sensitive financial data is department-isolated."
+    failure_reason: "Financial data restricted by department."
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Financial", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Finance", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_monitoring_non_ops_eng_security"
+    action: "deny"
+    description: "Monitoring resources are limited to operational departments."
+    failure_reason: "Monitoring resource restricted by department."
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "Monitoring", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Operations", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Engineering", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_enterprise_non_eng_infra_security"
+    action: "deny"
+    description: "Enterprise infrastructure resources are tightly scoped."
+    failure_reason: "Enterprise resource restricted by department."
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "Enterprise", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Engineering", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Infrastructure", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_infra_data_non_eng_infra_security"
+    action: "deny"
+    description: "Infrastructure-sensitive data is limited to platform/security staff."
+    failure_reason: "Infrastructure data restricted by department."
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Infrastructure", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Engineering", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Infrastructure", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_third_party_write"
+    action: "deny"
+    description: "Third-party domains remain read-only."
+    failure_reason: "Writes to third-party resources are prohibited."
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Third-Party", op: "==" }
+      - { source: "action", attribute: "contains_write", value: "true", op: "==" }
+
+  - id: "deny_vetted_partner_destructive_non_control_plane"
+    action: "deny"
+    description: "Destructive actions on partner systems are reserved for control-plane services."
+    failure_reason: "Destructive partner action restricted."
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Vetted-Partner", op: "==" }
+      - { source: "action", attribute: "contains_destructive_write", value: "true", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+      - { source: "subject", attribute: "attributes.department", value: "Infrastructure", op: "!=" }
+
+  - id: "deny_internal_destructive_non_security"
+    action: "deny"
+    description: "Irreversible internal deletes are reserved for security oversight."
+    failure_reason: "Destructive internal action restricted to Security."
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Internal", op: "==" }
+      - { source: "action", attribute: "contains_destructive_write", value: "true", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "!=" }
+
+  - id: "deny_general_internal_write_for_research"
+    action: "deny"
+    description: "Research is limited to low-risk discovery, not internal mutation."
+    failure_reason: "Research department cannot write internal general resources."
+    match_attributes:
+      - { source: "subject", attribute: "attributes.department", value: "Research", op: "==" }
+      - { source: "resource", attribute: "compliance_tier", value: "General", op: "==" }
+      - { source: "resource", attribute: "data_sensitivity", value: "Internal", op: "==" }
+      - { source: "action", attribute: "contains_write", value: "true", op: "==" }

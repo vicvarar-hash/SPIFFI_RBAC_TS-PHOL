@@ -1,0 +1,181 @@
+# ABAC deny-rules: clearance×risk, trust-gated writes, dept×compliance isolation,
+# Private-Key/Experimental hard gates, destructive needs L3+high trust+RBW.
+# AND within rule, OR across rules; absent attrs fail closed (except !=).
+rules:
+  - id: "abac_l1_no_medium_risk"
+    action: "deny"
+    description: "L1 may only touch low-risk public domains"
+    failure_reason: "clearance L1 insufficient for medium-risk resources"
+    match_attributes:
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L1", op: "==" }
+      - { source: "resource", attribute: "risk_level", value: "medium", op: "==" }
+
+  - id: "abac_l1_no_high_risk"
+    action: "deny"
+    description: "L1 cannot access high-risk resources"
+    failure_reason: "clearance L1 insufficient for high-risk resources"
+    match_attributes:
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L1", op: "==" }
+      - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
+
+  - id: "abac_high_risk_requires_l2"
+    action: "deny"
+    description: "High-risk domains require at least L2 clearance"
+    failure_reason: "high-risk resource requires clearance >= L2"
+    match_attributes:
+      - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L2", op: "<" }
+
+  - id: "abac_destructive_requires_l3"
+    action: "deny"
+    description: "Destructive writes require L3 clearance"
+    failure_reason: "destructive write requires clearance L3"
+    match_attributes:
+      - { source: "action", attribute: "contains_destructive_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L3", op: "!=" }
+
+  - id: "abac_write_trust_floor"
+    action: "deny"
+    description: "Any write bundle requires trust_score >= 0.85"
+    failure_reason: "trust_score below 0.85 for write operations"
+    match_attributes:
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.85", op: "<" }
+
+  - id: "abac_destructive_trust_floor"
+    action: "deny"
+    description: "Destructive writes require trust_score >= 0.90"
+    failure_reason: "trust_score below 0.90 for destructive writes"
+    match_attributes:
+      - { source: "action", attribute: "contains_destructive_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.90", op: "<" }
+
+  - id: "abac_destructive_requires_read_before_write"
+    action: "deny"
+    description: "Destructive bundles must include a preceding read"
+    failure_reason: "destructive write without read-before-write"
+    match_attributes:
+      - { source: "action", attribute: "contains_destructive_write", value: true, op: "==" }
+      - { source: "action", attribute: "contains_read_before_write", value: true, op: "!=" }
+
+  - id: "abac_pci_department_isolation"
+    action: "deny"
+    description: "PCI-DSS resources limited to Finance and Infrastructure"
+    failure_reason: "PCI-DSS compliance domain not allowed for this department"
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "PCI-DSS", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: ["Engineering", "Operations", "Research", "Security"], op: "in" }
+
+  - id: "abac_financial_compliance_isolation"
+    action: "deny"
+    description: "Financial compliance tier limited to Finance and Infrastructure"
+    failure_reason: "Financial compliance domain not allowed for this department"
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "Financial", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: ["Engineering", "Operations", "Research", "Security"], op: "in" }
+
+  - id: "abac_monitoring_department"
+    action: "deny"
+    description: "Monitoring tier limited to ops-capable departments"
+    failure_reason: "Monitoring domain not allowed for this department"
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "Monitoring", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: ["Finance", "Research"], op: "in" }
+
+  - id: "abac_enterprise_department"
+    action: "deny"
+    description: "Enterprise infrastructure limited to Engineering/Infrastructure/Security"
+    failure_reason: "Enterprise domain not allowed for this department"
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "Enterprise", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: ["Finance", "Operations", "Research"], op: "in" }
+
+  - id: "abac_financial_sensitivity_dept"
+    action: "deny"
+    description: "Financial data not readable by Research or generic Operations"
+    failure_reason: "Financial data_sensitivity blocked for department"
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Financial", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: ["Research", "Operations"], op: "in" }
+
+  - id: "abac_infrastructure_sensitivity_dept"
+    action: "deny"
+    description: "Infrastructure sensitivity limited to eng/infra/security"
+    failure_reason: "Infrastructure data_sensitivity blocked for department"
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Infrastructure", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: ["Finance", "Operations", "Research"], op: "in" }
+
+  - id: "abac_private_key_department"
+    action: "deny"
+    description: "Private-Key material only for Infrastructure execution plane"
+    failure_reason: "Private-Key data restricted to Infrastructure"
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Private-Key", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Infrastructure", op: "!=" }
+
+  - id: "abac_private_key_clearance"
+    action: "deny"
+    description: "Private-Key requires L3"
+    failure_reason: "Private-Key data requires L3 clearance"
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Private-Key", op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L3", op: "!=" }
+
+  - id: "abac_experimental_trust_boundary"
+    action: "deny"
+    description: "Experimental trust boundary requires trust_score >= 0.95"
+    failure_reason: "trust_score too low for Experimental trust_boundary"
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Experimental", op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.95", op: "<" }
+
+  - id: "abac_experimental_clearance"
+    action: "deny"
+    description: "Experimental boundary requires L3"
+    failure_reason: "Experimental trust_boundary requires L3 clearance"
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Experimental", op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L3", op: "!=" }
+
+  - id: "abac_experimental_department"
+    action: "deny"
+    description: "Experimental boundary limited to Infrastructure"
+    failure_reason: "Experimental trust_boundary restricted to Infrastructure"
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Experimental", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Infrastructure", op: "!=" }
+
+  - id: "abac_internal_write_trust"
+    action: "deny"
+    description: "Writes to Internal trust_boundary require trust >= 0.88"
+    failure_reason: "insufficient trust for Internal boundary write"
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Internal", op: "==" }
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.88", op: "<" }
+
+  - id: "abac_high_risk_write_trust"
+    action: "deny"
+    description: "Writes on high-risk resources require trust >= 0.88"
+    failure_reason: "insufficient trust for high-risk write"
+    match_attributes:
+      - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.88", op: "<" }
+
+  - id: "abac_privileged_high_risk_l2_destructive_block"
+    action: "deny"
+    description: "L2 cannot perform destructive ops even if RBAC lists a tool"
+    failure_reason: "L2 clearance cannot perform destructive operations"
+    match_attributes:
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L2", op: "==" }
+      - { source: "action", attribute: "contains_destructive_write", value: true, op: "==" }
+
+  - id: "abac_public_no_write"
+    action: "deny"
+    description: "Public third-party domains are read-only"
+    failure_reason: "write not permitted on Public data_sensitivity"
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Public", op: "==" }
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }

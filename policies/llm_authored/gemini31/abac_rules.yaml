@@ -1,0 +1,38 @@
+# Design Rationale:
+# Provides defense-in-depth across clearance, trust, and risk dimensions.
+# Enforces read-before-write for all high-risk writes to prevent blind overwrites,
+# blocks L1 subjects from any writes, restricts destructive writes to high-trust subjects,
+# and firmly isolats Experimental domains to maximum-trust execution.
+rules:
+  - id: "deny_writes_l1"
+    action: "deny"
+    description: "L1 clearance cannot perform any state-changing operations"
+    failure_reason: "Insufficient clearance for write operations"
+    match_attributes:
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L1", op: "==" }
+
+  - id: "deny_destructive_low_trust"
+    action: "deny"
+    description: "Destructive writes require high trust score"
+    failure_reason: "Trust score below 0.95 cannot perform destructive writes"
+    match_attributes:
+      - { source: "action", attribute: "contains_destructive_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.95", op: "<" }
+
+  - id: "deny_blind_writes_high_risk"
+    action: "deny"
+    description: "High risk domains require read-before-write"
+    failure_reason: "Cannot perform blind writes on high risk domains"
+    match_attributes:
+      - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }
+      - { source: "action", attribute: "contains_read_before_write", value: false, op: "==" }
+
+  - id: "deny_experimental_low_trust"
+    action: "deny"
+    description: "Experimental trust boundary restricted to maximum trust"
+    failure_reason: "Experimental endpoints require perfect trust score"
+    match_attributes:
+      - { source: "resource", attribute: "trust_boundary", value: "Experimental", op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "1.0", op: "!=" }

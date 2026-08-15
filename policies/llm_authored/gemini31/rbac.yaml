@@ -1,0 +1,58 @@
+# Design Rationale:
+# Applies strict least-privilege role scoping by assigning domains aligned with job functions.
+# Uses explicit tool whitelists for L1/L3 read-only personas to prevent `wrong` tool selection,
+# while granting `*` to L3 automation and DevOps, leaning on ABAC for fine-grained action bounds.
+# Every persona ends with an explicit default deny to prevent `null` domain access.
+policies:
+  - spiffe_id: "spiffe://demo.local/agent/devops"
+    description: "DevOps monitoring and infrastructure diagnostics"
+    rules:
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "devops_grafana" }
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "devops_azure" }
+      - { mcp: "mongodb", tools: ["*"], action: "allow", rule_name: "devops_mongodb" }
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "devops_atlassian" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/incident"
+    description: "Incident tracking and escalation"
+    rules:
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "incident_grafana" }
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "incident_atlassian" }
+      - { mcp: "notion", tools: ["*"], action: "allow", rule_name: "incident_notion" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/finance"
+    description: "Financial and billing workflows"
+    rules:
+      - { mcp: "stripe", tools: ["*"], action: "allow", rule_name: "finance_stripe" }
+      - { mcp: "mongodb", tools: ["*"], action: "allow", rule_name: "finance_mongodb" }
+      - { mcp: "notion", tools: ["*"], action: "allow", rule_name: "finance_notion" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/research"
+    description: "Low-risk info discovery"
+    rules:
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "research_wiki" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "research_paper" }
+      - { mcp: "notion", tools: ["API-get-block-children", "API-get-self", "API-get-user", "API-get-users", "API-retrieve-a-block", "API-retrieve-a-comment", "API-retrieve-a-database", "API-retrieve-a-page", "API-retrieve-a-page-property"], action: "allow", rule_name: "research_notion_read" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/service/gateway"
+    description: "Infrastructure automation executing approved tool operations"
+    rules:
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "gateway_azure" }
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "gateway_atlassian" }
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "gateway_grafana" }
+      - { mcp: "mongodb", tools: ["*"], action: "allow", rule_name: "gateway_mongodb" }
+      - { mcp: "stripe", tools: ["*"], action: "allow", rule_name: "gateway_stripe" }
+      - { mcp: "notion", tools: ["*"], action: "allow", rule_name: "gateway_notion" }
+      - { mcp: "hummingbot-mcp", tools: ["*"], action: "allow", rule_name: "gateway_hummingbot" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/service/security"
+    description: "Security and compliance rules evaluation"
+    rules:
+      - { mcp: "azure", tools: ["azmcp-appconfig-account-list", "azmcp-appconfig-kv-list", "azmcp-appconfig-kv-show", "azmcp-cosmos-account-list", "azmcp-cosmos-database-list", "azmcp-group-list", "azmcp-monitor-log-query", "azmcp-monitor-table-list", "azmcp-monitor-workspace-list", "azmcp-search-index-list", "azmcp-search-service-list", "azmcp-storage-account-list", "azmcp-storage-blob-container-list", "azmcp-storage-blob-list", "azmcp-storage-table-list", "azmcp-subscription-list"], action: "allow", rule_name: "security_azure_read" }
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "security_grafana" }
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "security_atlassian" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }

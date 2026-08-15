@@ -1,0 +1,70 @@
+# RBAC policy: least-privilege per persona inferred from job descriptions.
+# devops→grafana+azure+atlassian(read); incident→grafana+atlassian; finance→stripe+mongodb(read);
+# research→wikipedia+paper-search+notion(read); gateway→all-reads+benign; security→all-reads.
+
+policies:
+  - spiffe_id: "spiffe://demo.local/agent/devops"
+    description: "DevOps: monitoring, infra diagnostics, deployment operations"
+    rules:
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "allow_grafana_full" }
+      - { mcp: "azure", tools: ["azmcp-appconfig-account-list","azmcp-appconfig-kv-list","azmcp-appconfig-kv-show","azmcp-cosmos-account-list","azmcp-cosmos-database-container-item-query","azmcp-cosmos-database-container-list","azmcp-cosmos-database-list","azmcp-extension-az","azmcp-extension-azd","azmcp-group-list","azmcp-monitor-log-query","azmcp-monitor-table-list","azmcp-monitor-workspace-list","azmcp-search-index-describe","azmcp-search-index-list","azmcp-search-index-query","azmcp-search-service-list","azmcp-storage-account-list","azmcp-storage-blob-container-details","azmcp-storage-blob-container-list","azmcp-storage-blob-list","azmcp-storage-table-list","azmcp-subscription-list","azmcp-appconfig-kv-lock","azmcp-appconfig-kv-unlock"], action: "allow", rule_name: "allow_azure_read" }
+      - { mcp: "atlassian", tools: ["jira_get_issue","jira_get_project_issues","jira_search","jira_search_fields","jira_get_board_issues","jira_get_sprints_from_board","jira_get_sprint_issues","jira_get_agile_boards","jira_batch_get_changelogs","jira_get_user_profile","jira_get_worklog","jira_get_link_types","jira_get_project_versions","confluence_get_page","confluence_search","confluence_get_comments","confluence_get_labels","confluence_get_page_children","jira_download_attachments"], action: "allow", rule_name: "allow_atlassian_read" }
+      - { mcp: "atlassian", tools: ["jira_add_comment","jira_transition_issue","jira_get_transitions","confluence_add_comment","confluence_add_label"], action: "allow", rule_name: "allow_atlassian_benign_write" }
+      - { mcp: "notion", tools: ["API-get-block-children","API-get-self","API-get-user","API-get-users","API-retrieve-a-block","API-retrieve-a-comment","API-retrieve-a-database","API-retrieve-a-page","API-retrieve-a-page-property"], action: "allow", rule_name: "allow_notion_read" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/incident"
+    description: "Incident: track, triage, escalate incidents via Grafana and Atlassian"
+    rules:
+      - { mcp: "grafana", tools: ["get_incident","list_incidents","get_sift_analysis","get_sift_investigation","list_sift_investigations","get_alert_rule_by_uid","list_alert_rules","list_contact_points","get_dashboard_by_uid","get_dashboard_panel_queries","get_dashboard_property","get_dashboard_summary","search_dashboards","get_current_oncall_users","list_oncall_schedules","list_oncall_teams","list_oncall_users","get_oncall_shift","query_loki_logs","query_loki_stats","list_loki_label_names","list_loki_label_values","query_prometheus","list_prometheus_label_names","list_prometheus_label_values","list_prometheus_metric_names","list_prometheus_metric_metadata","find_error_pattern_logs","find_slow_requests","list_datasources","get_datasource_by_name","get_datasource_by_uid","list_teams","list_users_by_org","get_assertions","generate_deeplink","fetch_pyroscope_profile","list_pyroscope_label_names","list_pyroscope_label_values","list_pyroscope_profile_types"], action: "allow", rule_name: "allow_grafana_read" }
+      - { mcp: "grafana", tools: ["add_activity_to_incident","create_incident"], action: "allow", rule_name: "allow_grafana_incident_write" }
+      - { mcp: "atlassian", tools: ["jira_get_issue","jira_get_project_issues","jira_search","jira_search_fields","jira_get_board_issues","jira_get_sprints_from_board","jira_get_sprint_issues","jira_get_agile_boards","jira_batch_get_changelogs","jira_get_user_profile","jira_get_worklog","jira_get_link_types","jira_get_project_versions","confluence_get_page","confluence_search","confluence_get_comments","confluence_get_labels","confluence_get_page_children","jira_download_attachments"], action: "allow", rule_name: "allow_atlassian_read" }
+      - { mcp: "atlassian", tools: ["jira_add_comment","jira_transition_issue","jira_get_transitions","jira_create_issue_link","jira_add_worklog","confluence_add_comment","confluence_add_label"], action: "allow", rule_name: "allow_atlassian_benign_write" }
+      - { mcp: "atlassian", tools: ["jira_create_issue","jira_update_issue"], action: "allow", rule_name: "allow_atlassian_incident_create" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/finance"
+    description: "Finance: billing, subscription management, financial records"
+    rules:
+      - { mcp: "stripe", tools: ["*"], action: "allow", rule_name: "allow_stripe_full" }
+      - { mcp: "mongodb", tools: ["aggregate","collection-indexes","collection-schema","collection-storage-size","connect","count","db-stats","explain","export","find","list-collections","list-databases","mongodb-logs"], action: "allow", rule_name: "allow_mongodb_read" }
+      - { mcp: "notion", tools: ["API-get-block-children","API-get-self","API-get-user","API-get-users","API-retrieve-a-block","API-retrieve-a-comment","API-retrieve-a-database","API-retrieve-a-page","API-retrieve-a-page-property"], action: "allow", rule_name: "allow_notion_read" }
+      - { mcp: "atlassian", tools: ["jira_get_issue","jira_get_project_issues","jira_search","jira_search_fields","jira_get_user_profile","confluence_get_page","confluence_search","confluence_get_comments","confluence_get_labels","confluence_get_page_children"], action: "allow", rule_name: "allow_atlassian_read" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/research"
+    description: "Research: low-risk information discovery, read-only public/internal sources"
+    rules:
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "allow_wikipedia_full" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "allow_paper_search_full" }
+      - { mcp: "notion", tools: ["API-get-block-children","API-get-self","API-get-user","API-get-users","API-retrieve-a-block","API-retrieve-a-comment","API-retrieve-a-database","API-retrieve-a-page","API-retrieve-a-page-property"], action: "allow", rule_name: "allow_notion_read" }
+      - { mcp: "atlassian", tools: ["confluence_get_page","confluence_search","confluence_get_comments","confluence_get_labels","confluence_get_page_children","jira_get_issue","jira_search","jira_search_fields","jira_get_user_profile"], action: "allow", rule_name: "allow_atlassian_read_limited" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/service/gateway"
+    description: "Automation gateway: executes approved operations across all domains"
+    rules:
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "allow_grafana_full" }
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "allow_atlassian_full" }
+      - { mcp: "notion", tools: ["*"], action: "allow", rule_name: "allow_notion_full" }
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "allow_azure_full" }
+      - { mcp: "mongodb", tools: ["aggregate","collection-indexes","collection-schema","collection-storage-size","connect","count","db-stats","explain","export","find","list-collections","list-databases","mongodb-logs","create-collection","create-index","insert-many","rename-collection","update-many"], action: "allow", rule_name: "allow_mongodb_no_destructive" }
+      - { mcp: "stripe", tools: ["finalize_invoice","list_coupons","list_customers","list_invoices","list_payment_intents","list_prices","list_products","list_subscriptions","retrieve_balance","search_stripe_documentation","create_coupon","create_customer","create_invoice","create_invoice_item","create_payment_link","create_price","create_product","list_disputes","update_dispute","update_subscription"], action: "allow", rule_name: "allow_stripe_no_destructive" }
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "allow_wikipedia_full" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "allow_paper_search_full" }
+      - { mcp: "hummingbot-mcp", tools: ["explore_controllers","get_active_bots_status","get_candles","get_funding_rate","get_order_book","get_orders","get_portfolio_balances","get_positions","get_prices"], action: "allow", rule_name: "allow_hummingbot_read_only" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/service/security"
+    description: "Security engine: evaluates rules, reads all domains for policy assessment"
+    rules:
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "allow_grafana_full" }
+      - { mcp: "atlassian", tools: ["jira_get_issue","jira_get_project_issues","jira_search","jira_search_fields","jira_get_board_issues","jira_get_agile_boards","jira_batch_get_changelogs","jira_get_user_profile","jira_get_worklog","jira_get_link_types","jira_get_project_versions","jira_get_sprints_from_board","jira_get_sprint_issues","confluence_get_page","confluence_search","confluence_get_comments","confluence_get_labels","confluence_get_page_children","jira_download_attachments"], action: "allow", rule_name: "allow_atlassian_read" }
+      - { mcp: "azure", tools: ["azmcp-appconfig-account-list","azmcp-appconfig-kv-list","azmcp-appconfig-kv-show","azmcp-cosmos-account-list","azmcp-cosmos-database-container-item-query","azmcp-cosmos-database-container-list","azmcp-cosmos-database-list","azmcp-extension-az","azmcp-extension-azd","azmcp-group-list","azmcp-monitor-log-query","azmcp-monitor-table-list","azmcp-monitor-workspace-list","azmcp-search-index-describe","azmcp-search-index-list","azmcp-search-index-query","azmcp-search-service-list","azmcp-storage-account-list","azmcp-storage-blob-container-details","azmcp-storage-blob-container-list","azmcp-storage-blob-list","azmcp-storage-table-list","azmcp-subscription-list","azmcp-appconfig-kv-lock","azmcp-appconfig-kv-unlock"], action: "allow", rule_name: "allow_azure_read" }
+      - { mcp: "mongodb", tools: ["aggregate","collection-indexes","collection-schema","collection-storage-size","connect","count","db-stats","explain","export","find","list-collections","list-databases","mongodb-logs"], action: "allow", rule_name: "allow_mongodb_read" }
+      - { mcp: "notion", tools: ["API-get-block-children","API-get-self","API-get-user","API-get-users","API-retrieve-a-block","API-retrieve-a-comment","API-retrieve-a-database","API-retrieve-a-page","API-retrieve-a-page-property"], action: "allow", rule_name: "allow_notion_read" }
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "allow_wikipedia_full" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "allow_paper_search_full" }
+      - { mcp: "stripe", tools: ["list_customers","list_invoices","list_payment_intents","list_products","list_subscriptions","retrieve_balance","search_stripe_documentation","list_coupons","list_prices","list_disputes"], action: "allow", rule_name: "allow_stripe_read" }
+      - { mcp: "hummingbot-mcp", tools: ["explore_controllers","get_active_bots_status","get_candles","get_funding_rate","get_order_book","get_orders","get_portfolio_balances","get_positions","get_prices"], action: "allow", rule_name: "allow_hummingbot_read" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }

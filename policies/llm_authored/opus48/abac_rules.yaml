@@ -1,0 +1,63 @@
+# Rationale: deny-rules layer clearance-by-risk gating, department/compliance
+# isolation, and trust-gated writes on top of RBAC scoping. Each fires only on
+# inadmissible bundles: L1 beyond low-risk, writes by read-only depts (Research/
+# Security), destructive ops by Operations, non-L3 on Enterprise infra, Financial
+# data outside Finance, and Private-Key/high-risk-destructive below trust 0.90.
+rules:
+  - id: "abac_l1_low_risk_only"
+    action: "deny"
+    description: "L1 clearance may only touch low-risk domains"
+    failure_reason: "Insufficient clearance for medium/high-risk domain"
+    match_attributes:
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L1", op: "==" }
+      - { source: "resource", attribute: "risk_level", value: "low", op: "!=" }
+  - id: "abac_research_read_only"
+    action: "deny"
+    description: "Research department is read-only information discovery"
+    failure_reason: "Write attempted by read-only research persona"
+    match_attributes:
+      - { source: "subject", attribute: "attributes.department", value: "Research", op: "==" }
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }
+  - id: "abac_security_read_only"
+    action: "deny"
+    description: "Security evaluation engine is restricted to read-only audit"
+    failure_reason: "Write attempted by read-only security persona"
+    match_attributes:
+      - { source: "subject", attribute: "attributes.department", value: "Security", op: "==" }
+      - { source: "action", attribute: "contains_write", value: true, op: "==" }
+  - id: "abac_ops_no_destructive"
+    action: "deny"
+    description: "Operations (incident) may not perform destructive writes"
+    failure_reason: "Destructive write not permitted for incident persona"
+    match_attributes:
+      - { source: "subject", attribute: "attributes.department", value: "Operations", op: "==" }
+      - { source: "action", attribute: "contains_destructive_write", value: true, op: "==" }
+  - id: "abac_enterprise_requires_l3"
+    action: "deny"
+    description: "Enterprise infrastructure tier requires L3 clearance"
+    failure_reason: "Enterprise/infrastructure domain requires L3 clearance"
+    match_attributes:
+      - { source: "resource", attribute: "compliance_tier", value: "Enterprise", op: "==" }
+      - { source: "subject", attribute: "attributes.clearance_level", value: "L3", op: "!=" }
+  - id: "abac_financial_data_isolation"
+    action: "deny"
+    description: "Financial-sensitivity data is restricted to the Finance department"
+    failure_reason: "Financial data accessed outside Finance department"
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Financial", op: "==" }
+      - { source: "subject", attribute: "attributes.department", value: "Finance", op: "!=" }
+  - id: "abac_private_key_high_trust"
+    action: "deny"
+    description: "Private-Key domains require trust score >= 0.90"
+    failure_reason: "Trust score too low for Private-Key domain"
+    match_attributes:
+      - { source: "resource", attribute: "data_sensitivity", value: "Private-Key", op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.90", op: "<" }
+  - id: "abac_high_risk_destructive_trust"
+    action: "deny"
+    description: "Irreversible writes on high-risk domains require trust score >= 0.90"
+    failure_reason: "Trust score too low for destructive write on high-risk domain"
+    match_attributes:
+      - { source: "resource", attribute: "risk_level", value: "high", op: "==" }
+      - { source: "action", attribute: "contains_destructive_write", value: true, op: "==" }
+      - { source: "subject", attribute: "attributes.trust_score", value: "0.90", op: "<" }

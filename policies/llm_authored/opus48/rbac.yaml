@@ -1,0 +1,43 @@
+# Rationale: least-privilege allow-list. Each persona is scoped to only the MCP
+# servers matching its job function, so every other server hits default_deny and
+# all cross-domain (null) bundles are denied. Read-only personas (research,
+# security) and the no-destructive persona (incident) are further constrained in
+# ABAC by department, so same-server privilege-escalation (wrong) bundles fail too.
+policies:
+  - spiffe_id: "spiffe://demo.local/agent/research"
+    description: "Low-risk information discovery: public reference domains, read-only"
+    rules:
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "allow_wikipedia" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "allow_paper_search" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+  - spiffe_id: "spiffe://demo.local/agent/incident"
+    description: "Incident tracking and escalation: issue trackers, ops docs, monitoring incidents"
+    rules:
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "allow_atlassian" }
+      - { mcp: "notion", tools: ["*"], action: "allow", rule_name: "allow_notion" }
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "allow_grafana" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+  - spiffe_id: "spiffe://demo.local/agent/devops"
+    description: "Monitoring and operational/infrastructure diagnostics"
+    rules:
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "allow_grafana" }
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "allow_azure" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+  - spiffe_id: "spiffe://demo.local/agent/finance"
+    description: "Billing and financial workflows: payments, financial datastore, trading"
+    rules:
+      - { mcp: "stripe", tools: ["*"], action: "allow", rule_name: "allow_stripe" }
+      - { mcp: "mongodb", tools: ["*"], action: "allow", rule_name: "allow_mongodb" }
+      - { mcp: "hummingbot-mcp", tools: ["*"], action: "allow", rule_name: "allow_hummingbot" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+  - spiffe_id: "spiffe://demo.local/service/gateway"
+    description: "Infrastructure execution service for approved operations"
+    rules:
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "allow_azure" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+  - spiffe_id: "spiffe://demo.local/service/security"
+    description: "Security evaluation: read-only audit of monitoring and infrastructure"
+    rules:
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "allow_grafana" }
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "allow_azure" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }

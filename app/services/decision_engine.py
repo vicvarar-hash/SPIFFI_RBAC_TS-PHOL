@@ -222,6 +222,7 @@ class DecisionEngine:
                 "tool_count": len(tools),
                 "contains_write": intent_info["intent_properties"].get("contains_write", False),
                 "contains_destructive_write": tool_aggregates.get("ContainsDelete", False),
+                "contains_read_before_write": intent_info["intent_properties"].get("contains_read_before_write", False),
                 "write_tool_count": sum(1 for d in tool_audit if d.get("is_write")),
                 "multi_domain": intent_info["intent_properties"].get("multi_domain", False)
             },

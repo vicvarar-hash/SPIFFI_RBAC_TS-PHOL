@@ -1,0 +1,64 @@
+policies:
+  - spiffe_id: "spiffe://demo.local/agent/devops"
+    description: "Engineering operations agent scoped to monitoring and infrastructure diagnostics."
+    rules:
+      # Least privilege: broad observability, narrow incident writes, no finance/research stores.
+      - { mcp: "grafana", tools: ["fetch_pyroscope_profile", "find_error_pattern_logs", "find_slow_requests", "generate_deeplink", "get_alert_rule_by_uid", "get_assertions", "get_current_oncall_users", "get_dashboard_by_uid", "get_dashboard_panel_queries", "get_dashboard_property", "get_dashboard_summary", "get_datasource_by_name", "get_datasource_by_uid", "get_incident", "get_oncall_shift", "get_sift_analysis", "get_sift_investigation", "list_alert_rules", "list_contact_points", "list_datasources", "list_incidents", "list_loki_label_names", "list_loki_label_values", "list_oncall_schedules", "list_oncall_teams", "list_oncall_users", "list_prometheus_label_names", "list_prometheus_label_values", "list_prometheus_metric_metadata", "list_prometheus_metric_names", "list_pyroscope_label_names", "list_pyroscope_label_values", "list_pyroscope_profile_types", "list_sift_investigations", "list_teams", "list_users_by_org", "query_loki_logs", "query_loki_stats", "query_prometheus", "search_dashboards", "add_activity_to_incident", "create_incident"], action: "allow", rule_name: "devops_grafana_ops" }
+      - { mcp: "azure", tools: ["azmcp-appconfig-account-list", "azmcp-appconfig-kv-list", "azmcp-appconfig-kv-show", "azmcp-cosmos-account-list", "azmcp-cosmos-database-container-item-query", "azmcp-cosmos-database-container-list", "azmcp-cosmos-database-list", "azmcp-extension-az", "azmcp-extension-azd", "azmcp-group-list", "azmcp-monitor-log-query", "azmcp-monitor-table-list", "azmcp-monitor-workspace-list", "azmcp-search-index-describe", "azmcp-search-index-list", "azmcp-search-index-query", "azmcp-search-service-list", "azmcp-storage-account-list", "azmcp-storage-blob-container-details", "azmcp-storage-blob-container-list", "azmcp-storage-blob-list", "azmcp-storage-table-list", "azmcp-subscription-list"], action: "allow", rule_name: "devops_azure_read" }
+      - { mcp: "atlassian", tools: ["jira_get_issue", "jira_get_project_issues", "jira_get_sprint_issues", "jira_search", "jira_search_fields", "jira_add_comment", "jira_add_worklog", "jira_get_transitions", "jira_transition_issue"], action: "allow", rule_name: "devops_ticket_updates" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/incident"
+    description: "Operations incident agent scoped to tickets, escalation, and incident coordination."
+    rules:
+      - { mcp: "grafana", tools: ["find_error_pattern_logs", "find_slow_requests", "generate_deeplink", "get_alert_rule_by_uid", "get_current_oncall_users", "get_dashboard_by_uid", "get_dashboard_summary", "get_incident", "get_oncall_shift", "list_alert_rules", "list_incidents", "list_oncall_schedules", "list_oncall_teams", "list_oncall_users", "query_loki_logs", "query_loki_stats", "query_prometheus", "search_dashboards", "add_activity_to_incident", "create_incident"], action: "allow", rule_name: "incident_grafana_coordination" }
+      - { mcp: "atlassian", tools: ["confluence_get_comments", "confluence_get_page", "confluence_search", "jira_batch_get_changelogs", "jira_get_agile_boards", "jira_get_board_issues", "jira_get_issue", "jira_get_project_issues", "jira_get_project_versions", "jira_get_sprint_issues", "jira_get_sprints_from_board", "jira_get_user_profile", "jira_get_worklog", "jira_search", "jira_search_fields", "confluence_add_comment", "jira_add_comment", "jira_add_worklog", "jira_create_issue_link", "jira_get_transitions", "jira_link_to_epic", "jira_transition_issue", "jira_create_issue", "jira_update_issue"], action: "allow", rule_name: "incident_atlassian_ops" }
+      - { mcp: "notion", tools: ["API-get-block-children", "API-get-self", "API-get-user", "API-get-users", "API-retrieve-a-block", "API-retrieve-a-comment", "API-retrieve-a-database", "API-retrieve-a-page", "API-retrieve-a-page-property", "API-create-a-comment", "API-patch-page", "API-post-database-query", "API-post-search", "API-update-a-block"], action: "allow", rule_name: "incident_notion_notes" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/finance"
+    description: "Finance agent scoped to billing systems and financial records."
+    rules:
+      - { mcp: "stripe", tools: ["finalize_invoice", "list_coupons", "list_customers", "list_invoices", "list_payment_intents", "list_prices", "list_products", "list_subscriptions", "retrieve_balance", "search_stripe_documentation", "create_coupon", "create_customer", "create_invoice", "create_invoice_item", "create_payment_link", "create_price", "create_product", "list_disputes", "update_dispute", "update_subscription"], action: "allow", rule_name: "finance_stripe_ops" }
+      - { mcp: "mongodb", tools: ["aggregate", "collection-indexes", "collection-schema", "collection-storage-size", "connect", "count", "db-stats", "explain", "export", "find", "list-collections", "list-databases", "mongodb-logs", "create-index", "insert-many", "update-many"], action: "allow", rule_name: "finance_mongo_records" }
+      - { mcp: "notion", tools: ["API-get-block-children", "API-get-self", "API-get-user", "API-get-users", "API-retrieve-a-block", "API-retrieve-a-comment", "API-retrieve-a-database", "API-retrieve-a-page", "API-retrieve-a-page-property", "API-create-a-comment", "API-patch-page", "API-post-database-query", "API-post-page", "API-post-search", "API-update-a-block"], action: "allow", rule_name: "finance_notion_docs" }
+      - { mcp: "atlassian", tools: ["jira_get_issue", "jira_get_project_issues", "jira_search", "jira_search_fields", "jira_add_comment", "jira_add_worklog", "jira_create_issue", "jira_update_issue"], action: "allow", rule_name: "finance_ticketing" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/agent/research"
+    description: "Low-risk research agent scoped to public information discovery and read-only internal lookup."
+    rules:
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "research_wikipedia_read" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "research_paper_search" }
+      - { mcp: "notion", tools: ["API-get-block-children", "API-get-self", "API-get-user", "API-get-users", "API-retrieve-a-block", "API-retrieve-a-comment", "API-retrieve-a-database", "API-retrieve-a-page", "API-retrieve-a-page-property"], action: "allow", rule_name: "research_notion_read" }
+      - { mcp: "atlassian", tools: ["confluence_get_comments", "confluence_get_labels", "confluence_get_page", "confluence_get_page_children", "confluence_search", "jira_get_issue", "jira_get_project_issues", "jira_search", "jira_search_fields"], action: "allow", rule_name: "research_atlassian_read" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/service/gateway"
+    description: "Trusted execution gateway permitted to invoke approved tools across domains."
+    rules:
+      # Gateway executes approved operations; ABAC provides the safety rails for writes and risky domains.
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "gateway_wikipedia" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "gateway_paper_search" }
+      - { mcp: "notion", tools: ["*"], action: "allow", rule_name: "gateway_notion" }
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "gateway_grafana" }
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "gateway_atlassian" }
+      - { mcp: "mongodb", tools: ["*"], action: "allow", rule_name: "gateway_mongodb" }
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "gateway_azure" }
+      - { mcp: "stripe", tools: ["*"], action: "allow", rule_name: "gateway_stripe" }
+      - { mcp: "hummingbot-mcp", tools: ["*"], action: "allow", rule_name: "gateway_hummingbot" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }
+
+  - spiffe_id: "spiffe://demo.local/service/security"
+    description: "Security control-plane service allowed full inspection and enforcement reach."
+    rules:
+      - { mcp: "wikipedia-mcp", tools: ["*"], action: "allow", rule_name: "security_wikipedia" }
+      - { mcp: "paper-search", tools: ["*"], action: "allow", rule_name: "security_paper_search" }
+      - { mcp: "notion", tools: ["*"], action: "allow", rule_name: "security_notion" }
+      - { mcp: "grafana", tools: ["*"], action: "allow", rule_name: "security_grafana" }
+      - { mcp: "atlassian", tools: ["*"], action: "allow", rule_name: "security_atlassian" }
+      - { mcp: "mongodb", tools: ["*"], action: "allow", rule_name: "security_mongodb" }
+      - { mcp: "azure", tools: ["*"], action: "allow", rule_name: "security_azure" }
+      - { mcp: "stripe", tools: ["*"], action: "allow", rule_name: "security_stripe" }
+      - { mcp: "hummingbot-mcp", tools: ["*"], action: "allow", rule_name: "security_hummingbot" }
+      - { mcp: "*", tools: ["*"], action: "deny", rule_name: "default_deny" }

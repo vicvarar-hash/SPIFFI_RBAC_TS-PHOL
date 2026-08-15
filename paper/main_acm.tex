@@ -471,7 +471,7 @@ We evaluate on ASTRA v0.3~\cite{elhelou2025astra}, a public corpus of $1{,}157$ 
 
 \textbf{Corpus composition.} Every ASTRA task pairs a natural-language request with a candidate tool selection carrying a ground-truth \texttt{match\_tag}. The $1{,}157$ tasks partition into $579$ \texttt{correct} selections ($50\%$), $463$ \texttt{wrong} selections ($40\%$; same-MCP wrong tools---hard within-domain negatives), and $115$ \texttt{null} selections ($10\%$; unrelated-MCP tools---gross cross-domain negatives); among the negatives this is the $80{:}20$ wrong-to-null split fixed by ASTRA's construction.
 
-The model panel spans six models across three vendors: three OpenAI generations---\textbf{gpt-3.5-turbo-16k} (2023), \textbf{gpt-4o} (2024-05; ASTRA's reference model, enabling direct replication, \S\ref{sec:astra_replication}), and \textbf{gpt-5.4} (2026)---plus a cross-vendor set of \textbf{claude-opus-4.8}, \textbf{claude-sonnet-4.6} (Anthropic), and \textbf{gemini-2.5-pro} (Google), the 2026 models served through Microsoft Azure AI Foundry. All inference uses temperature $0.0$, JSON-schema-constrained output, and a single retry on parse failure; no system prompt beyond the documented PALADIN protocol is injected. Two models anchor the whole-flow analysis (\S\ref{sec:whole_flow}): \textbf{claude-opus-4.8}, the highest-recall validator alone (recall $0.971$, \S\ref{sec:llm_alone}), and \textbf{gpt-4o}, the ASTRA reference. Two panel caveats carry into the results: gpt-3.5-turbo-16k has no selection run---its $\sim\!21$k-token candidate-catalog prompt exceeds the $16{,}385$-token context (\S\ref{sec:llm_alone})---and gemini-2.5-pro's selection was produced by an in-environment batched proxy. Open-weights models (Llama, Mistral) remain deferred (\S\ref{sec:future_work}).
+The model panel spans six models across three vendors: three OpenAI generations---\textbf{gpt-3.5-turbo-16k} (2023), \textbf{gpt-4o} (2024-05; ASTRA's reference model, enabling direct replication, \S\ref{sec:astra_replication}), and \textbf{gpt-5.4} (2026)---plus a cross-vendor set of \textbf{claude-opus-4.8}, \textbf{claude-sonnet-4.6} (Anthropic), and \textbf{gemini-2.5-pro} (Google), the 2026 models served through Microsoft Azure AI Foundry. All inference uses temperature $0.0$, JSON-schema-constrained output, and a single retry on parse failure; no system prompt beyond the documented PALADIN protocol is injected. The whole-flow funnel analysis (\S\ref{sec:whole_flow}) anchors on \textbf{claude-opus-4.8}, the highest-recall validator alone (recall $0.971$, \S\ref{sec:llm_alone}); \textbf{gpt-4o}, the ASTRA reference, is retained across the cross-vendor composition panel. Two panel caveats carry into the results: gpt-3.5-turbo-16k has no selection run---its $\sim\!21$k-token candidate-catalog prompt exceeds the $16{,}385$-token context (\S\ref{sec:llm_alone})---and gemini-2.5-pro's selection was produced by an in-environment batched proxy. Open-weights models (Llama, Mistral) remain deferred (\S\ref{sec:future_work}).
 
 \subsection{Policy Details}
 \label{sec:policy_details}
@@ -768,7 +768,7 @@ A clean side-effect of the three OpenAI generations: LLM-only safety is \emph{no
 \subsection{The Whole Flow: Composition and Recovery}
 \label{sec:whole_flow}
 
-Composing the two---the model's verdict \emph{behind} the deterministic floor---is the deployed system. We read the composition three ways, each results-first: a cross-vendor validation panel showing the floor bounds every model's security-failure rate whatever its solo behaviour (\S\ref{sec:stack_guarantee}); per-model survivor funnels for the two anchor models---claude-opus-4.8 (highest retention) and gpt-4o (the ASTRA reference)---that show \emph{where} each layer catches (\S\ref{sec:whole_flow_funnels}); and a model-independent layer ablation isolating each layer's marginal contribution (\S\ref{sec:reversal}).
+Composing the two---the model's verdict \emph{behind} the deterministic floor---is the deployed system. We read the composition three ways, each results-first: a cross-vendor validation panel showing the floor bounds every model's security-failure rate whatever its solo behaviour (\S\ref{sec:stack_guarantee}); a per-model survivor funnel for claude-opus-4.8 (the highest-retention composition) that shows \emph{where} each layer catches (\S\ref{sec:whole_flow_funnels}); and a model-independent layer ablation isolating each layer's marginal contribution (\S\ref{sec:reversal}).
 
 \subsubsection{Cross-Vendor Validation: The Floor Bounds Security Failure}
 \label{sec:stack_guarantee}
@@ -805,18 +805,18 @@ gemini-2.5-pro \textit{(Google '26)}       & 0.628 & 0.747 & 0.438 & 0.059 \\
 
 Alone, each model is an unreliable control: security-failure spans $26.8\%$ (gpt-4o) to $66.5\%$ (gpt-5.4), non-OpenAI models interleaved throughout, no ordering by vendor or recency. Behind the floor, the same verdict is bounded to security-failure $\leq7.3\%$ for all six, none exceeding the $10.3\%$ floor---because FULL $=$ floor $\wedge$ verdict is a conjunction that can only \emph{add} denials, so a capable judge (gpt-4o) sharpens security-failure to $2.1\%$ while even a permissive one cannot lift FULL above the floor (P1, \S\ref{sec:composition}). The composition is \emph{leak-free}: the domain driving coverage is inferred from task text by BM25 over the public MCP catalog (\S\ref{sec:domain_inference}), so the floor sits at $10.3\%$ rather than zero---the irreducible semantic floor the verdict, not the policy, must close.
 
-\textbf{Security vs.\ retention is now a per-model choice.} Composition sharpens security for every model, but at a recall (retention) cost that differs sharply: gpt-4o drives security-failure to $2.1\%$ yet admits only $24.8\%$ of domain-eligible work, whereas claude-opus-4.8 holds retention at $44.3\%$ for a near-identical $4.0\%$ security-failure. opus is thus the highest-retention composition on the panel and gpt-4o the strictest---the two we trace as funnels next (\S\ref{sec:whole_flow_funnels}).
+\textbf{Security vs.\ retention is now a per-model choice.} Composition sharpens security for every model, but at a recall (retention) cost that differs sharply: gpt-4o drives security-failure to $2.1\%$ yet admits only $24.8\%$ of domain-eligible work, whereas claude-opus-4.8 holds retention at $44.3\%$ for a near-identical $4.0\%$ security-failure. opus is thus the highest-retention composition on the panel and gpt-4o the strictest; we trace opus as a survivor funnel next (\S\ref{sec:whole_flow_funnels}).
 
 \paragraph{Operating point.} The floor profile comes from the released policy---the \path{capability_coverage} domain floor, the \path{tool_relevance} BM25 cutoff ($<\!1.0$), and the corroborated-coverage rescue bar ($\geq\!4.0$), all editable in \path{policies/trac_rules.yaml} and fixed \emph{ex ante}; \S\ref{sec:corroborated} gives the Pareto refinement that sets it.
 
-\subsubsection{Whole-Flow Funnels for the Anchor Models}
+\subsubsection{Whole-Flow Funnel for the Highest-Retention Model}
 \label{sec:whole_flow_funnels}
 
-Tables~\ref{tab:flow_opus} and~\ref{tab:flow_gpt4o} trace the two anchor models through the whole flow as survivor funnels: the count still admitted after each cumulative gate, restricted to the requests that stress the system---the $578$ incorrect (wrong$/$null) tasks per persona in validation, and each model's own wrong$/$null bundles in selection. The final column is the residual security failures.
+Table~\ref{tab:flow_opus} traces claude-opus-4.8 through the whole flow as a survivor funnel: the count still admitted after each cumulative gate, restricted to the requests that stress the system. The two blocks use \emph{different} incorrect cohorts by construction. \emph{Validation} gates the $578$ wrong$/$null \emph{candidate} bundles per persona---the bundles the model is asked to judge. \emph{Selection} gates the $1{,}048$ tasks per persona where opus's \emph{own} pick recovered fewer than $3/3$ ground-truth tools (the $2/3\!+\!1/3\!+\!0/3$ buckets of \S\ref{sec:llm_alone}), since in selection the model \emph{is} the requester and the honest incorrect subset is the bundles it mis-selects. The final column is the residual security failures.
 
 \begin{table}[!t]
 \centering
-\caption{claude-opus-4.8 whole-flow survivor funnels (the highest-retention model). Each cell is the number \emph{still admitted} after that cumulative gate. \emph{Validation}: the $578$ incorrect tasks per persona ($n=3{,}468$), gated RBAC$\to$ABAC$\to$LLM verdict$\to$TRAC; $198$ survive. \emph{Selection}: opus's own wrong$/$null bundles, gated RBAC$\to$ABAC$\to$TRAC; $995$ survive. RBAC and ABAC condition only on persona and bundle, so their columns are model-independent; ABAC removes little beyond RBAC ($1108$ vs.\ $1200$), the backstop pattern of \S\ref{sec:reversal}.}
+\caption{claude-opus-4.8 whole-flow survivor funnels (the highest-retention model). Each cell is the number \emph{still admitted} after that cumulative gate. \emph{Validation}: the $578$ wrong$/$null \emph{candidate} bundles per persona ($n=3{,}468$), gated RBAC$\to$ABAC$\to$LLM verdict$\to$TRAC; $198$ survive. \emph{Selection}: the $1{,}048$ tasks per persona where opus's \emph{own} pick recovered $<3/3$ gold tools ($n=6{,}288$; the $2/3\!+\!1/3\!+\!0/3$ buckets of \S\ref{sec:llm_alone}), gated RBAC$\to$ABAC$\to$TRAC; $1{,}805$ survive. In validation, RBAC and ABAC condition only on persona and bundle, so their columns are model-independent; ABAC removes little beyond RBAC ($1108$ vs.\ $1200$), the backstop pattern of \S\ref{sec:reversal}.}
 \label{tab:flow_opus}
 \footnotesize
 \setlength{\tabcolsep}{5pt}
@@ -834,57 +834,24 @@ Gateway \textit{(L3)}  &  578 &  327 &  321 &  109 &   56 \\
 Security \textit{(L3)} &  578 &  259 &  234 &   94 &   51 \\
 \textbf{Total}         & 3468 & 1200 & 1108 &  372 &  198 \\
 \midrule
-\multicolumn{6}{@{}l}{\textit{Selection --- opus's wrong$/$null bundles; gates RBAC$\to$ABAC$\to$TRAC}}\\
-DevOps \textit{(L3)}   &  578 &  383 &  383 &  --- &  316 \\
-Incident \textit{(L2)} &  578 &  179 &  155 &  --- &  132 \\
-Finance \textit{(L2)}  &  578 &   81 &   49 &  --- &   43 \\
-Research \textit{(L1)} &  578 &   32 &   32 &  --- &   11 \\
-Gateway \textit{(L3)}  &  578 &  367 &  342 &  --- &  266 \\
-Security \textit{(L3)} &  578 &  320 &  282 &  --- &  227 \\
-\textbf{Total}         & 3468 & 1362 & 1243 &  --- &  995 \\
+\multicolumn{6}{@{}l}{\textit{Selection --- opus's own wrong picks ($<3/3$ recovered; $1{,}048$/persona); gates RBAC$\to$ABAC$\to$TRAC}}\\
+DevOps \textit{(L3)}   & 1048 &  689 &  689 &  --- &  562 \\
+Incident \textit{(L2)} & 1048 &  333 &  287 &  --- &  245 \\
+Finance \textit{(L2)}  & 1048 &  146 &   89 &  --- &   78 \\
+Research \textit{(L1)} & 1048 &   60 &   60 &  --- &   21 \\
+Gateway \textit{(L3)}  & 1048 &  666 &  622 &  --- &  480 \\
+Security \textit{(L3)} & 1048 &  586 &  524 &  --- &  419 \\
+\textbf{Total}         & 6288 & 2480 & 2271 &  --- & 1805 \\
 \bottomrule
 \end{tabular}
 \end{adjustbox}
 \end{table}
 
-\begin{table}[!t]
-\centering
-\caption{gpt-4o whole-flow survivor funnels (the ASTRA reference, strictest composition). Columns and cohorts as in Table~\ref{tab:flow_opus}. The RBAC and ABAC columns are \emph{identical} to opus's ($1200$, $1108$)---those layers never see the model---so the two models diverge only at the LLM verdict and TRAC: gpt-4o's stricter verdict admits far fewer incorrect tasks ($1108\!\to\!216$ vs.\ opus $1108\!\to\!372$) and leaves a lower residual ($105$ vs.\ $198$).}
-\label{tab:flow_gpt4o}
-\footnotesize
-\setlength{\tabcolsep}{5pt}
-\begin{adjustbox}{max width=\columnwidth}
-\begin{tabular}{@{}lccccc@{}}
-\toprule
-\textbf{Persona} & \textbf{total} & \textbf{RBAC} & \textbf{ABAC} & \textbf{LLM} & \textbf{TRAC} \\
-\midrule
-\multicolumn{6}{@{}l}{\textit{Validation --- incorrect tasks; gates RBAC$\to$ABAC$\to$LLM$\to$TRAC}}\\
-DevOps \textit{(L3)}   &  578 &  364 &  364 &   66 &   34 \\
-Incident \textit{(L2)} &  578 &  150 &  125 &   33 &   16 \\
-Finance \textit{(L2)}  &  578 &   52 &   16 &    2 &    1 \\
-Research \textit{(L1)} &  578 &   48 &   48 &    7 &    2 \\
-Gateway \textit{(L3)}  &  578 &  327 &  321 &   63 &   31 \\
-Security \textit{(L3)} &  578 &  259 &  234 &   45 &   21 \\
-\textbf{Total}         & 3468 & 1200 & 1108 &  216 &  105 \\
-\midrule
-\multicolumn{6}{@{}l}{\textit{Selection --- gpt-4o's wrong$/$null bundles; gates RBAC$\to$ABAC$\to$TRAC}}\\
-DevOps \textit{(L3)}   &  578 &  391 &  391 &  --- &  313 \\
-Incident \textit{(L2)} &  578 &  181 &  165 &  --- &  141 \\
-Finance \textit{(L2)}  &  578 &   71 &   41 &  --- &   37 \\
-Research \textit{(L1)} &  578 &   40 &   40 &  --- &   15 \\
-Gateway \textit{(L3)}  &  578 &  370 &  350 &  --- &  268 \\
-Security \textit{(L3)} &  578 &  336 &  309 &  --- &  240 \\
-\textbf{Total}         & 3468 & 1389 & 1296 &  --- & 1014 \\
-\bottomrule
-\end{tabular}
-\end{adjustbox}
-\end{table}
-
-Because RBAC and ABAC condition only on persona and bundle, their columns are \emph{identical} across the two models ($1200$, $1108$); the models differ only at the LLM verdict and the TRAC catch. gpt-4o's stricter verdict admits far fewer incorrect tasks at the LLM gate ($1108\!\to\!216$ vs.\ opus $1108\!\to\!372$) and leaves a lower residual after TRAC ($105$ vs.\ $198$)---the security half of the trade in Table~\ref{tab:stack_guarantee}, bought with the retention opus keeps. ABAC's marginal is visibly small ($1200\!\to\!1108$, $92$ caught) because RBAC already denies most of what ABAC would---the backstop pattern quantified next (\S\ref{sec:reversal}). TRAC then catches a further $174$ (opus) and $111$ (gpt-4o) incorrect tasks the verdict admitted, the task-relational layer working behind the model.
+In validation, RBAC and ABAC condition only on persona and bundle, so they are model-independent ($1{,}200$ then $1{,}108$ survivors); ABAC's marginal is small ($92$ caught) because RBAC already denies most of what ABAC would---the backstop pattern quantified next (\S\ref{sec:reversal}). opus's own verdict then admits $372$ of the $1{,}108$, and TRAC catches a further $174$ ($372\!\to\!198$) incorrect tasks the verdict let through---the task-relational layer working behind the model. The security$/$retention trade a stricter or more permissive judge would make behind this same floor is the per-model panel of Table~\ref{tab:stack_guarantee}.
 
 \paragraph{Selection.}
 \label{sec:selection_flow}
-When the model \emph{generates} the bundle there is no verdict gate, yet the same RBAC$\to$ABAC$\to$TRAC floor still removes $2{,}473/3{,}468$ of opus's wrong bundles and $2{,}454/3{,}468$ of gpt-4o's, so the deterministic stack recovers generation failures as well as verdict failures without re-tuning.
+When the model \emph{generates} the bundle there is no verdict gate, yet the same RBAC$\to$ABAC$\to$TRAC floor still removes $4{,}483/6{,}288$ of the bundles opus mis-selects (the $1{,}048$ tasks per persona where it recovered $<3/3$ gold tools), so the deterministic stack recovers generation failures as well as verdict failures without re-tuning.
 
 \subsubsection{Which Layers Are Load-Bearing}
 \label{sec:reversal}
